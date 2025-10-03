@@ -94,20 +94,41 @@ pub fn find_archive2(fo4_dir: &PathBuf) -> Result<PathBuf> {
 
 /// Find BSArch.exe (typically in FO4 directory or Tools)
 pub fn find_bsarch(fo4_dir: &PathBuf) -> Result<PathBuf> {
-    // Check common locations
-    let locations = vec![
-        fo4_dir.join("BSArch.exe"),
-        fo4_dir.join("Tools").join("BSArch.exe"),
-        fo4_dir.join("Tools").join("BSArch").join("BSArch.exe"),
+    let mut locations = vec![
+        // Check current directory first
+        std::env::current_dir()
+            .ok()
+            .map(|p| p.join("BSArch.exe")),
     ];
 
-    for path in locations {
+    // Check executable's directory
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            locations.push(Some(exe_dir.join("BSArch.exe")));
+        }
+    }
+
+    // Check FO4 directory locations
+    locations.extend(vec![
+        Some(fo4_dir.join("BSArch.exe")),
+        Some(fo4_dir.join("Tools").join("BSArch.exe")),
+        Some(fo4_dir.join("Tools").join("BSArch").join("BSArch.exe")),
+    ]);
+
+    for path in locations.into_iter().flatten() {
         if path.exists() {
             return Ok(path);
         }
     }
 
-    anyhow::bail!("BSArch.exe not found in Fallout 4 directory")
+    anyhow::bail!(
+        "BSArch.exe not found.\n\
+        Searched locations:\n\
+        - Current directory\n\
+        - Executable directory\n\
+        - Fallout 4 directory\n\
+        - Fallout 4\\Tools directory"
+    )
 }
 
 /// Find CKPE configuration file

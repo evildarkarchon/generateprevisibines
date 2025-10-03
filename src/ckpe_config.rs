@@ -124,7 +124,12 @@ impl CKPEConfig {
     }
 
     /// Extract log file path from config
-    fn extract_log_file_path(content: &str, _config_type: ConfigType) -> Option<PathBuf> {
+    /// For CreationKitPlatformExtended.ini: sOutputFile is in [Log] section
+    /// For fallout4_test.ini: OutputFile is in [CreationKit_Log] section
+    /// For TOML: can be anywhere
+    fn extract_log_file_path(content: &str, config_type: ConfigType) -> Option<PathBuf> {
+        let mut current_section = String::new();
+
         for line in content.lines() {
             let line_trimmed = line.trim();
 
@@ -133,12 +138,32 @@ impl CKPEConfig {
                 continue;
             }
 
-            // Look for log file path setting
-            if line_trimmed.starts_with("sLogFile") || line_trimmed.starts_with("LogFile") {
-                if let Some(value) = line_trimmed.split('=').nth(1) {
-                    let path_str = value.trim().trim_matches('"');
-                    if !path_str.is_empty() {
-                        return Some(PathBuf::from(path_str));
+            // Track current section for INI files
+            if line_trimmed.starts_with('[') && line_trimmed.ends_with(']') {
+                current_section = line_trimmed[1..line_trimmed.len() - 1].to_string();
+                continue;
+            }
+
+            // For TOML, check anywhere
+            // For INI files, check in appropriate sections
+            let should_check = match config_type {
+                ConfigType::TOML => true,
+                ConfigType::INI => current_section.eq_ignore_ascii_case("Log"),
+                ConfigType::Fallout4TestINI => current_section.eq_ignore_ascii_case("CreationKit_Log"),
+            };
+
+            if should_check {
+                // Look for log file path setting
+                // sOutputFile (new CKPE), OutputFile (old), sLogFile (TOML)
+                if line_trimmed.starts_with("sOutputFile")
+                    || line_trimmed.starts_with("OutputFile")
+                    || line_trimmed.starts_with("sLogFile")
+                {
+                    if let Some(value) = line_trimmed.split('=').nth(1) {
+                        let path_str = value.trim().trim_matches('"');
+                        if !path_str.is_empty() && !path_str.eq_ignore_ascii_case("none") {
+                            return Some(PathBuf::from(path_str));
+                        }
                     }
                 }
             }
@@ -201,11 +226,16 @@ mod tests {
         let mut file = File::create(&config_path).unwrap();
         writeln!(file, "[CreationKit]").unwrap();
         writeln!(file, "bBSPointerHandle=1").unwrap();
+        writeln!(file, "").unwrap();
+        writeln!(file, "[Log]").unwrap();
+        writeln!(file, "sOutputFile=CreationKit.log").unwrap();
         drop(file);
 
         let config = CKPEConfig::parse(&config_path).unwrap();
         assert!(config.pointer_handle_enabled);
         assert_eq!(config.config_type, ConfigType::INI);
+        assert!(config.log_file_path.is_some());
+        assert_eq!(config.log_file_path.unwrap(), PathBuf::from("CreationKit.log"));
     }
 
     #[test]
@@ -214,12 +244,18 @@ mod tests {
         let config_path = temp_dir.path().join("fallout4_test.ini");
 
         let mut file = File::create(&config_path).unwrap();
+        writeln!(file, "[CreationKit]").unwrap();
         writeln!(file, "bBSPointerHandleExtremly=1").unwrap();
+        writeln!(file, "").unwrap();
+        writeln!(file, "[CreationKit_Log]").unwrap();
+        writeln!(file, "OutputFile=CKLog.log").unwrap();
         drop(file);
 
         let config = CKPEConfig::parse(&config_path).unwrap();
         assert!(config.pointer_handle_enabled);
         assert_eq!(config.config_type, ConfigType::Fallout4TestINI);
+        assert!(config.log_file_path.is_some());
+        assert_eq!(config.log_file_path.unwrap(), PathBuf::from("CKLog.log"));
     }
 
     #[test]

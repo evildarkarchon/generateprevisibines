@@ -6,9 +6,12 @@ use std::path::PathBuf;
 mod ckpe_config;
 mod config;
 mod filesystem;
+mod prompts;
 mod registry;
+mod tools;
 mod utils;
 mod validation;
+mod workflow;
 
 use config::{ArchiveTool, BuildMode, Config};
 
@@ -133,7 +136,7 @@ fn main() -> Result<()> {
     println!();
     println!("Checking for CKPE configuration...");
     let ckpe_config_result = registry::find_ckpe_config(&fo4_dir);
-    let ckpe_config_path = if let Some(ref config_path) = ckpe_config_result {
+    let (ckpe_config_path, ck_log_path) = if let Some(ref config_path) = ckpe_config_result {
         println!("Found CKPE config at: {}", config_path.display());
 
         // Parse and validate CKPE config
@@ -149,15 +152,19 @@ fn main() -> Result<()> {
         ckpe_cfg.validate().context("CKPE configuration validation failed")?;
         println!("✓ bBSPointerHandleExtremly is enabled");
 
-        if let Some(ref log_path) = ckpe_cfg.log_file_path {
+        let log_path = if let Some(ref log_path) = ckpe_cfg.log_file_path {
             println!("CK log file: {}", log_path.display());
-        }
+            Some(log_path.clone())
+        } else {
+            println!("Warning: CK log file path not found in CKPE config");
+            None
+        };
 
-        Some(config_path.clone())
+        (Some(config_path.clone()), log_path)
     } else {
         println!("Warning: No CKPE configuration file found.");
         println!("The workflow may fail if CKPE is not properly configured.");
-        None
+        (None, None)
     };
 
     // Display versions
@@ -202,6 +209,7 @@ fn main() -> Result<()> {
     config.creation_kit_path = ck_path;
     config.archive_exe_path = archive_path;
     config.ckpe_config_path = ckpe_config_path;
+    config.ck_log_path = ck_log_path;
     config.plugin_name = args.plugin.clone();
 
     // Validate configuration
@@ -269,10 +277,89 @@ fn main() -> Result<()> {
     println!("✓ CKPE configuration validated");
     println!("✓ Output directories ready");
     println!();
-    println!("Log file: {}", log_path.display());
 
     info!("Configuration validated successfully");
-    info!("Ready to proceed with workflow");
+
+    // Get plugin name (prompt if not provided)
+    let interactive = args.plugin.is_none();
+    let plugin_name = if let Some(plugin) = args.plugin {
+        plugin
+    } else {
+        println!("======================================");
+        println!("  Plugin Selection");
+        println!("======================================");
+        let is_clean_mode = matches!(args.get_build_mode(), BuildMode::Clean);
+        prompts::prompt_plugin_name(is_clean_mode)?
+    };
+
+    info!("Plugin name: {}", plugin_name);
+
+    // Check if plugin exists
+    let data_dir = fo4_dir.join("Data");
+    let plugin_path = data_dir.join(&plugin_name);
+
+    if validation::plugin_exists(&data_dir, &plugin_name) {
+        println!("✓ Plugin file found: {}", plugin_path.display());
+
+        // In interactive mode, ask if user wants to use existing or restart
+        if interactive {
+            match prompts::prompt_use_existing_plugin(&plugin_path)? {
+                Some(true) => {
+                    println!("Using existing plugin");
+                    // Ask which step to resume from
+                    if let Some(step_number) = prompts::prompt_restart_step()? {
+                        let start_step = workflow::WorkflowStep::from_number(step_number)
+                            .ok_or_else(|| anyhow::anyhow!("Invalid step number"))?;
+
+                        println!();
+                        let executor = workflow::WorkflowExecutor::new(&config, plugin_name, interactive);
+                        executor.run_from_step(start_step)?;
+                    } else {
+                        println!("Workflow cancelled by user");
+                        return Ok(());
+                    }
+                }
+                Some(false) => {
+                    println!("Starting fresh workflow from step 1");
+                    println!();
+                    let executor = workflow::WorkflowExecutor::new(&config, plugin_name, interactive);
+                    executor.run_all()?;
+                }
+                None => {
+                    println!("Workflow cancelled by user");
+                    return Ok(());
+                }
+            }
+        } else {
+            // Non-interactive: just run from step 1
+            println!();
+            let executor = workflow::WorkflowExecutor::new(&config, plugin_name, interactive);
+            executor.run_all()?;
+        }
+    } else {
+        println!("Warning: Plugin file not found at: {}", plugin_path.display());
+
+        if interactive {
+            if prompts::confirm("Continue anyway? (plugin will be created by CreationKit)", false)? {
+                println!();
+                let executor = workflow::WorkflowExecutor::new(&config, plugin_name, interactive);
+                executor.run_all()?;
+            } else {
+                println!("Workflow cancelled by user");
+                return Ok(());
+            }
+        } else {
+            anyhow::bail!(
+                "Plugin file not found: {}\n\
+                Make sure the plugin exists in the Data directory or run interactively.",
+                plugin_path.display()
+            );
+        }
+    }
+
+    println!();
+    println!("Log file: {}", log_path.display());
+    info!("Workflow completed successfully");
 
     Ok(())
 }
