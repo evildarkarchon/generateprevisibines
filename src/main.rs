@@ -3,9 +3,12 @@ use clap::Parser;
 use log::info;
 use std::path::PathBuf;
 
+mod ckpe_config;
 mod config;
+mod filesystem;
 mod registry;
 mod utils;
+mod validation;
 
 use config::{ArchiveTool, BuildMode, Config};
 
@@ -119,15 +122,43 @@ fn main() -> Result<()> {
         archive_path.display()
     );
 
-    // Find CKPE config
+    // Validate FO4 directories
+    println!();
+    println!("Validating Fallout 4 installation...");
+    filesystem::validate_fo4_directories(&fo4_dir)
+        .context("Invalid Fallout 4 installation")?;
+    println!("Fallout 4 installation validated successfully.");
+
+    // Find and parse CKPE config
     println!();
     println!("Checking for CKPE configuration...");
-    let ckpe_config = registry::find_ckpe_config(&fo4_dir);
-    if let Some(ref config_path) = ckpe_config {
+    let ckpe_config_result = registry::find_ckpe_config(&fo4_dir);
+    let ckpe_config_path = if let Some(ref config_path) = ckpe_config_result {
         println!("Found CKPE config at: {}", config_path.display());
+
+        // Parse and validate CKPE config
+        let ckpe_cfg = ckpe_config::CKPEConfig::parse(config_path)
+            .context("Failed to parse CKPE configuration")?;
+
+        println!(
+            "CKPE config type: {:?}",
+            ckpe_cfg.config_type
+        );
+
+        // Validate required settings
+        ckpe_cfg.validate().context("CKPE configuration validation failed")?;
+        println!("✓ bBSPointerHandleExtremly is enabled");
+
+        if let Some(ref log_path) = ckpe_cfg.log_file_path {
+            println!("CK log file: {}", log_path.display());
+        }
+
+        Some(config_path.clone())
     } else {
         println!("Warning: No CKPE configuration file found.");
-    }
+        println!("The workflow may fail if CKPE is not properly configured.");
+        None
+    };
 
     // Display versions
     println!();
@@ -166,17 +197,78 @@ fn main() -> Result<()> {
 
     // Create configuration
     let mut config = Config::new(args.get_build_mode(), archive_tool);
-    config.fo4_dir = fo4_dir;
+    config.fo4_dir = fo4_dir.clone();
     config.fo4edit_path = fo4edit_path;
     config.creation_kit_path = ck_path;
     config.archive_exe_path = archive_path;
-    config.ckpe_config_path = ckpe_config;
-    config.plugin_name = args.plugin;
+    config.ckpe_config_path = ckpe_config_path;
+    config.plugin_name = args.plugin.clone();
 
     // Validate configuration
     config.validate().context("Configuration validation failed")?;
 
-    println!("All tools found and validated successfully!");
+    // Validate plugin name if provided
+    if let Some(ref plugin_name) = args.plugin {
+        println!();
+        println!("======================================");
+        println!("  Plugin Validation");
+        println!("======================================");
+
+        let is_clean_mode = matches!(args.get_build_mode(), BuildMode::Clean);
+        validation::validate_plugin_name(plugin_name, is_clean_mode)
+            .context("Plugin name validation failed")?;
+        println!("✓ Plugin name is valid");
+
+        // Check if plugin exists
+        let data_dir = fo4_dir.join("Data");
+        if validation::plugin_exists(&data_dir, plugin_name) {
+            println!("✓ Plugin file exists: {}", data_dir.join(plugin_name).display());
+        } else {
+            println!(
+                "Warning: Plugin file not found at: {}",
+                data_dir.join(plugin_name).display()
+            );
+            println!("Make sure the plugin is in the Data directory before running the workflow.");
+        }
+    }
+
+    // Ensure output directories exist
+    println!();
+    println!("======================================");
+    println!("  Directory Setup");
+    println!("======================================");
+    let data_dir = fo4_dir.join("Data");
+    let (precombined_dir, vis_dir) = filesystem::ensure_output_directories(&data_dir)
+        .context("Failed to create output directories")?;
+
+    println!("✓ Created/verified output directories:");
+    println!("  Precombined: {}", precombined_dir.display());
+    println!("  Vis:         {}", vis_dir.display());
+
+    // Count existing files in output directories
+    let nif_count = filesystem::count_files(&precombined_dir, "nif");
+    let uvd_count = filesystem::count_files(&vis_dir, "uvd");
+
+    if nif_count > 0 || uvd_count > 0 {
+        println!();
+        println!("Existing previs/precombine files found:");
+        if nif_count > 0 {
+            println!("  {} .nif files in precombined directory", nif_count);
+        }
+        if uvd_count > 0 {
+            println!("  {} .uvd files in vis directory", uvd_count);
+        }
+        println!("These will be managed during the workflow steps.");
+    }
+
+    println!();
+    println!("======================================");
+    println!("  Summary");
+    println!("======================================");
+    println!("✓ All tools found and validated successfully!");
+    println!("✓ CKPE configuration validated");
+    println!("✓ Output directories ready");
+    println!();
     println!("Log file: {}", log_path.display());
 
     info!("Configuration validated successfully");

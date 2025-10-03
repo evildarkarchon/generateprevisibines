@@ -122,8 +122,6 @@ pub fn get_simple_version(exe_path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     #[ignore] // Requires actual executable file
     fn test_get_file_version() {
