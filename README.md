@@ -36,7 +36,7 @@ Download the latest `generateprevisibines.exe` from the [Releases](../../release
 ### Building from Source
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/generateprevisibines.git
+git clone https://github.com/evildarkarchon/generateprevisibines.git
 cd generateprevisibines
 
 # Build release version
