@@ -2,6 +2,7 @@
 name = "generateprevisibines"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0"
 
 [dependencies]
 anyhow = "1.0.100"
@@ -13,8 +14,10 @@ tempfile = "3.23.0"
 walkdir = "2.5.0"
 winreg = "0.55.0"
 
+mo2-mode = { path = "../mo2-mode" }
+
 [dependencies.windows]
-version = "0.62.1"
+version = "0.62.2"
 features = [
     "Win32_Foundation",
     "Win32_System_Registry",
