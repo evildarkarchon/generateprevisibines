@@ -22,8 +22,8 @@ pub struct CKPEConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ConfigType {
-    TOML,       // CreationKitPlatformExtended.toml - highest priority
-    INI,        // CreationKitPlatformExtended.ini - second priority
+    TOML,            // CreationKitPlatformExtended.toml - highest priority
+    INI,             // CreationKitPlatformExtended.ini - second priority
     Fallout4TestINI, // fallout4_test.ini - legacy, lowest priority
 }
 
@@ -32,8 +32,10 @@ impl CKPEConfig {
     /// Priority: .toml > .ini > fallout4_test.ini
     /// This ensures newer config formats take precedence over legacy ones
     pub fn parse(config_path: &Path) -> Result<Self> {
-        let content = fs::read_to_string(config_path)
-            .context(format!("Failed to read CKPE config: {}", config_path.display()))?;
+        let content = fs::read_to_string(config_path).context(format!(
+            "Failed to read CKPE config: {}",
+            config_path.display()
+        ))?;
 
         // Determine config type based on file extension and name
         // Priority: TOML > INI > Fallout4TestINI (to prefer newer formats)
@@ -149,7 +151,9 @@ impl CKPEConfig {
             let should_check = match config_type {
                 ConfigType::TOML => true,
                 ConfigType::INI => current_section.eq_ignore_ascii_case("Log"),
-                ConfigType::Fallout4TestINI => current_section.eq_ignore_ascii_case("CreationKit_Log"),
+                ConfigType::Fallout4TestINI => {
+                    current_section.eq_ignore_ascii_case("CreationKit_Log")
+                }
             };
 
             if should_check {
@@ -235,7 +239,10 @@ mod tests {
         assert!(config.pointer_handle_enabled);
         assert_eq!(config.config_type, ConfigType::INI);
         assert!(config.log_file_path.is_some());
-        assert_eq!(config.log_file_path.unwrap(), PathBuf::from("CreationKit.log"));
+        assert_eq!(
+            config.log_file_path.unwrap(),
+            PathBuf::from("CreationKit.log")
+        );
     }
 
     #[test]

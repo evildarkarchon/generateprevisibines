@@ -109,8 +109,9 @@ fn main() -> Result<()> {
     // Find FO4Edit
     println!();
     println!("Finding FO4Edit...");
-    let fo4edit_path = registry::find_fo4edit_path()
-        .context("Failed to find FO4Edit. Make sure it's in the current directory or properly installed.")?;
+    let fo4edit_path = registry::find_fo4edit_path().context(
+        "Failed to find FO4Edit. Make sure it's in the current directory or properly installed.",
+    )?;
     println!("Found FO4Edit at: {}", fo4edit_path.display());
 
     // Find Creation Kit
@@ -131,20 +132,22 @@ fn main() -> Result<()> {
         }
         ArchiveTool::BSArch => {
             println!("Finding BSArch...");
-            registry::find_bsarch(&fo4_dir)
-                .context("Failed to find BSArch.exe in FO4 directory")?
+            registry::find_bsarch(&fo4_dir).context("Failed to find BSArch.exe in FO4 directory")?
         }
     };
-    println!("Found {} at: {}",
-        match archive_tool { ArchiveTool::Archive2 => "Archive2", ArchiveTool::BSArch => "BSArch" },
+    println!(
+        "Found {} at: {}",
+        match archive_tool {
+            ArchiveTool::Archive2 => "Archive2",
+            ArchiveTool::BSArch => "BSArch",
+        },
         archive_path.display()
     );
 
     // Validate FO4 directories
     println!();
     println!("Validating Fallout 4 installation...");
-    filesystem::validate_fo4_directories(&fo4_dir)
-        .context("Invalid Fallout 4 installation")?;
+    filesystem::validate_fo4_directories(&fo4_dir).context("Invalid Fallout 4 installation")?;
     println!("Fallout 4 installation validated successfully.");
 
     // Find and parse CKPE config
@@ -158,13 +161,12 @@ fn main() -> Result<()> {
         let ckpe_cfg = ckpe_config::CKPEConfig::parse(config_path)
             .context("Failed to parse CKPE configuration")?;
 
-        println!(
-            "CKPE config type: {:?}",
-            ckpe_cfg.config_type
-        );
+        println!("CKPE config type: {:?}", ckpe_cfg.config_type);
 
         // Validate required settings
-        ckpe_cfg.validate().context("CKPE configuration validation failed")?;
+        ckpe_cfg
+            .validate()
+            .context("CKPE configuration validation failed")?;
         println!("✓ bBSPointerHandleExtremly is enabled");
 
         let log_path = if let Some(ref log_path) = ckpe_cfg.log_file_path {
@@ -201,8 +203,12 @@ fn main() -> Result<()> {
     println!("Creation Kit:   {}", ck_version);
 
     let archive_version = utils::get_simple_version(&archive_path);
-    println!("{}: {}",
-        match archive_tool { ArchiveTool::Archive2 => "Archive2   ", ArchiveTool::BSArch => "BSArch     " },
+    println!(
+        "{}: {}",
+        match archive_tool {
+            ArchiveTool::Archive2 => "Archive2   ",
+            ArchiveTool::BSArch => "BSArch     ",
+        },
         archive_version
     );
 
@@ -224,7 +230,9 @@ fn main() -> Result<()> {
                 println!("MO2 data dir:    {}", data_dir.display());
                 Some(data_dir.clone())
             } else {
-                println!("Warning: --mo2-data-dir not specified. Archiving may not work correctly in MO2 mode.");
+                println!(
+                    "Warning: --mo2-data-dir not specified. Archiving may not work correctly in MO2 mode."
+                );
                 None
             };
 
@@ -241,7 +249,13 @@ fn main() -> Result<()> {
     println!("  Configuration");
     println!("======================================");
     println!("Build mode:     {}", args.get_build_mode().as_str());
-    println!("Archive tool:   {}", match archive_tool { ArchiveTool::Archive2 => "Archive2", ArchiveTool::BSArch => "BSArch" });
+    println!(
+        "Archive tool:   {}",
+        match archive_tool {
+            ArchiveTool::Archive2 => "Archive2",
+            ArchiveTool::BSArch => "BSArch",
+        }
+    );
     if args.mo2_mode {
         println!("MO2 mode:       Enabled");
         if let Some(ref mo2_path) = mo2_config {
@@ -269,7 +283,9 @@ fn main() -> Result<()> {
     config.mo2_data_dir = mo2_data_dir_config;
 
     // Validate configuration
-    config.validate().context("Configuration validation failed")?;
+    config
+        .validate()
+        .context("Configuration validation failed")?;
 
     // Validate plugin name if provided
     if let Some(ref plugin_name) = args.plugin {
@@ -286,7 +302,10 @@ fn main() -> Result<()> {
         // Check if plugin exists
         let data_dir = fo4_dir.join("Data");
         if validation::plugin_exists(&data_dir, plugin_name) {
-            println!("✓ Plugin file exists: {}", data_dir.join(plugin_name).display());
+            println!(
+                "✓ Plugin file exists: {}",
+                data_dir.join(plugin_name).display()
+            );
         } else {
             println!(
                 "Warning: Plugin file not found at: {}",
@@ -368,7 +387,8 @@ fn main() -> Result<()> {
                             .ok_or_else(|| anyhow::anyhow!("Invalid step number"))?;
 
                         println!();
-                        let executor = workflow::WorkflowExecutor::new(&config, plugin_name, interactive);
+                        let executor =
+                            workflow::WorkflowExecutor::new(&config, plugin_name, interactive);
                         executor.run_from_step(start_step)?;
                     } else {
                         println!("Workflow cancelled by user");
@@ -378,7 +398,8 @@ fn main() -> Result<()> {
                 Some(false) => {
                     println!("Starting fresh workflow from step 1");
                     println!();
-                    let executor = workflow::WorkflowExecutor::new(&config, plugin_name, interactive);
+                    let executor =
+                        workflow::WorkflowExecutor::new(&config, plugin_name, interactive);
                     executor.run_all()?;
                 }
                 None => {
@@ -393,10 +414,16 @@ fn main() -> Result<()> {
             executor.run_all()?;
         }
     } else {
-        println!("Warning: Plugin file not found at: {}", plugin_path.display());
+        println!(
+            "Warning: Plugin file not found at: {}",
+            plugin_path.display()
+        );
 
         if interactive {
-            if prompts::confirm("Continue anyway? (plugin will be created by CreationKit)", false)? {
+            if prompts::confirm(
+                "Continue anyway? (plugin will be created by CreationKit)",
+                false,
+            )? {
                 println!();
                 let executor = workflow::WorkflowExecutor::new(&config, plugin_name, interactive);
                 executor.run_all()?;

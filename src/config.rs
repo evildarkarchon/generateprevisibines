@@ -112,7 +112,10 @@ impl Config {
     /// Validate that all required paths exist
     pub fn validate(&self) -> Result<()> {
         if !self.fo4_dir.exists() {
-            anyhow::bail!("Fallout 4 directory does not exist: {}", self.fo4_dir.display());
+            anyhow::bail!(
+                "Fallout 4 directory does not exist: {}",
+                self.fo4_dir.display()
+            );
         }
 
         if !self.fo4edit_path.exists() {
@@ -120,7 +123,10 @@ impl Config {
         }
 
         if !self.creation_kit_path.exists() {
-            anyhow::bail!("Creation Kit not found at: {}", self.creation_kit_path.display());
+            anyhow::bail!(
+                "Creation Kit not found at: {}",
+                self.creation_kit_path.display()
+            );
         }
 
         if !self.archive_exe_path.exists() {
@@ -128,7 +134,11 @@ impl Config {
                 ArchiveTool::Archive2 => "Archive2",
                 ArchiveTool::BSArch => "BSArch",
             };
-            anyhow::bail!("{} not found at: {}", tool_name, self.archive_exe_path.display());
+            anyhow::bail!(
+                "{} not found at: {}",
+                tool_name,
+                self.archive_exe_path.display()
+            );
         }
 
         // Validate MO2 configuration if MO2 mode is enabled
@@ -144,7 +154,10 @@ impl Config {
             // Validate mo2_data_dir if provided
             if let Some(ref mo2_data_dir) = self.mo2_data_dir {
                 if !mo2_data_dir.exists() {
-                    anyhow::bail!("MO2 data directory not found at: {}", mo2_data_dir.display());
+                    anyhow::bail!(
+                        "MO2 data directory not found at: {}",
+                        mo2_data_dir.display()
+                    );
                 }
             }
         }

@@ -24,13 +24,12 @@ pub fn prompt_plugin_name(clean_mode: bool) -> Result<String> {
         }
 
         // Ensure extension is present
-        let plugin_name = if !input.to_lowercase().ends_with(".esp")
-            && !input.to_lowercase().ends_with(".esm")
-        {
-            format!("{}.esp", input)
-        } else {
-            input.to_string()
-        };
+        let plugin_name =
+            if !input.to_lowercase().ends_with(".esp") && !input.to_lowercase().ends_with(".esm") {
+                format!("{}.esp", input)
+            } else {
+                input.to_string()
+            };
 
         match validate_plugin_name(&plugin_name, clean_mode) {
             Ok(()) => return Ok(plugin_name),
@@ -49,10 +48,7 @@ pub fn prompt_plugin_name(clean_mode: bool) -> Result<String> {
 /// - Some(false): Start fresh
 /// - None: User chose to exit
 pub fn prompt_use_existing_plugin(plugin_path: &Path) -> Result<Option<bool>> {
-    println!(
-        "\nPlugin already exists: {}",
-        plugin_path.display()
-    );
+    println!("\nPlugin already exists: {}", plugin_path.display());
 
     let choices = vec![
         "Yes - Use existing plugin and continue",
@@ -102,11 +98,7 @@ pub fn prompt_restart_step() -> Result<Option<u8>> {
         })
         .interact_text()?;
 
-    if step == 0 {
-        Ok(None)
-    } else {
-        Ok(Some(step))
-    }
+    if step == 0 { Ok(None) } else { Ok(Some(step)) }
 }
 
 /// Prompt to confirm cleaning a directory
@@ -158,7 +150,6 @@ pub fn confirm(prompt: &str, default: bool) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // Note: Interactive prompts are difficult to unit test
     // These would require mocking stdin or using a testing framework

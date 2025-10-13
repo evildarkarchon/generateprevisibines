@@ -96,9 +96,7 @@ pub fn find_archive2(fo4_dir: &PathBuf) -> Result<PathBuf> {
 pub fn find_bsarch(fo4_dir: &PathBuf) -> Result<PathBuf> {
     let mut locations = vec![
         // Check current directory first
-        std::env::current_dir()
-            .ok()
-            .map(|p| p.join("BSArch.exe")),
+        std::env::current_dir().ok().map(|p| p.join("BSArch.exe")),
     ];
 
     // Check executable's directory

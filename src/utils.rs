@@ -3,10 +3,10 @@ use log::LevelFilter;
 use std::env;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use windows::core::PCWSTR;
 use windows::Win32::Storage::FileSystem::{
     GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
 };
-use windows::core::PCWSTR;
 
 /// Get the product version string from a Windows executable
 /// This uses the Windows API to read version info from the PE file

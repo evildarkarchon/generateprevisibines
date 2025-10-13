@@ -20,7 +20,10 @@ impl Mo2Helper {
         let staging_dir = staging_dir.as_ref().to_path_buf();
 
         if !staging_dir.exists() {
-            anyhow::bail!("MO2 staging directory does not exist: {}", staging_dir.display());
+            anyhow::bail!(
+                "MO2 staging directory does not exist: {}",
+                staging_dir.display()
+            );
         }
 
         Ok(Self { staging_dir })
@@ -82,8 +85,9 @@ impl Mo2Helper {
 
         // Create temp directory
         if temp_dir.exists() {
-            fs::remove_dir_all(temp_dir)
-                .with_context(|| format!("Failed to clean temp directory: {}", temp_dir.display()))?;
+            fs::remove_dir_all(temp_dir).with_context(|| {
+                format!("Failed to clean temp directory: {}", temp_dir.display())
+            })?;
         }
         fs::create_dir_all(temp_dir)
             .with_context(|| format!("Failed to create temp directory: {}", temp_dir.display()))?;
@@ -105,7 +109,8 @@ impl Mo2Helper {
             }
 
             // Get relative path from search_path
-            let relative_path = path.strip_prefix(&search_path)
+            let relative_path = path
+                .strip_prefix(&search_path)
                 .with_context(|| format!("Failed to get relative path for: {}", path.display()))?;
 
             let dest_path = dest_base.join(relative_path);
@@ -116,12 +121,13 @@ impl Mo2Helper {
             }
 
             // Copy file
-            fs::copy(path, &dest_path)
-                .with_context(|| format!(
+            fs::copy(path, &dest_path).with_context(|| {
+                format!(
                     "Failed to copy {} to {}",
                     path.display(),
                     dest_path.display()
-                ))?;
+                )
+            })?;
 
             file_count += 1;
         }
@@ -189,8 +195,14 @@ mod tests {
         assert!(result.is_some());
 
         let collected_dir = result.unwrap();
-        let expected_file1 = collected_dir.join("meshes").join("precombined").join("test1.nif");
-        let expected_file2 = collected_dir.join("meshes").join("precombined").join("test2.nif");
+        let expected_file1 = collected_dir
+            .join("meshes")
+            .join("precombined")
+            .join("test1.nif");
+        let expected_file2 = collected_dir
+            .join("meshes")
+            .join("precombined")
+            .join("test2.nif");
 
         assert!(expected_file1.exists());
         assert!(expected_file2.exists());
@@ -213,7 +225,11 @@ mod tests {
         assert!(result.is_some());
 
         let collected_dir = result.unwrap();
-        let expected_file = collected_dir.join("vis").join("subdir1").join("subdir2").join("test.uvd");
+        let expected_file = collected_dir
+            .join("vis")
+            .join("subdir1")
+            .join("subdir2")
+            .join("test.uvd");
 
         assert!(expected_file.exists());
     }

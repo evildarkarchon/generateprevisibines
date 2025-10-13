@@ -35,13 +35,17 @@ pub fn ensure_output_directories(data_dir: &Path) -> Result<(PathBuf, PathBuf)> 
 
     // Create directories if they don't exist
     if !meshes_dir.exists() {
-        fs::create_dir_all(&meshes_dir)
-            .context(format!("Failed to create directory: {}", meshes_dir.display()))?;
+        fs::create_dir_all(&meshes_dir).context(format!(
+            "Failed to create directory: {}",
+            meshes_dir.display()
+        ))?;
     }
 
     if !precombined_dir.exists() {
-        fs::create_dir_all(&precombined_dir)
-            .context(format!("Failed to create directory: {}", precombined_dir.display()))?;
+        fs::create_dir_all(&precombined_dir).context(format!(
+            "Failed to create directory: {}",
+            precombined_dir.display()
+        ))?;
     }
 
     if !vis_dir.exists() {
@@ -130,8 +134,7 @@ pub fn delete_matching_files(dir: &Path, extension: &str) -> Result<usize> {
     let count = files.len();
 
     for file in files {
-        fs::remove_file(&file)
-            .context(format!("Failed to delete file: {}", file.display()))?;
+        fs::remove_file(&file).context(format!("Failed to delete file: {}", file.display()))?;
     }
 
     Ok(count)
