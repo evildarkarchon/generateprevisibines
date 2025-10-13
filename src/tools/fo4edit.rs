@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use log::{info, warn};
 use mo2_mode::MO2Command;
 use std::fs;
@@ -9,11 +9,11 @@ use std::time::Duration;
 
 #[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_RETURN,
+    INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VK_RETURN,
 };
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, SetForegroundWindow, SendMessageW, WM_CLOSE,
+    FindWindowW, SendMessageW, SetForegroundWindow, WM_CLOSE,
 };
 
 /// FO4Edit script names
@@ -105,7 +105,11 @@ impl FO4EditRunner {
             format!("-log:{}", log_file.display()),
         ];
 
-        info!("Executing: {} {}", self.fo4edit_exe.display(), args.join(" "));
+        info!(
+            "Executing: {} {}",
+            self.fo4edit_exe.display(),
+            args.join(" ")
+        );
 
         // Launch FO4Edit (optionally through MO2)
         let mut child = if let Some(ref mo2_path) = self.mo2_path {
@@ -116,14 +120,21 @@ impl FO4EditRunner {
                 .execute();
             cmd.current_dir(&self.fallout4_dir)
                 .spawn()
-                .with_context(|| format!("Failed to launch FO4Edit through MO2: {}", mo2_path.display()))?
+                .with_context(|| {
+                    format!(
+                        "Failed to launch FO4Edit through MO2: {}",
+                        mo2_path.display()
+                    )
+                })?
         } else {
             // Direct execution
             Command::new(&self.fo4edit_exe)
                 .args(&args)
                 .current_dir(&self.fallout4_dir)
                 .spawn()
-                .with_context(|| format!("Failed to launch FO4Edit: {}", self.fo4edit_exe.display()))?
+                .with_context(|| {
+                    format!("Failed to launch FO4Edit: {}", self.fo4edit_exe.display())
+                })?
         };
 
         // Wait for window to appear, then send ENTER keystroke
@@ -274,8 +285,7 @@ impl FO4EditRunner {
             bail!("Log file not found: {}", log_file.display());
         }
 
-        let log_content = fs::read_to_string(log_file)
-            .context("Failed to read FO4Edit log")?;
+        let log_content = fs::read_to_string(log_file).context("Failed to read FO4Edit log")?;
 
         // Check for errors
         if log_content.contains(LOG_ERROR) {

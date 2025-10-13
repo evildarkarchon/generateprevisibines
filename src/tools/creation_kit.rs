@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use log::{info, warn};
 use mo2_mode::MO2Command;
 use std::fs;
@@ -54,11 +54,7 @@ impl CreationKitRunner {
     /// Generate precombined meshes
     ///
     /// Runs: `CreationKit -GeneratePrecombined:<plugin> "clean/filtered all"`
-    pub fn generate_precombined(
-        &self,
-        plugin_name: &str,
-        build_mode: BuildMode,
-    ) -> Result<()> {
+    pub fn generate_precombined(&self, plugin_name: &str, build_mode: BuildMode) -> Result<()> {
         let mode_arg = match build_mode {
             BuildMode::Clean => "clean all",
             BuildMode::Filtered => "filtered all",
@@ -66,10 +62,7 @@ impl CreationKitRunner {
         };
 
         self.run_with_dll_guard(
-            &[
-                &format!("-GeneratePrecombined:{}", plugin_name),
-                mode_arg,
-            ],
+            &[&format!("-GeneratePrecombined:{}", plugin_name), mode_arg],
             "Generate Precombined",
         )
     }
@@ -78,7 +71,9 @@ impl CreationKitRunner {
     ///
     /// Runs: `CreationKit -CompressPSG:<plugin> - Geometry.csg ""`
     pub fn compress_psg(&self, plugin_name: &str) -> Result<()> {
-        let plugin_base = plugin_name.trim_end_matches(".esp").trim_end_matches(".esm");
+        let plugin_base = plugin_name
+            .trim_end_matches(".esp")
+            .trim_end_matches(".esm");
         let csg_file = format!("{} - Geometry.csg", plugin_base);
 
         self.run_with_dll_guard(
@@ -91,7 +86,9 @@ impl CreationKitRunner {
     ///
     /// Runs: `CreationKit -BuildCDX:<plugin>.cdx ""`
     pub fn build_cdx(&self, plugin_name: &str) -> Result<()> {
-        let plugin_base = plugin_name.trim_end_matches(".esp").trim_end_matches(".esm");
+        let plugin_base = plugin_name
+            .trim_end_matches(".esp")
+            .trim_end_matches(".esm");
         let cdx_file = format!("{}.cdx", plugin_base);
 
         self.run_with_dll_guard(&[&format!("-BuildCDX:{}", cdx_file), ""], "Build CDX")
@@ -109,8 +106,8 @@ impl CreationKitRunner {
         // Check for specific previs failure in log
         if let Some(ref log_path) = self.log_file {
             if log_path.exists() {
-                let log_content = fs::read_to_string(log_path)
-                    .context("Failed to read CreationKit log")?;
+                let log_content =
+                    fs::read_to_string(log_path).context("Failed to read CreationKit log")?;
 
                 if log_content.contains(PREVIS_ERROR) {
                     bail!(
@@ -153,14 +150,21 @@ impl CreationKitRunner {
                 .execute();
             cmd.current_dir(&self.fallout4_dir)
                 .status()
-                .with_context(|| format!("Failed to execute CreationKit through MO2: {}", mo2_path.display()))?
+                .with_context(|| {
+                    format!(
+                        "Failed to execute CreationKit through MO2: {}",
+                        mo2_path.display()
+                    )
+                })?
         } else {
             // Direct execution
             Command::new(&self.ck_exe)
                 .args(args)
                 .current_dir(&self.fallout4_dir)
                 .status()
-                .with_context(|| format!("Failed to execute CreationKit: {}", self.ck_exe.display()))?
+                .with_context(|| {
+                    format!("Failed to execute CreationKit: {}", self.ck_exe.display())
+                })?
         };
 
         // Parse log for errors (even if exit code is non-zero)
@@ -191,8 +195,7 @@ impl CreationKitRunner {
             return Ok(());
         }
 
-        let log_content = fs::read_to_string(log_path)
-            .context("Failed to read CreationKit log")?;
+        let log_content = fs::read_to_string(log_path).context("Failed to read CreationKit log")?;
 
         // Check for handle limit errors
         if log_content.contains(HANDLE_LIMIT_ERROR) {
@@ -223,9 +226,6 @@ mod tests {
         let runner = CreationKitRunner::new("CreationKit.exe", "F:\\Games\\Fallout4")
             .with_log_file("CreationKit.log");
 
-        assert_eq!(
-            runner.log_file,
-            Some(PathBuf::from("CreationKit.log"))
-        );
+        assert_eq!(runner.log_file, Some(PathBuf::from("CreationKit.log")));
     }
 }

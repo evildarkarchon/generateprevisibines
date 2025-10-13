@@ -86,7 +86,10 @@ impl DllManager {
                 )
             })?;
 
-            info!("Disabled DLL: {}", dll_path.file_name().unwrap().to_string_lossy());
+            info!(
+                "Disabled DLL: {}",
+                dll_path.file_name().unwrap().to_string_lossy()
+            );
             self.disabled_dlls.push(disabled_path);
             disabled_count += 1;
         }
@@ -124,7 +127,10 @@ impl DllManager {
                     )
                 })?;
 
-                info!("Restored DLL: {}", original_path.file_name().unwrap().to_string_lossy());
+                info!(
+                    "Restored DLL: {}",
+                    original_path.file_name().unwrap().to_string_lossy()
+                );
                 restored_count += 1;
             } else {
                 warn!(

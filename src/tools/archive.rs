@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use log::info;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -73,8 +73,9 @@ impl ArchiveManager {
 
                 // Archive2: Delete source files after archiving
                 info!("Deleting source files: {}", source_dir.display());
-                fs::remove_dir_all(source_dir)
-                    .with_context(|| format!("Failed to delete source: {}", source_dir.display()))?;
+                fs::remove_dir_all(source_dir).with_context(|| {
+                    format!("Failed to delete source: {}", source_dir.display())
+                })?;
             }
             ArchiveTool::BSArch => {
                 self.bsarch_pack(source_dir, &archive_path)?;
@@ -104,7 +105,8 @@ impl ArchiveManager {
 
             let temp_collect = data_dir.join("_temp_mo2_collect");
 
-            let collected_dir = mo2_helper.collect_precombines(&temp_collect)
+            let collected_dir = mo2_helper
+                .collect_precombines(&temp_collect)
                 .context("Failed to collect precombines from MO2 staging directory")?;
 
             if let Some(collected) = collected_dir {
@@ -203,7 +205,8 @@ impl ArchiveManager {
 
             let temp_collect = data_dir.join("_temp_mo2_collect");
 
-            let collected_dir = mo2_helper.collect_previs(&temp_collect)
+            let collected_dir = mo2_helper
+                .collect_previs(&temp_collect)
                 .context("Failed to collect previs from MO2 staging directory")?;
 
             if let Some(collected) = collected_dir {
@@ -227,12 +230,7 @@ impl ArchiveManager {
     }
 
     /// Create archive using Archive2
-    fn archive2_create(
-        &self,
-        source_dir: &Path,
-        archive_path: &Path,
-        is_xbox: bool,
-    ) -> Result<()> {
+    fn archive2_create(&self, source_dir: &Path, archive_path: &Path, is_xbox: bool) -> Result<()> {
         let Some(ref archive2_exe) = self.archive2_exe else {
             bail!("Archive2.exe not configured");
         };
@@ -273,7 +271,10 @@ impl ArchiveManager {
             bail!("Archive2.exe not configured");
         };
 
-        info!("Extracting archive with Archive2: {}", archive_path.display());
+        info!(
+            "Extracting archive with Archive2: {}",
+            archive_path.display()
+        );
 
         let output = Command::new(archive2_exe)
             .args(&[
@@ -309,9 +310,9 @@ impl ArchiveManager {
                 "pack",
                 &source_dir.to_string_lossy(),
                 &archive_path.to_string_lossy(),
-                "-mt",   // Multi-threaded
-                "-fo4",  // Fallout 4 format
-                "-z",    // Compress
+                "-mt",  // Multi-threaded
+                "-fo4", // Fallout 4 format
+                "-z",   // Compress
             ])
             .current_dir(&self.fallout4_dir)
             .output()
@@ -358,21 +359,11 @@ mod tests {
     #[test]
     fn test_archive_manager_requires_exe() {
         // Archive2 without exe should fail
-        let result = ArchiveManager::new(
-            ArchiveTool::Archive2,
-            None,
-            None,
-            "F:\\Games\\Fallout4",
-        );
+        let result = ArchiveManager::new(ArchiveTool::Archive2, None, None, "F:\\Games\\Fallout4");
         assert!(result.is_err());
 
         // BSArch without exe should fail
-        let result = ArchiveManager::new(
-            ArchiveTool::BSArch,
-            None,
-            None,
-            "F:\\Games\\Fallout4",
-        );
+        let result = ArchiveManager::new(ArchiveTool::BSArch, None, None, "F:\\Games\\Fallout4");
         assert!(result.is_err());
     }
 

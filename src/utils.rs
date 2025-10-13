@@ -3,10 +3,10 @@ use log::LevelFilter;
 use std::env;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use windows::core::PCWSTR;
 use windows::Win32::Storage::FileSystem::{
     GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
 };
+use windows::core::PCWSTR;
 
 /// Get the product version string from a Windows executable
 /// This uses the Windows API to read version info from the PE file
@@ -32,8 +32,12 @@ pub fn get_file_version(exe_path: &Path) -> Result<String> {
             Some(0),
             size,
             buffer.as_mut_ptr() as *mut _,
-        ).ok()
-        .context(format!("Failed to read version info for {}", exe_path.display()))?;
+        )
+        .ok()
+        .context(format!(
+            "Failed to read version info for {}",
+            exe_path.display()
+        ))?;
 
         // Query for the VS_FIXEDFILEINFO structure
         let mut len: u32 = 0;
@@ -45,8 +49,12 @@ pub fn get_file_version(exe_path: &Path) -> Result<String> {
             PCWSTR(subblock.as_ptr()),
             &mut info_ptr as *mut _ as *mut *mut _,
             &mut len,
-        ).ok()
-        .context(format!("Failed to query version value for {}", exe_path.display()))?;
+        )
+        .ok()
+        .context(format!(
+            "Failed to query version value for {}",
+            exe_path.display()
+        ))?;
 
         // Cast to VS_FIXEDFILEINFO structure
         // We need the file version (dwFileVersionMS and dwFileVersionLS)
@@ -92,8 +100,7 @@ pub fn init_logging() -> Result<PathBuf> {
     let log_file_path = temp_dir.join("GeneratePrevisibines.log");
 
     // Create or truncate the log file
-    let log_file = File::create(&log_file_path)
-        .context("Failed to create log file in %TEMP%")?;
+    let log_file = File::create(&log_file_path).context("Failed to create log file in %TEMP%")?;
 
     // Set up env_logger to write to the file
     env_logger::Builder::new()

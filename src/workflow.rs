@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use log::{info, warn};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -100,12 +100,22 @@ impl<'a> WorkflowExecutor<'a> {
     /// Run the workflow starting from a specific step
     pub fn run_from_step(&self, start_step: WorkflowStep) -> Result<()> {
         if start_step == WorkflowStep::GeneratePrecombined {
-            info!("=== Beginning previs generation for {} ===", self.plugin_name);
+            info!(
+                "=== Beginning previs generation for {} ===",
+                self.plugin_name
+            );
             info!("Build Mode: {:?}", self.config.build_mode);
         } else {
-            info!("=== Resuming previs generation for {} ===", self.plugin_name);
+            info!(
+                "=== Resuming previs generation for {} ===",
+                self.plugin_name
+            );
             info!("Build Mode: {:?}", self.config.build_mode);
-            info!("Starting from: Step {} - {}", start_step.number(), start_step.name());
+            info!(
+                "Starting from: Step {} - {}",
+                start_step.number(),
+                start_step.name()
+            );
         }
 
         let mut current_step = Some(start_step);
@@ -191,11 +201,15 @@ impl<'a> WorkflowExecutor<'a> {
         self.check_and_clean_directory(&vis_dir, "vis")?;
 
         // Run CreationKit
-        let ck_log = self.config.ck_log_path.as_ref()
+        let ck_log = self
+            .config
+            .ck_log_path
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("CK log path not configured"))?;
 
-        let mut ck_runner = CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
-            .with_log_file(ck_log);
+        let mut ck_runner =
+            CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
+                .with_log_file(ck_log);
 
         if let Some(ref mo2_path) = self.config.mo2_path {
             ck_runner = ck_runner.with_mo2(mo2_path);
@@ -211,7 +225,9 @@ impl<'a> WorkflowExecutor<'a> {
         // Post-check: .psg file created (clean mode only)
         if self.config.build_mode == BuildMode::Clean {
             let plugin_base = validation::get_plugin_base_name(&self.plugin_name);
-            let psg_file = self.data_dir.join(format!("{} - Geometry.psg", plugin_base));
+            let psg_file = self
+                .data_dir
+                .join(format!("{} - Geometry.psg", plugin_base));
 
             if !psg_file.exists() {
                 warn!("PSG file not created: {}", psg_file.display());
@@ -231,7 +247,8 @@ impl<'a> WorkflowExecutor<'a> {
         }
 
         // Run FO4Edit
-        let mut fo4edit_runner = FO4EditRunner::new(&self.config.fo4edit_path, &self.config.fo4_dir);
+        let mut fo4edit_runner =
+            FO4EditRunner::new(&self.config.fo4edit_path, &self.config.fo4_dir);
 
         if let Some(ref mo2_path) = self.config.mo2_path {
             fo4edit_runner = fo4edit_runner.with_mo2(mo2_path);
@@ -248,8 +265,12 @@ impl<'a> WorkflowExecutor<'a> {
         let archive_name = format!("{} - Main.ba2", plugin_base);
 
         let (archive2_path, bsarch_path) = match self.config.archive_tool {
-            crate::config::ArchiveTool::Archive2 => (Some(self.config.archive_exe_path.clone()), None),
-            crate::config::ArchiveTool::BSArch => (None, Some(self.config.archive_exe_path.clone())),
+            crate::config::ArchiveTool::Archive2 => {
+                (Some(self.config.archive_exe_path.clone()), None)
+            }
+            crate::config::ArchiveTool::BSArch => {
+                (None, Some(self.config.archive_exe_path.clone()))
+            }
         };
 
         let archive_manager = ArchiveManager::new(
@@ -271,7 +292,9 @@ impl<'a> WorkflowExecutor<'a> {
     /// Step 4: Compress PSG Via CK (clean mode only)
     fn step4_compress_psg(&self) -> Result<()> {
         let plugin_base = validation::get_plugin_base_name(&self.plugin_name);
-        let psg_file = self.data_dir.join(format!("{} - Geometry.psg", plugin_base));
+        let psg_file = self
+            .data_dir
+            .join(format!("{} - Geometry.psg", plugin_base));
 
         // Pre-check: .psg file exists
         if !psg_file.exists() {
@@ -279,11 +302,15 @@ impl<'a> WorkflowExecutor<'a> {
         }
 
         // Run CreationKit
-        let ck_log = self.config.ck_log_path.as_ref()
+        let ck_log = self
+            .config
+            .ck_log_path
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("CK log path not configured"))?;
 
-        let mut ck_runner = CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
-            .with_log_file(ck_log);
+        let mut ck_runner =
+            CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
+                .with_log_file(ck_log);
 
         if let Some(ref mo2_path) = self.config.mo2_path {
             ck_runner = ck_runner.with_mo2(mo2_path);
@@ -301,11 +328,15 @@ impl<'a> WorkflowExecutor<'a> {
 
     /// Step 5: Build CDX Via CK (clean mode only)
     fn step5_build_cdx(&self) -> Result<()> {
-        let ck_log = self.config.ck_log_path.as_ref()
+        let ck_log = self
+            .config
+            .ck_log_path
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("CK log path not configured"))?;
 
-        let mut ck_runner = CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
-            .with_log_file(ck_log);
+        let mut ck_runner =
+            CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
+                .with_log_file(ck_log);
 
         if let Some(ref mo2_path) = self.config.mo2_path {
             ck_runner = ck_runner.with_mo2(mo2_path);
@@ -324,11 +355,15 @@ impl<'a> WorkflowExecutor<'a> {
         self.check_and_clean_directory(&vis_dir, "vis")?;
 
         // Run CreationKit
-        let ck_log = self.config.ck_log_path.as_ref()
+        let ck_log = self
+            .config
+            .ck_log_path
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("CK log path not configured"))?;
 
-        let mut ck_runner = CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
-            .with_log_file(ck_log);
+        let mut ck_runner =
+            CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
+                .with_log_file(ck_log);
 
         if let Some(ref mo2_path) = self.config.mo2_path {
             ck_runner = ck_runner.with_mo2(mo2_path);
@@ -360,7 +395,8 @@ impl<'a> WorkflowExecutor<'a> {
         }
 
         // Run FO4Edit
-        let mut fo4edit_runner = FO4EditRunner::new(&self.config.fo4edit_path, &self.config.fo4_dir);
+        let mut fo4edit_runner =
+            FO4EditRunner::new(&self.config.fo4edit_path, &self.config.fo4_dir);
 
         if let Some(ref mo2_path) = self.config.mo2_path {
             fo4edit_runner = fo4edit_runner.with_mo2(mo2_path);
@@ -377,8 +413,12 @@ impl<'a> WorkflowExecutor<'a> {
         let archive_name = format!("{} - Main.ba2", plugin_base);
 
         let (archive2_path, bsarch_path) = match self.config.archive_tool {
-            crate::config::ArchiveTool::Archive2 => (Some(self.config.archive_exe_path.clone()), None),
-            crate::config::ArchiveTool::BSArch => (None, Some(self.config.archive_exe_path.clone())),
+            crate::config::ArchiveTool::Archive2 => {
+                (Some(self.config.archive_exe_path.clone()), None)
+            }
+            crate::config::ArchiveTool::BSArch => {
+                (None, Some(self.config.archive_exe_path.clone()))
+            }
         };
 
         let archive_manager = ArchiveManager::new(
@@ -409,7 +449,10 @@ impl<'a> WorkflowExecutor<'a> {
         info!("Build Mode: {:?}", self.config.build_mode);
         info!("Completed in: {}m {}s", minutes, seconds);
         info!("");
-        info!("Previsibines generated successfully for {}!", self.plugin_name);
+        info!(
+            "Previsibines generated successfully for {}!",
+            self.plugin_name
+        );
         info!("");
         info!("What's next:");
         info!("  • Test your mod in-game to verify everything works");
