@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config::ArchiveTool;
+use crate::mo2_helper::Mo2Helper;
 
 /// Archive manager that abstracts Archive2 and BSArch
 ///
@@ -84,6 +85,48 @@ impl ArchiveManager {
         Ok(())
     }
 
+    /// Create a new archive from precombined meshes (MO2-aware)
+    ///
+    /// When mo2_data_dir is provided, collects files from MO2 staging directory first.
+    /// Otherwise, uses the standard Fallout 4 Data directory.
+    pub fn create_archive_from_precombines(
+        &self,
+        archive_name: &str,
+        is_xbox: bool,
+        mo2_data_dir: Option<&Path>,
+    ) -> Result<()> {
+        let data_dir = self.fallout4_dir.join("Data");
+
+        if let Some(mo2_staging) = mo2_data_dir {
+            // MO2 mode: Collect files from staging directory
+            info!("MO2 mode: Collecting precombined meshes from staging directory");
+            let mo2_helper = Mo2Helper::new(mo2_staging)?;
+
+            let temp_collect = data_dir.join("_temp_mo2_collect");
+
+            let collected_dir = mo2_helper.collect_precombines(&temp_collect)
+                .context("Failed to collect precombines from MO2 staging directory")?;
+
+            if let Some(collected) = collected_dir {
+                // Archive from collected files
+                self.create_archive(&collected, archive_name, is_xbox)?;
+
+                // Cleanup temp directory
+                if temp_collect.exists() {
+                    fs::remove_dir_all(&temp_collect)?;
+                }
+            } else {
+                bail!("No precombined meshes found in MO2 staging directory");
+            }
+        } else {
+            // Standard mode: Use files from Data directory
+            let precombined_dir = data_dir.join("meshes").join("precombined");
+            self.create_archive(&precombined_dir, archive_name, is_xbox)?;
+        }
+
+        Ok(())
+    }
+
     /// Add files to an existing archive
     ///
     /// Archive2: Extract, add files, re-archive (NO APPEND SUPPORT)
@@ -136,6 +179,48 @@ impl ArchiveManager {
                 // BSArch can append
                 self.bsarch_pack(source_dir, &archive_path)?;
             }
+        }
+
+        Ok(())
+    }
+
+    /// Add previs files to an existing archive (MO2-aware)
+    ///
+    /// When mo2_data_dir is provided, collects files from MO2 staging directory first.
+    /// Otherwise, uses the standard Fallout 4 Data directory.
+    pub fn add_previs_to_archive(
+        &self,
+        archive_name: &str,
+        is_xbox: bool,
+        mo2_data_dir: Option<&Path>,
+    ) -> Result<()> {
+        let data_dir = self.fallout4_dir.join("Data");
+
+        if let Some(mo2_staging) = mo2_data_dir {
+            // MO2 mode: Collect files from staging directory
+            info!("MO2 mode: Collecting previs data from staging directory");
+            let mo2_helper = Mo2Helper::new(mo2_staging)?;
+
+            let temp_collect = data_dir.join("_temp_mo2_collect");
+
+            let collected_dir = mo2_helper.collect_previs(&temp_collect)
+                .context("Failed to collect previs from MO2 staging directory")?;
+
+            if let Some(collected) = collected_dir {
+                // Add collected files to archive
+                self.add_to_archive(&collected, archive_name, is_xbox)?;
+
+                // Cleanup temp directory
+                if temp_collect.exists() {
+                    fs::remove_dir_all(&temp_collect)?;
+                }
+            } else {
+                bail!("No previs data found in MO2 staging directory");
+            }
+        } else {
+            // Standard mode: Use files from Data directory
+            let vis_dir = data_dir.join("vis");
+            self.add_to_archive(&vis_dir, archive_name, is_xbox)?;
         }
 
         Ok(())

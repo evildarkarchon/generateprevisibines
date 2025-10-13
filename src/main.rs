@@ -6,6 +6,7 @@ use std::path::PathBuf;
 mod ckpe_config;
 mod config;
 mod filesystem;
+mod mo2_helper;
 mod prompts;
 mod registry;
 mod tools;
@@ -42,6 +43,20 @@ struct Args {
     /// Override Fallout 4 directory
     #[arg(long = "FO4", value_name = "PATH")]
     fo4_dir: Option<PathBuf>,
+
+    /// Use Mod Organizer 2 mode (runs tools through MO2's VFS)
+    /// Requires --mo2-path to be specified
+    #[arg(long = "mo2", requires = "mo2_path")]
+    mo2_mode: bool,
+
+    /// Path to ModOrganizer.exe (required when using --mo2)
+    #[arg(long = "mo2-path", value_name = "PATH")]
+    mo2_path: Option<PathBuf>,
+
+    /// Path to MO2's VFS staging directory (e.g., overwrite folder)
+    /// Required when using --mo2 for archiving operations
+    #[arg(long = "mo2-data-dir", value_name = "PATH")]
+    mo2_data_dir: Option<PathBuf>,
 }
 
 impl Args {
@@ -191,12 +206,50 @@ fn main() -> Result<()> {
         archive_version
     );
 
+    // Configure MO2 if enabled
+    let (mo2_config, mo2_data_dir_config) = if args.mo2_mode {
+        if let Some(ref mo2_path) = args.mo2_path {
+            if !mo2_path.exists() {
+                anyhow::bail!("Mod Organizer 2 not found at: {}", mo2_path.display());
+            }
+            println!();
+            let mo2_version = utils::get_simple_version(mo2_path);
+            println!("Mod Organizer 2: {}", mo2_version);
+
+            // Validate mo2_data_dir if provided
+            let mo2_data_dir = if let Some(ref data_dir) = args.mo2_data_dir {
+                if !data_dir.exists() {
+                    anyhow::bail!("MO2 data directory not found at: {}", data_dir.display());
+                }
+                println!("MO2 data dir:    {}", data_dir.display());
+                Some(data_dir.clone())
+            } else {
+                println!("Warning: --mo2-data-dir not specified. Archiving may not work correctly in MO2 mode.");
+                None
+            };
+
+            (Some(mo2_path.clone()), mo2_data_dir)
+        } else {
+            anyhow::bail!("--mo2 flag requires --mo2-path to be specified");
+        }
+    } else {
+        (None, None)
+    };
+
     println!();
     println!("======================================");
     println!("  Configuration");
     println!("======================================");
     println!("Build mode:     {}", args.get_build_mode().as_str());
     println!("Archive tool:   {}", match archive_tool { ArchiveTool::Archive2 => "Archive2", ArchiveTool::BSArch => "BSArch" });
+    if args.mo2_mode {
+        println!("MO2 mode:       Enabled");
+        if let Some(ref mo2_path) = mo2_config {
+            println!("MO2 path:       {}", mo2_path.display());
+        }
+    } else {
+        println!("MO2 mode:       Disabled");
+    }
     if let Some(ref plugin) = args.plugin {
         println!("Plugin:         {}", plugin);
     }
@@ -211,6 +264,9 @@ fn main() -> Result<()> {
     config.ckpe_config_path = ckpe_config_path;
     config.ck_log_path = ck_log_path;
     config.plugin_name = args.plugin.clone();
+    config.mo2_mode = args.mo2_mode;
+    config.mo2_path = mo2_config;
+    config.mo2_data_dir = mo2_data_dir_config;
 
     // Validate configuration
     config.validate().context("Configuration validation failed")?;

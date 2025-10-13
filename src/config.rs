@@ -56,6 +56,16 @@ pub struct Config {
 
     /// Creation Kit log file path (from CKPE config)
     pub ck_log_path: Option<PathBuf>,
+
+    /// Use Mod Organizer 2 mode (run tools through MO2's VFS)
+    pub mo2_mode: bool,
+
+    /// Path to ModOrganizer.exe (only used if mo2_mode is true)
+    pub mo2_path: Option<PathBuf>,
+
+    /// Path to MO2's VFS staging directory (e.g., overwrite folder)
+    /// Required when mo2_mode is true for archiving operations
+    pub mo2_data_dir: Option<PathBuf>,
 }
 
 #[allow(dead_code)] // These methods will be used in later phases
@@ -72,6 +82,9 @@ impl Config {
             archive_exe_path: PathBuf::new(),
             ckpe_config_path: None,
             ck_log_path: None,
+            mo2_mode: false,
+            mo2_path: None,
+            mo2_data_dir: None,
         }
     }
 
@@ -116,6 +129,24 @@ impl Config {
                 ArchiveTool::BSArch => "BSArch",
             };
             anyhow::bail!("{} not found at: {}", tool_name, self.archive_exe_path.display());
+        }
+
+        // Validate MO2 configuration if MO2 mode is enabled
+        if self.mo2_mode {
+            if let Some(ref mo2_path) = self.mo2_path {
+                if !mo2_path.exists() {
+                    anyhow::bail!("Mod Organizer 2 not found at: {}", mo2_path.display());
+                }
+            } else {
+                anyhow::bail!("MO2 mode is enabled but mo2_path is not set");
+            }
+
+            // Validate mo2_data_dir if provided
+            if let Some(ref mo2_data_dir) = self.mo2_data_dir {
+                if !mo2_data_dir.exists() {
+                    anyhow::bail!("MO2 data directory not found at: {}", mo2_data_dir.display());
+                }
+            }
         }
 
         Ok(())

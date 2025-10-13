@@ -194,8 +194,12 @@ impl<'a> WorkflowExecutor<'a> {
         let ck_log = self.config.ck_log_path.as_ref()
             .ok_or_else(|| anyhow::anyhow!("CK log path not configured"))?;
 
-        let ck_runner = CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
+        let mut ck_runner = CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
             .with_log_file(ck_log);
+
+        if let Some(ref mo2_path) = self.config.mo2_path {
+            ck_runner = ck_runner.with_mo2(mo2_path);
+        }
 
         ck_runner.generate_precombined(&self.plugin_name, self.config.build_mode)?;
 
@@ -227,7 +231,12 @@ impl<'a> WorkflowExecutor<'a> {
         }
 
         // Run FO4Edit
-        let fo4edit_runner = FO4EditRunner::new(&self.config.fo4edit_path, &self.config.fo4_dir);
+        let mut fo4edit_runner = FO4EditRunner::new(&self.config.fo4edit_path, &self.config.fo4_dir);
+
+        if let Some(ref mo2_path) = self.config.mo2_path {
+            fo4edit_runner = fo4edit_runner.with_mo2(mo2_path);
+        }
+
         fo4edit_runner.merge_combined_objects(&self.plugin_name)?;
 
         Ok(())
@@ -235,12 +244,6 @@ impl<'a> WorkflowExecutor<'a> {
 
     /// Step 3: Create BA2 Archive from Precombines
     fn step3_create_precombined_archive(&self) -> Result<()> {
-        let precombined_dir = self.data_dir.join("meshes").join("precombined");
-
-        if !precombined_dir.exists() {
-            bail!("Precombined directory not found");
-        }
-
         let plugin_base = validation::get_plugin_base_name(&self.plugin_name);
         let archive_name = format!("{} - Main.ba2", plugin_base);
 
@@ -257,7 +260,9 @@ impl<'a> WorkflowExecutor<'a> {
         )?;
 
         let is_xbox = self.config.build_mode == BuildMode::Xbox;
-        archive_manager.create_archive(&precombined_dir, &archive_name, is_xbox)?;
+        let mo2_data_dir = self.config.mo2_data_dir.as_deref();
+
+        archive_manager.create_archive_from_precombines(&archive_name, is_xbox, mo2_data_dir)?;
 
         info!("Created archive: {}", archive_name);
         Ok(())
@@ -277,8 +282,12 @@ impl<'a> WorkflowExecutor<'a> {
         let ck_log = self.config.ck_log_path.as_ref()
             .ok_or_else(|| anyhow::anyhow!("CK log path not configured"))?;
 
-        let ck_runner = CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
+        let mut ck_runner = CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
             .with_log_file(ck_log);
+
+        if let Some(ref mo2_path) = self.config.mo2_path {
+            ck_runner = ck_runner.with_mo2(mo2_path);
+        }
 
         ck_runner.compress_psg(&self.plugin_name)?;
 
@@ -295,8 +304,12 @@ impl<'a> WorkflowExecutor<'a> {
         let ck_log = self.config.ck_log_path.as_ref()
             .ok_or_else(|| anyhow::anyhow!("CK log path not configured"))?;
 
-        let ck_runner = CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
+        let mut ck_runner = CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
             .with_log_file(ck_log);
+
+        if let Some(ref mo2_path) = self.config.mo2_path {
+            ck_runner = ck_runner.with_mo2(mo2_path);
+        }
 
         ck_runner.build_cdx(&self.plugin_name)?;
 
@@ -314,8 +327,12 @@ impl<'a> WorkflowExecutor<'a> {
         let ck_log = self.config.ck_log_path.as_ref()
             .ok_or_else(|| anyhow::anyhow!("CK log path not configured"))?;
 
-        let ck_runner = CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
+        let mut ck_runner = CreationKitRunner::new(&self.config.creation_kit_path, &self.config.fo4_dir)
             .with_log_file(ck_log);
+
+        if let Some(ref mo2_path) = self.config.mo2_path {
+            ck_runner = ck_runner.with_mo2(mo2_path);
+        }
 
         ck_runner.generate_previs(&self.plugin_name)?;
 
@@ -343,7 +360,12 @@ impl<'a> WorkflowExecutor<'a> {
         }
 
         // Run FO4Edit
-        let fo4edit_runner = FO4EditRunner::new(&self.config.fo4edit_path, &self.config.fo4_dir);
+        let mut fo4edit_runner = FO4EditRunner::new(&self.config.fo4edit_path, &self.config.fo4_dir);
+
+        if let Some(ref mo2_path) = self.config.mo2_path {
+            fo4edit_runner = fo4edit_runner.with_mo2(mo2_path);
+        }
+
         fo4edit_runner.merge_previs(&self.plugin_name)?;
 
         Ok(())
@@ -351,12 +373,6 @@ impl<'a> WorkflowExecutor<'a> {
 
     /// Step 8: Add Previs files to BA2 Archive
     fn step8_add_previs_to_archive(&self) -> Result<()> {
-        let vis_dir = self.data_dir.join("vis");
-
-        if !vis_dir.exists() {
-            bail!("Vis directory not found");
-        }
-
         let plugin_base = validation::get_plugin_base_name(&self.plugin_name);
         let archive_name = format!("{} - Main.ba2", plugin_base);
 
@@ -373,7 +389,9 @@ impl<'a> WorkflowExecutor<'a> {
         )?;
 
         let is_xbox = self.config.build_mode == BuildMode::Xbox;
-        archive_manager.add_to_archive(&vis_dir, &archive_name, is_xbox)?;
+        let mo2_data_dir = self.config.mo2_data_dir.as_deref();
+
+        archive_manager.add_previs_to_archive(&archive_name, is_xbox, mo2_data_dir)?;
 
         info!("Added previs data to archive: {}", archive_name);
         Ok(())

@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use log::{info, warn};
+use mo2_mode::MO2Command;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -29,7 +30,7 @@ const LOG_ERROR: &str = "Error:";
 ///
 /// Handles the complex FO4Edit automation workflow:
 /// 1. Create Plugins.txt file
-/// 2. Launch with arguments
+/// 2. Launch with arguments (optionally through MO2)
 /// 3. **Send ENTER keystroke to Module Selection dialog** (REQUIRED WORKAROUND)
 /// 4. Wait for completion
 /// 5. Force close window (despite -autoexit flag)
@@ -41,6 +42,7 @@ const LOG_ERROR: &str = "Error:";
 pub struct FO4EditRunner {
     fo4edit_exe: PathBuf,
     fallout4_dir: PathBuf,
+    mo2_path: Option<PathBuf>,
 }
 
 impl FO4EditRunner {
@@ -49,7 +51,14 @@ impl FO4EditRunner {
         Self {
             fo4edit_exe: fo4edit_exe.as_ref().to_path_buf(),
             fallout4_dir: fallout4_dir.as_ref().to_path_buf(),
+            mo2_path: None,
         }
+    }
+
+    /// Set Mod Organizer 2 path for VFS execution
+    pub fn with_mo2(mut self, mo2_path: impl AsRef<Path>) -> Self {
+        self.mo2_path = Some(mo2_path.as_ref().to_path_buf());
+        self
     }
 
     /// Run FO4Edit script to merge combined objects
@@ -98,12 +107,24 @@ impl FO4EditRunner {
 
         info!("Executing: {} {}", self.fo4edit_exe.display(), args.join(" "));
 
-        // Launch FO4Edit
-        let mut child = Command::new(&self.fo4edit_exe)
-            .args(&args)
-            .current_dir(&self.fallout4_dir)
-            .spawn()
-            .with_context(|| format!("Failed to launch FO4Edit: {}", self.fo4edit_exe.display()))?;
+        // Launch FO4Edit (optionally through MO2)
+        let mut child = if let Some(ref mo2_path) = self.mo2_path {
+            // Use MO2 mode
+            info!("Launching through Mod Organizer 2: {}", mo2_path.display());
+            let mut cmd = MO2Command::new(mo2_path, &self.fo4edit_exe)
+                .args(args.iter().map(|s| s.as_str()))
+                .execute();
+            cmd.current_dir(&self.fallout4_dir)
+                .spawn()
+                .with_context(|| format!("Failed to launch FO4Edit through MO2: {}", mo2_path.display()))?
+        } else {
+            // Direct execution
+            Command::new(&self.fo4edit_exe)
+                .args(&args)
+                .current_dir(&self.fallout4_dir)
+                .spawn()
+                .with_context(|| format!("Failed to launch FO4Edit: {}", self.fo4edit_exe.display()))?
+        };
 
         // Wait for window to appear, then send ENTER keystroke
         // This dismisses the Module Selection dialog

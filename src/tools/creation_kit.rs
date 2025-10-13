@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use log::{info, warn};
+use mo2_mode::MO2Command;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -18,12 +19,13 @@ const PREVIS_ERROR: &str = "visibility task did not complete";
 /// Handles:
 /// - DLL management (disable ENB/ReShade before running)
 /// - Log file deletion and parsing
-/// - Process execution with timeout
+/// - Process execution with timeout (optionally through MO2)
 /// - Exit code handling (CK may exit non-zero but still succeed)
 pub struct CreationKitRunner {
     ck_exe: PathBuf,
     fallout4_dir: PathBuf,
     log_file: Option<PathBuf>,
+    mo2_path: Option<PathBuf>,
 }
 
 impl CreationKitRunner {
@@ -33,12 +35,19 @@ impl CreationKitRunner {
             ck_exe: ck_exe.as_ref().to_path_buf(),
             fallout4_dir: fallout4_dir.as_ref().to_path_buf(),
             log_file: None,
+            mo2_path: None,
         }
     }
 
     /// Set the log file path (from CKPE config)
     pub fn with_log_file(mut self, log_file: impl AsRef<Path>) -> Self {
         self.log_file = Some(log_file.as_ref().to_path_buf());
+        self
+    }
+
+    /// Set Mod Organizer 2 path for VFS execution
+    pub fn with_mo2(mut self, mo2_path: impl AsRef<Path>) -> Self {
+        self.mo2_path = Some(mo2_path.as_ref().to_path_buf());
         self
     }
 
@@ -133,14 +142,26 @@ impl CreationKitRunner {
         let mut dll_manager = DllManager::new(&self.fallout4_dir);
         let _guard = DllGuard::new(&mut dll_manager)?;
 
-        // Run CreationKit
+        // Run CreationKit (optionally through MO2)
         info!("Executing: {} {}", self.ck_exe.display(), args.join(" "));
 
-        let status = Command::new(&self.ck_exe)
-            .args(args)
-            .current_dir(&self.fallout4_dir)
-            .status()
-            .with_context(|| format!("Failed to execute CreationKit: {}", self.ck_exe.display()))?;
+        let status = if let Some(ref mo2_path) = self.mo2_path {
+            // Use MO2 mode
+            info!("Launching through Mod Organizer 2: {}", mo2_path.display());
+            let mut cmd = MO2Command::new(mo2_path, &self.ck_exe)
+                .args(args.iter().copied())
+                .execute();
+            cmd.current_dir(&self.fallout4_dir)
+                .status()
+                .with_context(|| format!("Failed to execute CreationKit through MO2: {}", mo2_path.display()))?
+        } else {
+            // Direct execution
+            Command::new(&self.ck_exe)
+                .args(args)
+                .current_dir(&self.fallout4_dir)
+                .status()
+                .with_context(|| format!("Failed to execute CreationKit: {}", self.ck_exe.display()))?
+        };
 
         // Parse log for errors (even if exit code is non-zero)
         self.check_log_for_errors()?;

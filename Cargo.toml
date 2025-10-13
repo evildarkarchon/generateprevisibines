@@ -14,7 +14,7 @@ tempfile = "3.23.0"
 walkdir = "2.5.0"
 winreg = "0.55.0"
 
-mo2-mode = { path = "../mo2-mode" }
+mo2-mode = { path = "./mo2-mode" }
 
 [dependencies.windows]
 version = "0.62.2"
