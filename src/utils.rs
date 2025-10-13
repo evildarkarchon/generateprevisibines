@@ -73,8 +73,10 @@ pub fn get_file_version(exe_path: &Path) -> Result<String> {
     }
 }
 
+//noinspection RsStructNaming
 /// VS_FIXEDFILEINFO structure (from Windows SDK)
 /// Field names match Windows SDK exactly - do not rename to snake_case
+#[allow(non_camel_case_types)]
 #[repr(C)]
 #[allow(non_snake_case)]
 struct VS_FIXEDFILEINFO {
