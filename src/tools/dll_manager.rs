@@ -16,7 +16,7 @@ const INTERFERING_DLLS: &[&str] = &[
 ];
 
 /// Suffix used to disable DLLs (matches batch script)
-const DISABLED_SUFFIX: &str = ".dll-PJMdisabled";
+const DISABLED_SUFFIX: &str = "-PJMdisabled";
 
 /// Manages ENB/ReShade DLL disable/restore operations
 ///
@@ -75,7 +75,7 @@ impl DllManager {
                     .to_str()
                     .unwrap_or("")
                     .to_string()
-                    + "-PJMdisabled",
+                    + DISABLED_SUFFIX,
             );
 
             fs::rename(&dll_path, &disabled_path).with_context(|| {
@@ -113,7 +113,7 @@ impl DllManager {
             let original_name = disabled_path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map(|s| s.replace("-PJMdisabled", ""))
+                .map(|s| s.replace(DISABLED_SUFFIX, ""))
                 .context("Invalid DLL filename")?;
 
             let original_path = disabled_path.with_file_name(original_name);

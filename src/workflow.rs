@@ -99,6 +99,11 @@ impl<'a> WorkflowExecutor<'a> {
 
     /// Run the workflow starting from a specific step
     pub fn run_from_step(&self, start_step: WorkflowStep) -> Result<()> {
+        // Check for xPrevisPatch plugins before starting workflow from step 1
+        if start_step == WorkflowStep::GeneratePrecombined && self.interactive {
+            self.check_xprevis_patches()?;
+        }
+
         if start_step == WorkflowStep::GeneratePrecombined {
             info!(
                 "=== Beginning previs generation for {} ===",
@@ -437,6 +442,50 @@ impl<'a> WorkflowExecutor<'a> {
         Ok(())
     }
 
+    /// Check for xPrevisPatch plugins and prompt to rename
+    fn check_xprevis_patches(&self) -> Result<()> {
+        let xprevis_plugins = filesystem::find_xprevis_patch_plugins(&self.data_dir)?;
+
+        if !xprevis_plugins.is_empty() {
+            println!();
+            for plugin in &xprevis_plugins {
+                println!("  Found: {}", plugin);
+            }
+
+            if prompts::prompt_rename_xprevis_patch()? {
+                println!(
+                    "\nPlease rename the xPrevisPatch plugin(s) manually before continuing."
+                );
+                println!("You can add a suffix like '_old' or '_backup' to the filename.");
+                anyhow::bail!("xPrevisPatch plugin(s) detected - please rename and restart");
+            } else {
+                println!("\nContinuing anyway - but be aware this may cause conflicts.");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Clean up working files if user confirms
+    fn cleanup_working_files(&self) -> Result<()> {
+        let working_files = filesystem::find_working_files(&self.data_dir)?;
+
+        if !working_files.is_empty() && prompts::prompt_remove_working_files()? {
+            for file_name in &working_files {
+                let file_path = self.data_dir.join(file_name);
+                if file_path.exists() {
+                    fs::remove_file(&file_path).with_context(|| {
+                        format!("Failed to delete working file: {}", file_path.display())
+                    })?;
+                    info!("Deleted: {}", file_name);
+                }
+            }
+            println!("\nWorking files cleaned up successfully");
+        }
+
+        Ok(())
+    }
+
     /// Print final summary
     fn print_summary(&self) {
         let elapsed = self.start_time.elapsed();
@@ -456,7 +505,16 @@ impl<'a> WorkflowExecutor<'a> {
         info!("");
         info!("What's next:");
         info!("  • Test your mod in-game to verify everything works");
-        info!("  • Clean up temp files if needed (Previs.esp, PrecombineObjects.esp)");
+
+        // In interactive mode, prompt to clean up working files
+        if self.interactive {
+            println!();
+            if let Err(e) = self.cleanup_working_files() {
+                warn!("Failed to clean up working files: {}", e);
+            }
+        } else {
+            info!("  • Clean up temp files if needed (Previs.esp, PrecombineObjects.esp)");
+        }
     }
 }
 

@@ -100,8 +100,11 @@ impl ArchiveManager {
 
         if let Some(mo2_staging) = mo2_data_dir {
             // MO2 mode: Collect files from staging directory
-            info!("MO2 mode: Collecting precombined meshes from staging directory");
             let mo2_helper = Mo2Helper::new(mo2_staging)?;
+            info!(
+                "MO2 mode: Collecting precombined meshes from staging directory: {}",
+                mo2_helper.staging_dir().display()
+            );
 
             let temp_collect = data_dir.join("_temp_mo2_collect");
 
@@ -200,8 +203,11 @@ impl ArchiveManager {
 
         if let Some(mo2_staging) = mo2_data_dir {
             // MO2 mode: Collect files from staging directory
-            info!("MO2 mode: Collecting previs data from staging directory");
             let mo2_helper = Mo2Helper::new(mo2_staging)?;
+            info!(
+                "MO2 mode: Collecting previs data from staging directory: {}",
+                mo2_helper.staging_dir().display()
+            );
 
             let temp_collect = data_dir.join("_temp_mo2_collect");
 

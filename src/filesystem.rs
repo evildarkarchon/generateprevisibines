@@ -156,6 +156,71 @@ pub fn get_directory_size(dir: &Path) -> u64 {
         .sum()
 }
 
+/// Find xPrevisPatch plugins in the Data directory
+/// Returns list of plugin names that contain "xprevis" (case-insensitive)
+pub fn find_xprevis_patch_plugins(data_dir: &Path) -> Result<Vec<String>> {
+    if !data_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut xprevis_plugins = Vec::new();
+
+    for entry in fs::read_dir(data_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if !path.is_file() {
+            continue;
+        }
+
+        if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+            let file_name_lower = file_name.to_lowercase();
+
+            // Check if it's a plugin file and contains xprevis
+            if (file_name_lower.ends_with(".esp") || file_name_lower.ends_with(".esm"))
+                && file_name_lower.contains("xprevis")
+            {
+                xprevis_plugins.push(file_name.to_string());
+            }
+        }
+    }
+
+    Ok(xprevis_plugins)
+}
+
+/// Find working files that should be cleaned up after workflow
+/// Returns list of plugin names (Previs.esp, PrecombineObjects.esp, SeventySix*.esp)
+pub fn find_working_files(data_dir: &Path) -> Result<Vec<String>> {
+    if !data_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut working_files = Vec::new();
+
+    for entry in fs::read_dir(data_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if !path.is_file() {
+            continue;
+        }
+
+        if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+            let file_name_lower = file_name.to_lowercase();
+
+            // Check for working files
+            if file_name_lower == "previs.esp"
+                || file_name_lower == "precombinedobjects.esp"
+                || (file_name_lower.starts_with("seventysix") && file_name_lower.ends_with(".esp"))
+            {
+                working_files.push(file_name.to_string());
+            }
+        }
+    }
+
+    Ok(working_files)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
