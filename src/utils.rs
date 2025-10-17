@@ -9,7 +9,41 @@ use windows::Win32::Storage::FileSystem::{
 use windows::core::PCWSTR;
 
 /// Get the product version string from a Windows executable
-/// This uses the Windows API to read version info from the PE file
+///
+/// Reads version information from a Windows PE file using the Windows API
+/// (`GetFileVersionInfoW` and `VerQueryValueW`). This extracts the file version
+/// from the `VS_FIXEDFILEINFO` structure embedded in the executable.
+///
+/// # Arguments
+///
+/// * `exe_path` - Path to the Windows executable (.exe or .dll) to query
+///
+/// # Returns
+///
+/// Returns a version string in the format `major.minor.build.revision` (e.g., "1.10.163.0")
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - The path is not valid UTF-8
+/// - The file has no version information resource
+/// - Reading version info fails (file doesn't exist, access denied, corrupted PE file)
+/// - Version value query fails (invalid or corrupted version resource)
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::path::Path;
+///
+/// let version = get_file_version(Path::new("C:\\Windows\\System32\\notepad.exe"))?;
+/// println!("Notepad version: {}", version); // e.g., "10.0.19041.1"
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+///
+/// # Platform Support
+///
+/// **Windows only.** This function uses Windows-specific APIs and will not compile
+/// on other platforms.
 pub fn get_file_version(exe_path: &Path) -> Result<String> {
     let path_wide: Vec<u16> = exe_path
         .to_str()
@@ -96,7 +130,35 @@ struct VS_FIXEDFILEINFO {
 }
 
 /// Initialize logging to a file in %TEMP%
-/// Returns the path to the log file
+///
+/// Sets up the `env_logger` to write all log output at INFO level and above
+/// to a file named `GeneratePrevisibines.log` in the system's temporary directory.
+/// The log file is created or truncated if it already exists.
+///
+/// # Returns
+///
+/// Returns the full path to the log file (e.g., `C:\Users\username\AppData\Local\Temp\GeneratePrevisibines.log`)
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - The log file cannot be created in the temp directory (insufficient permissions, disk full)
+/// - The env_logger initialization fails
+///
+/// # Examples
+///
+/// ```no_run
+/// let log_path = init_logging()?;
+/// println!("Logging to: {}", log_path.display());
+/// log::info!("Application started");
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+///
+/// # Notes
+///
+/// - All subsequent `log::info!`, `log::warn!`, and `log::error!` calls will write to this file
+/// - The log file persists after the application exits for debugging purposes
+/// - Log level is fixed at INFO; use `RUST_LOG` environment variable for more control
 pub fn init_logging() -> Result<PathBuf> {
     let temp_dir = env::temp_dir();
     let log_file_path = temp_dir.join("GeneratePrevisibines.log");
@@ -114,6 +176,32 @@ pub fn init_logging() -> Result<PathBuf> {
 }
 
 /// Get a simpler version string (just major.minor if available)
+///
+/// Calls `get_file_version` and extracts only the major and minor version numbers,
+/// discarding the build and revision numbers for cleaner display.
+///
+/// # Arguments
+///
+/// * `exe_path` - Path to the Windows executable (.exe or .dll) to query
+///
+/// # Returns
+///
+/// Returns a simplified version string in the format `major.minor` (e.g., "1.10"),
+/// or "Unknown" if version information cannot be read.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::path::Path;
+///
+/// let version = get_simple_version(Path::new("C:\\Games\\Fallout4\\FO4Edit.exe"));
+/// println!("FO4Edit version: {}", version); // e.g., "4.0" or "Unknown"
+/// ```
+///
+/// # Notes
+///
+/// - This function never returns an error; it returns "Unknown" on failure
+/// - Useful for display purposes where full version is too verbose
 pub fn get_simple_version(exe_path: &Path) -> String {
     match get_file_version(exe_path) {
         Ok(version) => {

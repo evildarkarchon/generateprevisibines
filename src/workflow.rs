@@ -166,6 +166,106 @@ impl<'a> WorkflowExecutor<'a> {
     }
 
     /// Check if a directory needs cleaning, prompt user if interactive
+    ///
+    /// Validates that a directory is empty before proceeding with a workflow step.
+    /// This is critical for previs generation because leftover files from previous
+    /// builds can cause conflicts or incorrect results.
+    ///
+    /// # Behavior
+    ///
+    /// - **Directory doesn't exist:** Returns `Ok(())` without creating it
+    /// - **Directory is empty:** Returns `Ok(())` without prompting
+    /// - **Directory is not empty:**
+    ///   - **Interactive mode:** Prompts user "Clean directory?" (Y/N)
+    ///     - User selects Yes → Deletes all contents and returns `Ok(())`
+    ///     - User selects No → Returns error, workflow stops
+    ///   - **Non-interactive mode:** Returns error immediately with helpful message
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - Directory to check (e.g., `Data\meshes\precombined`)
+    /// * `dir_name` - Human-readable directory name for prompts and error messages (e.g., `"meshes\\precombined"`)
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the directory is empty or successfully cleaned
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// - **Interactive mode:** User declines to clean the directory (workflow cannot continue)
+    /// - Directory exists and is not empty, but cannot be deleted (permission denied, files in use)
+    /// - Directory cannot be recreated after deletion (permission denied, disk full)
+    /// - **Non-interactive mode:** Directory is not empty (includes helpful message to clean manually or run interactively)
+    ///
+    /// # Examples
+    ///
+    /// ## Interactive Mode
+    ///
+    /// ```no_run
+    /// # use std::path::Path;
+    /// # use anyhow::Result;
+    /// # struct Executor { interactive: bool }
+    /// # impl Executor {
+    /// # fn check_and_clean_directory(&self, dir: &Path, dir_name: &str) -> Result<()> { Ok(()) }
+    /// # fn example(&self) -> Result<()> {
+    /// let precombined_dir = Path::new("C:\\Games\\Fallout4\\Data\\meshes\\precombined");
+    /// self.check_and_clean_directory(&precombined_dir, "meshes\\precombined")?;
+    /// // Directory is now empty and ready for new precombined meshes
+    /// # Ok(()) } }
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    ///
+    /// ## Non-Interactive Mode
+    ///
+    /// ```no_run
+    /// # use std::path::Path;
+    /// # use anyhow::Result;
+    /// # struct Executor { interactive: bool }
+    /// # impl Executor {
+    /// # fn check_and_clean_directory(&self, dir: &Path, dir_name: &str) -> Result<()> {
+    /// #   if !self.interactive {
+    /// #     anyhow::bail!("Directory is not empty")
+    /// #   }
+    /// #   Ok(())
+    /// # }
+    /// # fn example(&self) -> Result<()> {
+    /// // Non-interactive mode with non-empty directory
+    /// let vis_dir = Path::new("C:\\Games\\Fallout4\\Data\\vis");
+    /// match self.check_and_clean_directory(&vis_dir, "vis") {
+    ///     Ok(_) => println!("Directory ready"),
+    ///     Err(e) => {
+    ///         // Error message: "Directory 'vis' is not empty. Clean it or run interactively."
+    ///         eprintln!("{}", e);
+    ///     }
+    /// }
+    /// # Ok(()) } }
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    ///
+    /// # Interactive vs. Non-Interactive Behavior
+    ///
+    /// | Scenario | Interactive Mode | Non-Interactive Mode |
+    /// |----------|------------------|---------------------|
+    /// | Directory doesn't exist | `Ok(())` | `Ok(())` |
+    /// | Directory is empty | `Ok(())` | `Ok(())` |
+    /// | Directory has files | Prompt user → Clean or Error | Immediate error |
+    ///
+    /// # Safety Considerations
+    ///
+    /// **WARNING: This is a destructive operation.**
+    ///
+    /// - Deletion is permanent and cannot be undone
+    /// - All files and subdirectories in `dir` are deleted recursively
+    /// - Always verify `dir_name` matches the actual directory before calling
+    /// - In interactive mode, the user is prompted before deletion
+    /// - In non-interactive mode, the function fails rather than auto-deleting
+    ///
+    /// # Notes
+    ///
+    /// - Uses `prompts::prompt_clean_directory()` for interactive confirmation
+    /// - The directory is recreated after deletion (even if it was previously empty)
+    /// - This function is called at the start of Steps 1 and 6 to ensure clean working directories
     fn check_and_clean_directory(&self, dir: &Path, dir_name: &str) -> Result<()> {
         if !dir.exists() {
             return Ok(());
@@ -197,6 +297,35 @@ impl<'a> WorkflowExecutor<'a> {
     }
 
     /// Step 1: Generate Precombines Via CK
+    ///
+    /// Runs CreationKit to generate precombined meshes (.nif files) for the plugin.
+    /// Precombined meshes combine multiple static objects into single meshes for
+    /// better performance.
+    ///
+    /// # Pre-Checks
+    ///
+    /// - Ensures `meshes/precombined` directory is empty (prompts user if not)
+    /// - Ensures `vis` directory is empty (prompts user if not)
+    ///
+    /// # Process
+    ///
+    /// 1. Cleans working directories if needed
+    /// 2. Runs CreationKit with precombine generation flags
+    /// 3. Validates that .nif files were created
+    /// 4. In clean mode, validates that .psg file was created
+    ///
+    /// # Post-Checks
+    ///
+    /// - Verifies precombined meshes exist in `meshes/precombined`
+    /// - In clean mode, checks for PSG file (warns if missing)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - User declines to clean non-empty directories (interactive mode)
+    /// - Directories are not empty (non-interactive mode)
+    /// - CreationKit fails to run or crashes
+    /// - No precombined meshes were generated
     fn step1_generate_precombined(&self) -> Result<()> {
         // Pre-check: meshes\precombined and vis must be empty
         let precombined_dir = self.data_dir.join("meshes").join("precombined");
@@ -243,6 +372,19 @@ impl<'a> WorkflowExecutor<'a> {
     }
 
     /// Step 2: Merge PrecombineObjects.esp Via xEdit
+    ///
+    /// Runs FO4Edit to merge the temporary PrecombineObjects.esp (created by CreationKit)
+    /// into the main plugin. This consolidates precombine data into the plugin itself.
+    ///
+    /// # Pre-Checks
+    ///
+    /// - Verifies precombined meshes exist from Step 1
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - No precombined meshes found (Step 1 not completed)
+    /// - FO4Edit fails to run or merge operation fails
     fn step2_merge_combined_objects(&self) -> Result<()> {
         // Pre-check: Precombined meshes exist
         let precombined_dir = self.data_dir.join("meshes").join("precombined");
@@ -265,6 +407,21 @@ impl<'a> WorkflowExecutor<'a> {
     }
 
     /// Step 3: Create BA2 Archive from Precombines
+    ///
+    /// Creates a BA2 archive containing all precombined meshes. The archive is named
+    /// `<PluginName> - Main.ba2` and uses either PC or Xbox compression format.
+    ///
+    /// # Process
+    ///
+    /// - Uses Archive2 or BSArch (depending on configuration)
+    /// - Archives all .nif files from `meshes/precombined`
+    /// - MO2-aware: Collects files from MO2 staging directory if configured
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Archive tool fails to create the BA2 file
+    /// - No precombined meshes found to archive
     fn step3_create_precombined_archive(&self) -> Result<()> {
         let plugin_base = validation::get_plugin_base_name(&self.plugin_name);
         let archive_name = format!("{} - Main.ba2", plugin_base);
@@ -295,6 +452,25 @@ impl<'a> WorkflowExecutor<'a> {
     }
 
     /// Step 4: Compress PSG Via CK (clean mode only)
+    ///
+    /// Runs CreationKit to compress the PSG (PreSceneGraph) file created in Step 1.
+    /// This step is only performed in clean mode, not in filtered mode.
+    ///
+    /// # Pre-Checks
+    ///
+    /// - Verifies the PSG file exists: `<PluginName> - Geometry.psg`
+    ///
+    /// # Process
+    ///
+    /// 1. Runs CreationKit to compress the PSG file
+    /// 2. Deletes the original PSG file after compression
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - PSG file not found (Step 1 may have failed)
+    /// - CreationKit fails to compress the PSG
+    /// - PSG file cannot be deleted after compression
     fn step4_compress_psg(&self) -> Result<()> {
         let plugin_base = validation::get_plugin_base_name(&self.plugin_name);
         let psg_file = self
@@ -332,6 +508,13 @@ impl<'a> WorkflowExecutor<'a> {
     }
 
     /// Step 5: Build CDX Via CK (clean mode only)
+    ///
+    /// Runs CreationKit to build CDX (Combined Data Index) files. This step is only
+    /// performed in clean mode, not in filtered mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if CreationKit fails to build the CDX files
     fn step5_build_cdx(&self) -> Result<()> {
         let ck_log = self
             .config
@@ -353,6 +536,32 @@ impl<'a> WorkflowExecutor<'a> {
     }
 
     /// Step 6: Generate Previs Via CK
+    ///
+    /// Runs CreationKit to generate previs (precomputed visibility) data. Previs data
+    /// tells the engine which objects are visible from different locations, improving
+    /// performance by culling invisible objects.
+    ///
+    /// # Pre-Checks
+    ///
+    /// - Ensures `vis` directory is empty (prompts user if not)
+    ///
+    /// # Process
+    ///
+    /// 1. Cleans `vis` directory if needed
+    /// 2. Runs CreationKit to generate previs data
+    /// 3. Validates that .uvd files were created
+    ///
+    /// # Post-Checks
+    ///
+    /// - Verifies previs data exists in `vis` directory
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - User declines to clean non-empty `vis` directory (interactive mode)
+    /// - `vis` directory is not empty (non-interactive mode)
+    /// - CreationKit fails to run or crashes
+    /// - No previs data was generated
     fn step6_generate_previs(&self) -> Result<()> {
         // Pre-check: vis directory empty
         let vis_dir = self.data_dir.join("vis");
@@ -385,6 +594,21 @@ impl<'a> WorkflowExecutor<'a> {
     }
 
     /// Step 7: Merge Previs.esp Via xEdit
+    ///
+    /// Runs FO4Edit to merge the temporary Previs.esp (created by CreationKit)
+    /// into the main plugin. This consolidates previs data into the plugin itself.
+    ///
+    /// # Pre-Checks
+    ///
+    /// - Verifies previs data (.uvd files) exist from Step 6
+    /// - Verifies Previs.esp was created by CreationKit
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - No previs data found (Step 6 not completed)
+    /// - Previs.esp not found (CreationKit failed to create it)
+    /// - FO4Edit fails to run or merge operation fails
     fn step7_merge_previs(&self) -> Result<()> {
         // Pre-check: .uvd files exist
         let vis_dir = self.data_dir.join("vis");
@@ -413,6 +637,23 @@ impl<'a> WorkflowExecutor<'a> {
     }
 
     /// Step 8: Add Previs files to BA2 Archive
+    ///
+    /// Adds previs data (.uvd files) to the existing BA2 archive created in Step 3.
+    /// This completes the previs generation workflow.
+    ///
+    /// # Process
+    ///
+    /// - Uses Archive2 or BSArch (depending on configuration)
+    /// - For Archive2: Extract → Add files → Re-archive (no append support)
+    /// - For BSArch: Appends files directly to existing archive
+    /// - MO2-aware: Collects files from MO2 staging directory if configured
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Archive tool fails to add files to the BA2
+    /// - No previs data found to add
+    /// - For Archive2: Extraction or re-archiving fails
     fn step8_add_previs_to_archive(&self) -> Result<()> {
         let plugin_base = validation::get_plugin_base_name(&self.plugin_name);
         let archive_name = format!("{} - Main.ba2", plugin_base);
