@@ -9,7 +9,7 @@ const RESERVED_NAMES: &[&str] = &["previs", "combinedobjects", "xprevispatch"];
 /// Rules (from batch lines 134-158):
 /// 1. Cannot be empty
 /// 2. Must end with .esp or .esm
-/// 3. Cannot contain reserved names (previs, combinedobjects, xprevispatch)
+/// 3. Base name cannot exactly match reserved names (previs, combinedobjects, xprevispatch)
 /// 4. In clean mode, cannot contain spaces
 pub fn validate_plugin_name(name: &str, clean_mode: bool) -> Result<()> {
     if name.is_empty() {
@@ -22,18 +22,23 @@ pub fn validate_plugin_name(name: &str, clean_mode: bool) -> Result<()> {
         bail!("Plugin name must end with .esp or .esm");
     }
 
-    // Check for reserved names (case insensitive)
+    // Get base name (without extension) for reserved name check
+    let base_name = get_plugin_base_name(&name_lower);
+
+    // Check for exact match against reserved names (case insensitive)
+    // Only reject if the base name EXACTLY matches a reserved word
     for reserved in RESERVED_NAMES {
-        if name_lower.contains(reserved) {
+        if base_name == *reserved {
             bail!(
-                "Plugin name cannot contain reserved word '{}'\n\
+                "Plugin name cannot be '{}'\n\
                 \n\
                 Reserved names:\n\
-                - previs\n\
-                - combinedobjects\n\
-                - xprevispatch\n\
+                - previs.esp/esm\n\
+                - combinedobjects.esp/esm\n\
+                - xprevispatch.esp/esm\n\
                 \n\
-                Please rename your plugin to avoid these keywords.",
+                These are working files used by the workflow.\n\
+                Please choose a different plugin name.",
                 reserved
             );
         }
@@ -84,11 +89,24 @@ mod tests {
 
     #[test]
     fn test_reserved_names() {
+        // Exact matches should be rejected
         assert!(validate_plugin_name("previs.esp", true).is_err());
         assert!(validate_plugin_name("Previs.esp", true).is_err());
-        assert!(validate_plugin_name("MyPrevis.esp", true).is_err());
+        assert!(validate_plugin_name("PREVIS.ESM", true).is_err());
         assert!(validate_plugin_name("combinedobjects.esp", true).is_err());
+        assert!(validate_plugin_name("CombinedObjects.esm", true).is_err());
         assert!(validate_plugin_name("xprevispatch.esp", true).is_err());
+        assert!(validate_plugin_name("XPrevisPatch.ESP", true).is_err());
+    }
+
+    #[test]
+    fn test_reserved_names_allowed_when_not_exact() {
+        // Names that contain reserved words but aren't exact matches should be allowed
+        assert!(validate_plugin_name("MyPrevis.esp", true).is_ok());
+        assert!(validate_plugin_name("previs_old.esp", true).is_ok());
+        assert!(validate_plugin_name("My_CombinedObjects_Patch.esp", true).is_ok());
+        assert!(validate_plugin_name("xprevispatch_backup.esp", true).is_ok());
+        assert!(validate_plugin_name("SuperPrevis.esp", true).is_ok());
     }
 
     #[test]
