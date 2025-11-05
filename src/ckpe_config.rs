@@ -228,7 +228,7 @@ mod tests {
 
         let mut file = File::create(&config_path).unwrap();
         writeln!(file, "[CreationKit]").unwrap();
-        writeln!(file, "bBSPointerHandle=true").unwrap();
+        writeln!(file, "bBSPointerHandleExtremly=true").unwrap();
         writeln!(file, "").unwrap();
         writeln!(file, "[Log]").unwrap();
         writeln!(file, "sOutputFile=CreationKit.log").unwrap();
@@ -251,7 +251,7 @@ mod tests {
 
         let mut file = File::create(&config_path).unwrap();
         writeln!(file, "[CreationKit]").unwrap();
-        writeln!(file, "bBSPointerHandleExtremly=true").unwrap();
+        writeln!(file, "bBSPointerHandle=true").unwrap();
         writeln!(file, "").unwrap();
         writeln!(file, "[CreationKit_Log]").unwrap();
         writeln!(file, "OutputFile=CKLog.log").unwrap();
