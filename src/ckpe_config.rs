@@ -92,27 +92,25 @@ impl CKPEConfig {
             // Check for any variant of the setting
             for pattern in &patterns {
                 match config_type {
-                    ConfigType::TOML => {
+                    ConfigType::TOML | ConfigType::INI => {
                         // TOML format: bBSPointerHandle = true
+                        // 'b' prefix indicates boolean type - only true/false allowed
                         if line_trimmed.starts_with(pattern) {
                             if let Some(value) = line_trimmed.split('=').nth(1) {
                                 let value_trimmed = value.trim();
-                                if value_trimmed.eq_ignore_ascii_case("true")
-                                    || value_trimmed == "1"
-                                {
+                                if value_trimmed.eq_ignore_ascii_case("true") {
                                     return true;
                                 }
                             }
                         }
                     }
-                    ConfigType::INI | ConfigType::Fallout4TestINI => {
-                        // INI format: bBSPointerHandle=1 or bBSPointerHandle=true
+                    ConfigType::Fallout4TestINI => {
+                        // INI format: bBSPointerHandle=true
+                        // 'b' prefix indicates boolean type - only true/false allowed
                         if line_trimmed.starts_with(pattern) {
                             if let Some(value) = line_trimmed.split('=').nth(1) {
                                 let value_trimmed = value.trim();
-                                if value_trimmed == "1"
-                                    || value_trimmed.eq_ignore_ascii_case("true")
-                                {
+                                if value_trimmed.eq_ignore_ascii_case("true") {
                                     return true;
                                 }
                             }
@@ -187,9 +185,10 @@ impl CKPEConfig {
                 Please edit: {}\n\
                 \n\
                 Add or modify this line in the [CreationKit] section:\n\
-                bBSPointerHandleExtremly=1\n\
+                bBSPointerHandleExtremly=true\n\
                 \n\
-                Note: The setting name has a typo ('Extremly' not 'Extremely') - this is intentional.",
+                Note: The 'b' prefix indicates boolean type - only 'true' or 'false' are valid.\n\
+                The setting name has a typo ('Extremly' not 'Extremely') - this is intentional.",
                 self.config_path.display()
             );
         }
@@ -229,7 +228,7 @@ mod tests {
 
         let mut file = File::create(&config_path).unwrap();
         writeln!(file, "[CreationKit]").unwrap();
-        writeln!(file, "bBSPointerHandle=1").unwrap();
+        writeln!(file, "bBSPointerHandle=true").unwrap();
         writeln!(file, "").unwrap();
         writeln!(file, "[Log]").unwrap();
         writeln!(file, "sOutputFile=CreationKit.log").unwrap();
@@ -252,7 +251,7 @@ mod tests {
 
         let mut file = File::create(&config_path).unwrap();
         writeln!(file, "[CreationKit]").unwrap();
-        writeln!(file, "bBSPointerHandleExtremly=1").unwrap();
+        writeln!(file, "bBSPointerHandleExtremly=true").unwrap();
         writeln!(file, "").unwrap();
         writeln!(file, "[CreationKit_Log]").unwrap();
         writeln!(file, "OutputFile=CKLog.log").unwrap();
