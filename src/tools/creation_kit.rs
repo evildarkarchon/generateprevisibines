@@ -497,10 +497,24 @@ impl CreationKitRunner {
         info!("Running CreationKit: {}", operation);
 
         // Delete old log file if it exists
+        // NOTE: This operation may fail if the log is open in another process or
+        // another instance is running. We treat this as a hard error to prevent
+        // mixing logs from multiple runs.
         if let Some(ref log_path) = self.log_file {
             if log_path.exists() {
-                fs::remove_file(log_path)
-                    .with_context(|| format!("Failed to delete old log: {}", log_path.display()))?;
+                fs::remove_file(log_path).with_context(|| {
+                    format!(
+                        "Failed to delete old log: {}\n\
+                        \n\
+                        The file may be locked by another process. Common causes:\n\
+                        - Log file is open in a text editor or log viewer\n\
+                        - Another instance of CreationKit is running\n\
+                        - Antivirus software is scanning the file\n\
+                        \n\
+                        Please close any programs viewing the log and try again.",
+                        log_path.display()
+                    )
+                })?;
                 info!("Deleted old CK log file");
             }
         }

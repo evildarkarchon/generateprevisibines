@@ -156,7 +156,7 @@ The tool validates your CKPE configuration before running. Required settings:
 **CreationKitPlatformExtended.ini:**
 ```ini
 [CreationKit]
-bBSPointerHandleExtremly = 1
+bBSPointerHandleExtremly = true
 
 [Log]
 sOutputFile = CreationKit.log

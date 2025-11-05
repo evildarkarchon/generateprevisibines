@@ -28,7 +28,6 @@ pub enum ArchiveTool {
 
 /// Configuration for the tool, including paths to external programs
 #[derive(Debug)]
-#[allow(dead_code)] // These fields will be used in later phases
 pub struct Config {
     /// Build mode (clean/filtered/xbox)
     pub build_mode: BuildMode,
@@ -68,7 +67,6 @@ pub struct Config {
     pub mo2_data_dir: Option<PathBuf>,
 }
 
-#[allow(dead_code)] // These methods will be used in later phases
 impl Config {
     /// Create a new configuration with the given build mode and archive tool
     pub fn new(build_mode: BuildMode, archive_tool: ArchiveTool) -> Self {
@@ -89,6 +87,7 @@ impl Config {
     }
 
     /// Set the plugin name
+    #[allow(dead_code)]
     pub fn with_plugin_name(mut self, name: String) -> Self {
         self.plugin_name = Some(name);
         self
@@ -100,11 +99,13 @@ impl Config {
     }
 
     /// Get the meshes\\precombined directory
+    #[allow(dead_code)]
     pub fn precombined_dir(&self) -> PathBuf {
         self.data_dir().join("meshes").join("precombined")
     }
 
     /// Get the vis directory
+    #[allow(dead_code)]
     pub fn vis_dir(&self) -> PathBuf {
         self.data_dir().join("vis")
     }

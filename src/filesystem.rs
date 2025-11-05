@@ -108,7 +108,7 @@ pub fn ensure_output_directories(data_dir: &Path) -> Result<(PathBuf, PathBuf)> 
 /// - Does not follow symlinks
 /// - Skips directories and non-file entries
 /// - Returns absolute paths, not relative paths
-#[allow(dead_code)] // Will be used in later workflow steps
+#[allow(dead_code)] // Part of public filesystem utility API; available for external use
 pub fn scan_directory_for_files(
     dir: &Path,
     extension: &str,
@@ -196,7 +196,6 @@ pub fn count_files(dir: &Path, extension: &str) -> usize {
 /// - Non-existent directories are considered "empty" (`true`)
 /// - Directories that cannot be read are also considered "empty" (`true`)
 /// - Only checks for the presence of entries, not their type (files vs. directories)
-#[allow(dead_code)] // Will be used in later workflow steps
 pub fn is_directory_empty(dir: &Path) -> bool {
     if !dir.exists() {
         return true;
@@ -264,7 +263,7 @@ pub fn is_directory_empty(dir: &Path) -> bool {
 /// - Extension matching is case-insensitive
 /// - Searches recursively through all subdirectories
 /// - Non-existent directories return `Ok(0)` without error
-#[allow(dead_code)] // Will be used in later workflow steps
+#[allow(dead_code)] // Part of public filesystem utility API; available for external use
 pub fn delete_matching_files(dir: &Path, extension: &str) -> Result<usize> {
     if !dir.exists() {
         return Ok(0);
@@ -281,7 +280,7 @@ pub fn delete_matching_files(dir: &Path, extension: &str) -> Result<usize> {
 }
 
 /// Get the size of a directory in bytes
-#[allow(dead_code)] // Will be used in later workflow steps
+#[allow(dead_code)] // Part of public filesystem utility API; available for external use
 pub fn get_directory_size(dir: &Path) -> u64 {
     if !dir.exists() {
         return 0;
@@ -450,9 +449,7 @@ pub fn find_working_files(data_dir: &Path) -> Result<Vec<String>> {
             let file_name_lower = file_name.to_lowercase();
 
             // Check for working files
-            if file_name_lower == "previs.esp"
-                || file_name_lower == "combinedobjects.esp"
-            {
+            if file_name_lower == "previs.esp" || file_name_lower == "combinedobjects.esp" {
                 working_files.push(file_name.to_string());
             }
         }

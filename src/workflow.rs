@@ -694,9 +694,7 @@ impl<'a> WorkflowExecutor<'a> {
             }
 
             if prompts::prompt_rename_xprevis_patch()? {
-                println!(
-                    "\nPlease rename the xPrevisPatch plugin(s) manually before continuing."
-                );
+                println!("\nPlease rename the xPrevisPatch plugin(s) manually before continuing.");
                 println!("You can add a suffix like '_old' or '_backup' to the filename.");
                 anyhow::bail!("xPrevisPatch plugin(s) detected - please rename and restart");
             } else {

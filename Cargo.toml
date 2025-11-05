@@ -38,3 +38,15 @@ strip = true
 
 [lints.rust]
 deprecated = "deny"
+unsafe_code = "warn"  # Warn on unsafe blocks to ensure they're justified
+unused_must_use = "deny"  # Catch ignored Results
+
+[lints.clippy]
+# Enable pedantic lints for code quality
+pedantic = { level = "warn", priority = -1 }
+
+# Allow specific pedantic lints that conflict with project style or are overly strict
+must_use_candidate = "allow"  # Many utility functions don't need #[must_use]
+missing_errors_doc = "allow"  # Already have excellent error documentation
+missing_panics_doc = "allow"  # Most functions don't panic; documented where relevant
+module_name_repetitions = "allow"  # e.g., BuildMode::Clean is fine and clear

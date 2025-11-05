@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
-use winreg::enums::*;
 use winreg::RegKey;
+use winreg::enums::*;
 
 /// Find FO4Edit path by checking multiple locations
 ///

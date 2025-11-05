@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// Reserved plugin name patterns that are forbidden
 /// These match the batch script lines 147-154
@@ -27,7 +27,13 @@ pub fn validate_plugin_name(name: &str, clean_mode: bool) -> Result<()> {
         if name_lower.contains(reserved) {
             bail!(
                 "Plugin name cannot contain reserved word '{}'\n\
-                Reserved names: previs, combinedobjects, xprevispatch",
+                \n\
+                Reserved names:\n\
+                - previs\n\
+                - combinedobjects\n\
+                - xprevispatch\n\
+                \n\
+                Please rename your plugin to avoid these keywords.",
                 reserved
             );
         }
@@ -45,7 +51,6 @@ pub fn validate_plugin_name(name: &str, clean_mode: bool) -> Result<()> {
 }
 
 /// Extract the plugin name without extension
-#[allow(dead_code)] // Will be used in later workflow steps
 pub fn get_plugin_base_name(name: &str) -> &str {
     name.trim_end_matches(".esp")
         .trim_end_matches(".esm")

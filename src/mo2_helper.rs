@@ -113,6 +113,19 @@ impl Mo2Helper {
                 .strip_prefix(&search_path)
                 .with_context(|| format!("Failed to get relative path for: {}", path.display()))?;
 
+            // Security: Verify the relative path doesn't escape outside the target directory
+            // This prevents path traversal attacks via symbolic links or malicious path components
+            if relative_path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                anyhow::bail!(
+                    "Security: Path traversal detected in: {}\n\
+                    The file path attempts to escape the staging directory using '..' components.",
+                    path.display()
+                );
+            }
+
             let dest_path = dest_base.join(relative_path);
 
             // Create parent directories

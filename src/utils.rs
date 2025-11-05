@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use log::LevelFilter;
+use log::{LevelFilter, warn};
 use std::env;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -44,6 +44,7 @@ use windows::core::PCWSTR;
 ///
 /// **Windows only.** This function uses Windows-specific APIs and will not compile
 /// on other platforms.
+#[allow(unsafe_code)]
 pub fn get_file_version(exe_path: &Path) -> Result<String> {
     let path_wide: Vec<u16> = exe_path
         .to_str()
@@ -52,6 +53,35 @@ pub fn get_file_version(exe_path: &Path) -> Result<String> {
         .chain(std::iter::once(0))
         .collect();
 
+    // SAFETY: This unsafe block is required for Windows FFI to read version information
+    // from PE executable resources. The following invariants are maintained:
+    //
+    // 1. `path_wide` is a properly null-terminated UTF-16 string created from a valid path.
+    //    It remains valid for the entire duration of the unsafe block.
+    //
+    // 2. `GetFileVersionInfoSizeW` is called with a valid PCWSTR pointer. The Windows API
+    //    handles invalid paths gracefully by returning 0 (checked before proceeding).
+    //
+    // 3. `buffer` is allocated with the exact size returned by GetFileVersionInfoSizeW,
+    //    ensuring sufficient space for the version info data.
+    //
+    // 4. `GetFileVersionInfoW` writes into our owned buffer with correct size bounds.
+    //    Errors are propagated via Result<()> and checked before proceeding.
+    //
+    // 5. `VerQueryValueW` returns a pointer into the buffer we own, which remains valid
+    //    because we don't move or drop the buffer until after we're done reading.
+    //    The returned pointer lifetime is tied to the buffer lifetime.
+    //
+    // 6. The pointer is cast to `VS_FIXEDFILEINFO` which has #[repr(C)] layout matching
+    //    the Windows SDK structure exactly. We verify the pointer is non-null before
+    //    dereferencing.
+    //
+    // 7. Dereferencing `file_info` is safe because: (a) pointer is non-null (checked),
+    //    (b) points to valid memory in our buffer, (c) buffer is properly aligned,
+    //    (d) VS_FIXEDFILEINFO has correct #[repr(C)] layout.
+    //
+    // 8. Bit operations on u32 values from the structure are safe arithmetic operations
+    //    that cannot overflow (masked to 16 bits).
     unsafe {
         // Get the size of the version info
         let size = GetFileVersionInfoSizeW(PCWSTR(path_wide.as_ptr()), None);
@@ -98,10 +128,26 @@ pub fn get_file_version(exe_path: &Path) -> Result<String> {
         }
 
         let version = &*file_info;
+
+        // Extract version components from DWORD pairs
+        // Each DWORD contains two 16-bit version numbers (HIWORD and LOWORD)
         let major = (version.dwFileVersionMS >> 16) & 0xFFFF;
         let minor = version.dwFileVersionMS & 0xFFFF;
         let build = (version.dwFileVersionLS >> 16) & 0xFFFF;
         let revision = version.dwFileVersionLS & 0xFFFF;
+
+        // Sanity check: version components should be reasonable (0-65535 by design, but typically < 100 for major/minor)
+        // This catches corrupted version resources early
+        if major > 100 || minor > 100 {
+            warn!(
+                "Suspicious version numbers detected in {}: {}.{}.{}.{} (major or minor > 100)",
+                exe_path.display(),
+                major,
+                minor,
+                build,
+                revision
+            );
+        }
 
         Ok(format!("{}.{}.{}.{}", major, minor, build, revision))
     }
@@ -109,7 +155,22 @@ pub fn get_file_version(exe_path: &Path) -> Result<String> {
 
 //noinspection RsStructNaming
 /// VS_FIXEDFILEINFO structure (from Windows SDK)
-/// Field names match Windows SDK exactly - do not rename to snake_case
+///
+/// **IMPORTANT**: Field names must match Windows SDK exactly for FFI safety.
+/// The struct uses `#[repr(C)]` for correct memory layout when casting from
+/// Windows API pointers. Renaming fields to snake_case would break the layout.
+///
+/// # Safety
+///
+/// This struct is cast from a pointer returned by `VerQueryValueW`. The field
+/// order and sizes must match the Windows SDK definition exactly. All fields
+/// are `u32` (DWORD) types matching the Windows SDK structure.
+///
+/// # Naming Convention
+///
+/// The `#[allow(non_snake_case)]` and `#[allow(non_camel_case_types)]` attributes
+/// are required because this is a foreign function interface (FFI) struct that
+/// must match the Windows SDK naming exactly. Do not "fix" this naming.
 #[allow(non_camel_case_types)]
 #[repr(C)]
 #[allow(non_snake_case)]

@@ -621,6 +621,7 @@ impl FO4EditRunner {
     /// - Module-level documentation for detailed workaround explanations
     /// - Project CLAUDE.md section "Non-Automatable Tools"
     #[cfg(windows)]
+    #[allow(unsafe_code)]
     fn send_enter_keystroke(&self) -> Result<()> {
         info!("Waiting for Module Selection window...");
 
@@ -629,6 +630,10 @@ impl FO4EditRunner {
 
         // Find FO4Edit window
         let window_title = windows::core::w!("FO4Edit");
+        // SAFETY: FindWindowW is safe to call with valid PCWSTR pointers.
+        // `window_title` is a valid null-terminated UTF-16 string created by the w! macro.
+        // This is a read-only operation that searches for a window by title.
+        // The function returns a window handle or an error if the window is not found.
         let hwnd = unsafe { FindWindowW(None, window_title) };
 
         let hwnd = match hwnd {
@@ -640,6 +645,11 @@ impl FO4EditRunner {
         };
 
         // Bring window to foreground
+        // SAFETY: SetForegroundWindow is safe when called with a valid HWND.
+        // We verified the handle is non-null in the match above, ensuring it's valid.
+        // This is a standard Windows API call that brings a window to the foreground.
+        // The call may fail (e.g., if the window was closed), but this is safe to ignore
+        // as we're just trying to focus the window before sending keystrokes.
         unsafe {
             let _ = SetForegroundWindow(hwnd);
         }
@@ -669,6 +679,18 @@ impl FO4EditRunner {
             dwExtraInfo: 0,
         };
 
+        // SAFETY: SendInput is safe when called with a valid array of INPUT structures.
+        // The following invariants are maintained:
+        // 1. `inputs` is a properly initialized array of INPUT structs with correct types
+        // 2. The array size (2 elements) is passed correctly as the second parameter
+        // 3. The struct size calculation is accurate for the INPUT type
+        // 4. INPUT_KEYBOARD is a valid input type for keyboard simulation
+        // 5. VK_RETURN is a valid virtual key code
+        // 6. The INPUT structures use #[repr(C)] layout matching Windows SDK
+        //
+        // This simulates pressing and releasing the ENTER key, which is required because
+        // FO4Edit's Module Selection dialog has no headless mode and must be automated
+        // via keyboard input (intentional workaround documented in CLAUDE.md).
         unsafe {
             SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
         }
@@ -754,16 +776,26 @@ impl FO4EditRunner {
     fn wait_for_log_file(&self, log_file: &Path) -> Result<()> {
         info!("Waiting for log file creation...");
 
-        for _ in 0..30 {
-            // Wait up to 30 seconds
+        const POLL_INTERVAL_SECS: u64 = 1;
+        const DEFAULT_TIMEOUT_SECS: u64 = 30;
+
+        // TODO: Consider adding this as a struct field or environment variable for customization
+        // to support slower systems or network drives
+        let timeout_secs = DEFAULT_TIMEOUT_SECS;
+        let max_iterations = timeout_secs / POLL_INTERVAL_SECS;
+
+        for i in 0..max_iterations {
             if log_file.exists() {
-                info!("Log file created");
+                info!("Log file created after {} seconds", i * POLL_INTERVAL_SECS);
                 return Ok(());
             }
-            thread::sleep(Duration::from_secs(1));
+            thread::sleep(Duration::from_secs(POLL_INTERVAL_SECS));
         }
 
-        warn!("Log file not created within timeout");
+        warn!(
+            "Log file not created within {} second timeout",
+            timeout_secs
+        );
         Ok(())
     }
 
@@ -863,22 +895,41 @@ impl FO4EditRunner {
     /// - Module-level documentation for detailed workaround explanations
     /// - Project CLAUDE.md section "Non-Automatable Tools"
     #[cfg(windows)]
+    #[allow(unsafe_code)]
     fn close_fo4edit_window(&self) {
         info!("Closing FO4Edit window...");
 
         let window_title = windows::core::w!("FO4Edit");
+        // SAFETY: FindWindowW is safe to call with valid PCWSTR pointers.
+        // `window_title` is a valid null-terminated UTF-16 string created by the w! macro.
+        // This is a read-only operation that searches for a window by title.
+        // The function returns a window handle or an error if the window is not found.
         let hwnd = unsafe { FindWindowW(None, window_title) };
 
-        if let Ok(hwnd) = hwnd {
-            if !hwnd.0.is_null() {
+        match hwnd {
+            Ok(h) if !h.0.is_null() => {
+                // SAFETY: SendMessageW is safe when called with a valid HWND.
+                // We verified the handle is not null in the match guard above.
+                // WM_CLOSE is a standard message that requests the window to close gracefully.
+                // The message handler in FO4Edit will process this and terminate the application.
+                // This is safer than force-killing the process as it allows cleanup.
                 unsafe {
-                    SendMessageW(hwnd, WM_CLOSE, None, None);
+                    SendMessageW(h, WM_CLOSE, None, None);
                 }
                 info!("Sent close message to FO4Edit");
             }
+            Ok(_) => {
+                // Window handle is null - window not found or already closed
+                info!("FO4Edit window handle is null, window may have already closed");
+            }
+            Err(_) => {
+                // FindWindowW failed to locate the window
+                info!("Failed to find FO4Edit window, it may have already exited");
+            }
         }
 
-        // Fallback: taskkill if still running
+        // Fallback: taskkill if still running after attempting graceful close
+        // This ensures the process is terminated even if it ignores WM_CLOSE
         thread::sleep(Duration::from_secs(2));
         let _ = Command::new("taskkill")
             .args(&["/F", "/IM", "FO4Edit.exe"])
