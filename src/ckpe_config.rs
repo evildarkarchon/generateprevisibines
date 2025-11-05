@@ -89,14 +89,24 @@ impl CKPEConfig {
                 continue;
             }
 
+            // Strip inline comments (e.g., "setting=value ; comment")
+            // We need to handle both ';' and '#' as comment markers
+            let line_without_comment = if let Some(pos) = line_trimmed.find(';') {
+                &line_trimmed[..pos]
+            } else if let Some(pos) = line_trimmed.find('#') {
+                &line_trimmed[..pos]
+            } else {
+                line_trimmed
+            };
+
             // Check for any variant of the setting
             for pattern in &patterns {
                 match config_type {
                     ConfigType::TOML | ConfigType::INI => {
                         // TOML format: bBSPointerHandle = true
                         // 'b' prefix indicates boolean type - only true/false allowed
-                        if line_trimmed.starts_with(pattern) {
-                            if let Some(value) = line_trimmed.split('=').nth(1) {
+                        if line_without_comment.starts_with(pattern) {
+                            if let Some(value) = line_without_comment.split('=').nth(1) {
                                 let value_trimmed = value.trim();
                                 if value_trimmed.eq_ignore_ascii_case("true") {
                                     return true;
@@ -107,8 +117,8 @@ impl CKPEConfig {
                     ConfigType::Fallout4TestINI => {
                         // INI format: bBSPointerHandle=true
                         // 'b' prefix indicates boolean type - only true/false allowed
-                        if line_trimmed.starts_with(pattern) {
-                            if let Some(value) = line_trimmed.split('=').nth(1) {
+                        if line_without_comment.starts_with(pattern) {
+                            if let Some(value) = line_without_comment.split('=').nth(1) {
                                 let value_trimmed = value.trim();
                                 if value_trimmed.eq_ignore_ascii_case("true") {
                                     return true;
@@ -138,9 +148,18 @@ impl CKPEConfig {
                 continue;
             }
 
+            // Strip inline comments (e.g., "setting=value ; comment")
+            let line_without_comment = if let Some(pos) = line_trimmed.find(';') {
+                &line_trimmed[..pos]
+            } else if let Some(pos) = line_trimmed.find('#') {
+                &line_trimmed[..pos]
+            } else {
+                line_trimmed
+            };
+
             // Track current section for INI files
-            if line_trimmed.starts_with('[') && line_trimmed.ends_with(']') {
-                current_section = line_trimmed[1..line_trimmed.len() - 1].to_string();
+            if line_without_comment.starts_with('[') && line_without_comment.ends_with(']') {
+                current_section = line_without_comment[1..line_without_comment.len() - 1].to_string();
                 continue;
             }
 
@@ -157,11 +176,11 @@ impl CKPEConfig {
             if should_check {
                 // Look for log file path setting
                 // sOutputFile (new CKPE), OutputFile (old), sLogFile (TOML)
-                if line_trimmed.starts_with("sOutputFile")
-                    || line_trimmed.starts_with("OutputFile")
-                    || line_trimmed.starts_with("sLogFile")
+                if line_without_comment.starts_with("sOutputFile")
+                    || line_without_comment.starts_with("OutputFile")
+                    || line_without_comment.starts_with("sLogFile")
                 {
-                    if let Some(value) = line_trimmed.split('=').nth(1) {
+                    if let Some(value) = line_without_comment.split('=').nth(1) {
                         let path_str = value.trim().trim_matches('"');
                         if !path_str.is_empty() && !path_str.eq_ignore_ascii_case("none") {
                             return Some(PathBuf::from(path_str));
@@ -290,5 +309,30 @@ mod tests {
 
         let config = CKPEConfig::parse(&config_path).unwrap();
         assert!(!config.pointer_handle_enabled);
+    }
+
+    #[test]
+    fn test_inline_comments() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("test.ini");
+
+        let mut file = File::create(&config_path).unwrap();
+        writeln!(file, "[CreationKit]").unwrap();
+        writeln!(
+            file,
+            "bBSPointerHandleExtremly=true\t\t\t; [Experimental] Increase max refs"
+        )
+        .unwrap();
+        writeln!(file, "").unwrap();
+        writeln!(file, "[Log]").unwrap();
+        writeln!(file, "sOutputFile=ck.log\t\t\t\t\t\t; Print log output")
+            .unwrap();
+        drop(file);
+
+        let config = CKPEConfig::parse(&config_path).unwrap();
+        assert!(config.pointer_handle_enabled);
+        assert_eq!(config.config_type, ConfigType::INI);
+        assert!(config.log_file_path.is_some());
+        assert_eq!(config.log_file_path.unwrap(), PathBuf::from("ck.log"));
     }
 }
