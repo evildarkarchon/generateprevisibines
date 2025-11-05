@@ -113,18 +113,6 @@ pub fn prompt_clean_directory(dir_name: &str) -> Result<bool> {
         .map_err(Into::into)
 }
 
-/// Prompt to confirm renaming xPrevisPatch plugin
-pub fn prompt_rename_xprevis_patch() -> Result<bool> {
-    println!("\nWARNING: An xPrevisPatch plugin was detected.");
-    println!("This plugin should be renamed to avoid conflicts with the new previs data.");
-
-    Confirm::new()
-        .with_prompt("Rename xPrevisPatch plugin now?")
-        .default(true)
-        .interact()
-        .map_err(Into::into)
-}
-
 /// Prompt to confirm removing working files
 pub fn prompt_remove_working_files() -> Result<bool> {
     println!("\nThe following temporary files can be removed:");

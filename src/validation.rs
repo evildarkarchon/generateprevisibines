@@ -2,6 +2,7 @@ use anyhow::{Result, bail};
 
 /// Reserved plugin name patterns that are forbidden
 /// These match the batch script lines 147-154
+/// Note: xprevispatch is reserved for the SOURCE file - don't name your plugin this
 const RESERVED_NAMES: &[&str] = &["previs", "combinedobjects", "xprevispatch"];
 
 /// Validate plugin name according to rules from batch script
@@ -11,6 +12,9 @@ const RESERVED_NAMES: &[&str] = &["previs", "combinedobjects", "xprevispatch"];
 /// 2. Must end with .esp or .esm
 /// 3. Base name cannot exactly match reserved names (previs, combinedobjects, xprevispatch)
 /// 4. In clean mode, cannot contain spaces
+///
+/// Note: xprevispatch is reserved - don't name YOUR plugin this, but the existing
+/// xprevispatch.esp source file in Data/ is allowed to exist
 pub fn validate_plugin_name(name: &str, clean_mode: bool) -> Result<()> {
     if name.is_empty() {
         bail!("Plugin name cannot be empty");
@@ -33,12 +37,11 @@ pub fn validate_plugin_name(name: &str, clean_mode: bool) -> Result<()> {
                 "Plugin name cannot be '{}'\n\
                 \n\
                 Reserved names:\n\
-                - previs.esp/esm\n\
-                - combinedobjects.esp/esm\n\
-                - xprevispatch.esp/esm\n\
+                - previs.esp/esm (working file)\n\
+                - combinedobjects.esp/esm (working file)\n\
+                - xprevispatch.esp/esm (source data file)\n\
                 \n\
-                These are working files used by the workflow.\n\
-                Please choose a different plugin name.",
+                Please choose a different plugin name for your mod.",
                 reserved
             );
         }
@@ -89,7 +92,7 @@ mod tests {
 
     #[test]
     fn test_reserved_names() {
-        // Exact matches should be rejected
+        // Exact matches should be rejected (can't name YOUR plugin these names)
         assert!(validate_plugin_name("previs.esp", true).is_err());
         assert!(validate_plugin_name("Previs.esp", true).is_err());
         assert!(validate_plugin_name("PREVIS.ESM", true).is_err());
@@ -105,8 +108,8 @@ mod tests {
         assert!(validate_plugin_name("MyPrevis.esp", true).is_ok());
         assert!(validate_plugin_name("previs_old.esp", true).is_ok());
         assert!(validate_plugin_name("My_CombinedObjects_Patch.esp", true).is_ok());
-        assert!(validate_plugin_name("xprevispatch_backup.esp", true).is_ok());
         assert!(validate_plugin_name("SuperPrevis.esp", true).is_ok());
+        assert!(validate_plugin_name("combinedobjects_old.esp", true).is_ok());
     }
 
     #[test]

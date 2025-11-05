@@ -99,9 +99,9 @@ impl<'a> WorkflowExecutor<'a> {
 
     /// Run the workflow starting from a specific step
     pub fn run_from_step(&self, start_step: WorkflowStep) -> Result<()> {
-        // Check for xPrevisPatch plugins before starting workflow from step 1
-        if start_step == WorkflowStep::GeneratePrecombined && self.interactive {
-            self.check_xprevis_patches()?;
+        // Automatically copy xPrevisPatch to target plugin if needed (step 1 only)
+        if start_step == WorkflowStep::GeneratePrecombined {
+            self.copy_xprevis_if_needed()?;
         }
 
         if start_step == WorkflowStep::GeneratePrecombined {
@@ -683,23 +683,41 @@ impl<'a> WorkflowExecutor<'a> {
         Ok(())
     }
 
-    /// Check for xPrevisPatch plugins and prompt to rename
-    fn check_xprevis_patches(&self) -> Result<()> {
+    /// Automatically copy xPrevisPatch to target plugin if it doesn't exist
+    fn copy_xprevis_if_needed(&self) -> Result<()> {
+        let target_plugin = self.data_dir.join(&self.plugin_name);
+
+        // Only copy if target plugin doesn't exist
+        if target_plugin.exists() {
+            return Ok(());
+        }
+
         let xprevis_plugins = filesystem::find_xprevis_patch_plugins(&self.data_dir)?;
 
         if !xprevis_plugins.is_empty() {
             println!();
+            println!("INFO: Found xPrevisPatch plugin(s):");
             for plugin in &xprevis_plugins {
-                println!("  Found: {}", plugin);
+                println!("  - {}", plugin);
             }
 
-            if prompts::prompt_rename_xprevis_patch()? {
-                println!("\nPlease rename the xPrevisPatch plugin(s) manually before continuing.");
-                println!("You can add a suffix like '_old' or '_backup' to the filename.");
-                anyhow::bail!("xPrevisPatch plugin(s) detected - please rename and restart");
-            } else {
-                println!("\nContinuing anyway - but be aware this may cause conflicts.");
-            }
+            // Use the first xPrevisPatch plugin found
+            let source_plugin = self.data_dir.join(&xprevis_plugins[0]);
+
+            println!();
+            println!("Copying {} to {} ...", xprevis_plugins[0], self.plugin_name);
+
+            fs::copy(&source_plugin, &target_plugin).with_context(|| {
+                format!(
+                    "Failed to copy {} to {}",
+                    source_plugin.display(),
+                    target_plugin.display()
+                )
+            })?;
+
+            println!("✓ Plugin created with cell data from xPrevisPatch");
+            println!("  The xPrevisPatch source file remains in your Data folder.");
+            println!();
         }
 
         Ok(())
