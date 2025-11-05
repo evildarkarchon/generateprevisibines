@@ -81,6 +81,9 @@ Options:
   -x, --xbox        Build mode: xbox
       --bsarch      Use BSArch instead of Archive2
       --FO4 <PATH>  Override Fallout 4 directory
+      --mo2                  Use Mod Organizer 2 mode (runs tools through MO2's VFS) Requires --mo2-path to be specified
+      --mo2-path <PATH>      Path to ModOrganizer.exe (required when using --mo2)
+      --mo2-data-dir <PATH>  Path to MO2's VFS staging directory (e.g., overwrite folder) Required when using --mo2 for archiving operations
   -h, --help        Print help
 ```
 

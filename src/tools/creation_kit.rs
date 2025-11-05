@@ -312,43 +312,42 @@ impl CreationKitRunner {
     /// - DLL guard is automatically applied (ENB/ReShade DLLs disabled during execution)
     /// - Generated files are placed in `Data/meshes/precombined/`
     pub fn generate_precombined(&self, plugin_name: &str, build_mode: BuildMode) -> Result<()> {
-        let mode_arg = match build_mode {
-            BuildMode::Clean => "clean all",
-            BuildMode::Filtered => "filtered all",
-            BuildMode::Xbox => "filtered all", // Xbox uses filtered
+        let (arg1, arg2) = match build_mode {
+            BuildMode::Clean => ("clean", "all"),
+            BuildMode::Filtered => ("filtered", "all"),
+            BuildMode::Xbox => ("filtered", "all"), // Xbox uses filtered
         };
 
         self.run_with_dll_guard(
-            &[&format!("-GeneratePrecombined:{}", plugin_name), mode_arg],
+            &[&format!("-GeneratePrecombined:{}", plugin_name), arg1, arg2],
             "Generate Precombined",
         )
     }
 
     /// Compress PSG file (clean mode only)
     ///
-    /// Runs: `CreationKit -CompressPSG:<plugin> - Geometry.csg ""`
+    /// Runs: `CreationKit -CompressPSG:"<plugin>"`
+    ///
+    /// Note: The output file name (e.g., "MyMod - Geometry.csg") is NOT part of the command.
+    /// CK determines the output filename automatically from the plugin name.
     pub fn compress_psg(&self, plugin_name: &str) -> Result<()> {
-        let plugin_base = plugin_name
-            .trim_end_matches(".esp")
-            .trim_end_matches(".esm");
-        let csg_file = format!("{} - Geometry.csg", plugin_base);
-
         self.run_with_dll_guard(
-            &[&format!("-CompressPSG:{}", plugin_name), &csg_file, ""],
+            &[&format!("-CompressPSG:{}", plugin_name)],
             "Compress PSG",
         )
     }
 
     /// Build CDX file (clean mode only)
     ///
-    /// Runs: `CreationKit -BuildCDX:<plugin>.cdx ""`
+    /// Runs: `CreationKit -BuildCDX:"<plugin>"`
+    ///
+    /// Note: The command takes the PLUGIN name, not the CDX filename.
+    /// CK automatically creates the .cdx file from the plugin name.
     pub fn build_cdx(&self, plugin_name: &str) -> Result<()> {
-        let plugin_base = plugin_name
-            .trim_end_matches(".esp")
-            .trim_end_matches(".esm");
-        let cdx_file = format!("{}.cdx", plugin_base);
-
-        self.run_with_dll_guard(&[&format!("-BuildCDX:{}", cdx_file), ""], "Build CDX")
+        self.run_with_dll_guard(
+            &[&format!("-BuildCDX:{}", plugin_name)],
+            "Build CDX"
+        )
     }
 
     /// Generate previs data
@@ -414,7 +413,7 @@ impl CreationKitRunner {
     /// - Generated files are placed in `Data/vis/`
     pub fn generate_previs(&self, plugin_name: &str) -> Result<()> {
         self.run_with_dll_guard(
-            &[&format!("-GeneratePreVisData:{}", plugin_name), "clean all"],
+            &[&format!("-GeneratePreVisData:{}", plugin_name), "clean", "all"],
             "Generate Previs",
         )?;
 

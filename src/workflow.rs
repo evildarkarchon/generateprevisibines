@@ -718,6 +718,20 @@ impl<'a> WorkflowExecutor<'a> {
             println!("✓ Plugin created with cell data from xPrevisPatch");
             println!("  The xPrevisPatch source file remains in your Data folder.");
             println!();
+        } else {
+            // Neither target plugin nor xPrevisPatch exists - this is an error
+            bail!(
+                "Plugin '{}' does not exist in Data folder, and no xPrevisPatch plugin found to use as a seed.\n\
+                \n\
+                To proceed, you need either:\n\
+                1. A plugin file named '{}' in: {}\n\
+                2. An xPrevisPatch.esp file (or similar) in the Data folder to copy from\n\
+                \n\
+                Please create or copy one of these files before running the workflow.",
+                self.plugin_name,
+                self.plugin_name,
+                self.data_dir.display()
+            );
         }
 
         Ok(())

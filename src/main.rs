@@ -387,6 +387,8 @@ fn main() -> Result<()> {
                             .ok_or_else(|| anyhow::anyhow!("Invalid step number"))?;
 
                         println!();
+                        println!("Starting from: Step {} - {}", start_step.number(), start_step.name());
+                        println!();
                         let executor =
                             workflow::WorkflowExecutor::new(&config, plugin_name, interactive);
                         executor.run_from_step(start_step)?;
