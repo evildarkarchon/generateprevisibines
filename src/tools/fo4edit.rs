@@ -331,7 +331,12 @@ impl FO4EditRunner {
     /// Script: Batch_FO4MergeCombinedObjectsAndCheck.pas
     /// Merges PrecombineObjects.esp into the main plugin
     pub fn merge_combined_objects(&self, plugin_name: &str) -> Result<()> {
-        self.run_script(plugin_name, SCRIPT_MERGE_COMBINED, "Merge Combined Objects")
+        self.run_script(
+            plugin_name,
+            "CombinedObjects.esp",
+            SCRIPT_MERGE_COMBINED,
+            "Merge Combined Objects",
+        )
     }
 
     /// Run FO4Edit script to merge previs data
@@ -339,7 +344,12 @@ impl FO4EditRunner {
     /// Script: Batch_FO4MergePrevisandCleanRefr.pas
     /// Merges Previs.esp into the main plugin
     pub fn merge_previs(&self, plugin_name: &str) -> Result<()> {
-        self.run_script(plugin_name, SCRIPT_MERGE_PREVIS, "Merge Previs")
+        self.run_script(
+            plugin_name,
+            "Previs.esp",
+            SCRIPT_MERGE_PREVIS,
+            "Merge Previs",
+        )
     }
 
     /// Run an FO4Edit script with full automation
@@ -446,16 +456,28 @@ impl FO4EditRunner {
     /// - Temporary files are created in the system's temp directory (`std::env::temp_dir()`)
     /// - Log files persist after execution for debugging purposes
     /// - Plugins.txt is cleaned up even if errors occur
-    fn run_script(&self, plugin_name: &str, script_name: &str, operation: &str) -> Result<()> {
+    fn run_script(
+        &self,
+        plugin_name: &str,
+        second_plugin: &str,
+        script_name: &str,
+        operation: &str,
+    ) -> Result<()> {
         info!("Running FO4Edit: {}", operation);
 
         // Create temporary Plugins.txt
+        // Match batch file filenames exactly to minimize path issues and ensure compatibility
         let temp_dir = std::env::temp_dir();
-        let plugins_file = temp_dir.join(format!("FO4Edit_Plugins_{}.txt", plugin_name));
-        let log_file = temp_dir.join(format!("FO4Edit_Log_{}.txt", plugin_name));
+        let plugins_file = temp_dir.join("Plugins.txt");
+        let log_file = temp_dir.join("UnattendedScript.log");
 
-        // Write plugin name to Plugins.txt
-        fs::write(&plugins_file, plugin_name)
+        // Write plugin names to Plugins.txt with '*' prefix
+        // Matches batch file behavior:
+        // Echo *%~3 > "%LocPlugins_%"
+        // Echo *%~4 >> "%LocPlugins_%"
+        // Use CRLF for Windows compatibility (echo behavior)
+        let plugins_content = format!("*{}\r\n*{}", plugin_name, second_plugin);
+        fs::write(&plugins_file, plugins_content)
             .with_context(|| format!("Failed to create Plugins.txt: {}", plugins_file.display()))?;
 
         // Delete old log if it exists
@@ -513,7 +535,7 @@ impl FO4EditRunner {
         self.wait_for_log_file(&log_file)?;
 
         // Wait a bit more for script to complete
-        thread::sleep(Duration::from_secs(5));
+        thread::sleep(Duration::from_secs(10));
 
         // Force close the main window (autoexit doesn't always work)
         self.close_fo4edit_window();
@@ -777,7 +799,7 @@ impl FO4EditRunner {
         info!("Waiting for log file creation...");
 
         const POLL_INTERVAL_SECS: u64 = 1;
-        const DEFAULT_TIMEOUT_SECS: u64 = 30;
+        const DEFAULT_TIMEOUT_SECS: u64 = 3600;
 
         // TODO: Consider adding this as a struct field or environment variable for customization
         // to support slower systems or network drives
