@@ -1,7 +1,3 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Purpose
 
 Translating `GeneratePrevisibines.bat` (500+ lines) into idiomatic Rust. Automates Fallout 4 mod development using Creation Kit and FO4Edit through an 8-step workflow for generating precombined meshes and previs data.
