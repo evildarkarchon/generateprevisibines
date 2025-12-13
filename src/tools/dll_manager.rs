@@ -221,7 +221,10 @@ impl DllManager {
 
             info!(
                 "Disabled DLL: {}",
-                dll_path.file_name().unwrap().to_string_lossy()
+                dll_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy())
+                    .unwrap_or_else(|| std::borrow::Cow::Borrowed("<unknown>"))
             );
             self.disabled_dlls.push(disabled_path);
             disabled_count += 1;
@@ -304,7 +307,10 @@ impl DllManager {
 
                 info!(
                     "Restored DLL: {}",
-                    original_path.file_name().unwrap().to_string_lossy()
+                    original_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy())
+                        .unwrap_or_else(|| std::borrow::Cow::Borrowed("<unknown>"))
                 );
                 restored_count += 1;
             } else {

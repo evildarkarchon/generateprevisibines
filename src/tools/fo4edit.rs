@@ -541,7 +541,10 @@ impl FO4EditRunner {
         self.close_fo4edit_window();
 
         // Clean up child process
-        let _ = child.wait(); // May already be closed
+        if let Err(e) = child.wait() {
+            // Expected if process was force-closed, but log for debugging
+            info!("Process wait returned: {} (expected if force-closed)", e);
+        }
 
         // Parse log for success/errors
         self.check_log_for_errors(&log_file, operation)?;
@@ -801,9 +804,12 @@ impl FO4EditRunner {
         const POLL_INTERVAL_SECS: u64 = 1;
         const DEFAULT_TIMEOUT_SECS: u64 = 3600;
 
-        // TODO: Consider adding this as a struct field or environment variable for customization
-        // to support slower systems or network drives
-        let timeout_secs = DEFAULT_TIMEOUT_SECS;
+        // Support configurable timeout for slower systems or network drives
+        // Set FO4EDIT_TIMEOUT_SECS environment variable to override (in seconds)
+        let timeout_secs = std::env::var("FO4EDIT_TIMEOUT_SECS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_TIMEOUT_SECS);
         let max_iterations = timeout_secs / POLL_INTERVAL_SECS;
 
         for i in 0..max_iterations {

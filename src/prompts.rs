@@ -65,8 +65,7 @@ pub fn prompt_use_existing_plugin(plugin_path: &Path) -> Result<Option<bool>> {
     match selection {
         0 => Ok(Some(true)),  // Yes
         1 => Ok(Some(false)), // No
-        2 => Ok(None),        // Exit
-        _ => unreachable!(),
+        _ => Ok(None),        // Exit or any other selection
     }
 }
 

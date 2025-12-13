@@ -581,20 +581,32 @@ impl ArchiveManager {
                 }
                 fs::create_dir_all(&temp_extract)?;
 
-                // Extract existing archive
-                self.archive2_extract(&archive_path, &temp_extract)?;
+                // Use closure to ensure cleanup on both success and error paths
+                let result = (|| -> Result<()> {
+                    // Extract existing archive
+                    self.archive2_extract(&archive_path, &temp_extract)?;
 
-                // Copy new files to extracted directory
-                self.copy_dir_recursive(source_dir, &temp_extract)?;
+                    // Copy new files to extracted directory
+                    self.copy_dir_recursive(source_dir, &temp_extract)?;
 
-                // Delete old archive
-                fs::remove_file(&archive_path)?;
+                    // Delete old archive
+                    fs::remove_file(&archive_path)?;
 
-                // Re-create archive with all files
-                self.archive2_create(&temp_extract, &archive_path, is_xbox)?;
+                    // Re-create archive with all files
+                    self.archive2_create(&temp_extract, &archive_path, is_xbox)?;
 
-                // Cleanup
-                fs::remove_dir_all(&temp_extract)?;
+                    Ok(())
+                })();
+
+                // Cleanup temp directory regardless of success/failure
+                if temp_extract.exists() {
+                    let _ = fs::remove_dir_all(&temp_extract);
+                }
+
+                // Propagate any error from the operation
+                result?;
+
+                // Clean up source directory on success
                 fs::remove_dir_all(source_dir)?;
             }
             ArchiveTool::BSArch => {

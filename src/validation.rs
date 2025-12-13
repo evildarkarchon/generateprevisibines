@@ -59,11 +59,15 @@ pub fn validate_plugin_name(name: &str, clean_mode: bool) -> Result<()> {
 }
 
 /// Extract the plugin name without extension
+///
+/// Handles all case variations of .esp and .esm extensions.
 pub fn get_plugin_base_name(name: &str) -> &str {
-    name.trim_end_matches(".esp")
-        .trim_end_matches(".esm")
-        .trim_end_matches(".ESP")
-        .trim_end_matches(".ESM")
+    let lower = name.to_lowercase();
+    if lower.ends_with(".esp") || lower.ends_with(".esm") {
+        &name[..name.len() - 4]
+    } else {
+        name
+    }
 }
 
 /// Check if a plugin file exists in the Data directory

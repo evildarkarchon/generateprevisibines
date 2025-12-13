@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use log::warn;
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -201,9 +202,18 @@ pub fn is_directory_empty(dir: &Path) -> bool {
         return true;
     }
 
-    fs::read_dir(dir)
-        .map(|mut entries| entries.next().is_none())
-        .unwrap_or(true)
+    match fs::read_dir(dir) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(e) => {
+            // Log warning to surface permission issues while preserving backwards compatibility
+            warn!(
+                "Failed to read directory '{}': {}. Treating as empty.",
+                dir.display(),
+                e
+            );
+            true
+        }
+    }
 }
 
 /// Delete all files in a directory matching a file extension
