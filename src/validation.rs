@@ -22,6 +22,7 @@ pub fn validate_plugin_name(name: &str, clean_mode: bool) -> Result<()> {
 
     // Check file extension
     let name_lower = name.to_lowercase();
+    #[allow(clippy::case_sensitive_file_extension_comparisons)]
     if !name_lower.ends_with(".esp") && !name_lower.ends_with(".esm") {
         bail!("Plugin name must end with .esp or .esm");
     }
@@ -34,15 +35,14 @@ pub fn validate_plugin_name(name: &str, clean_mode: bool) -> Result<()> {
     for reserved in RESERVED_NAMES {
         if base_name == *reserved {
             bail!(
-                "Plugin name cannot be '{}'\n\
+                "Plugin name cannot be '{reserved}'\n\
                 \n\
                 Reserved names:\n\
                 - previs.esp/esm (working file)\n\
                 - combinedobjects.esp/esm (working file)\n\
                 - xprevispatch.esp/esm (source data file)\n\
                 \n\
-                Please choose a different plugin name for your mod.",
-                reserved
+                Please choose a different plugin name for your mod."
             );
         }
     }
@@ -63,6 +63,7 @@ pub fn validate_plugin_name(name: &str, clean_mode: bool) -> Result<()> {
 /// Handles all case variations of .esp and .esm extensions.
 pub fn get_plugin_base_name(name: &str) -> &str {
     let lower = name.to_lowercase();
+    #[allow(clippy::case_sensitive_file_extension_comparisons)]
     if lower.ends_with(".esp") || lower.ends_with(".esm") {
         &name[..name.len() - 4]
     } else {

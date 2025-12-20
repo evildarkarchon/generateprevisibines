@@ -63,23 +63,23 @@ impl Mo2Helper {
         let search_path = self.staging_dir.join(subpath);
 
         if !search_path.exists() {
-            info!("MO2: Path not found in staging directory: {}", subpath);
+            info!("MO2: Path not found in staging directory: {subpath}");
             return Ok(None);
         }
 
         if !search_path.is_dir() {
-            warn!("MO2: Path exists but is not a directory: {}", subpath);
+            warn!("MO2: Path exists but is not a directory: {subpath}");
             return Ok(None);
         }
 
         // Check if directory has any files
         let has_files = WalkDir::new(&search_path)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .any(|e| e.file_type().is_file());
 
         if !has_files {
-            info!("MO2: No files found in {}", subpath);
+            info!("MO2: No files found in {subpath}");
             return Ok(None);
         }
 
@@ -93,7 +93,7 @@ impl Mo2Helper {
             .with_context(|| format!("Failed to create temp directory: {}", temp_dir.display()))?;
 
         // Copy files while maintaining directory structure
-        info!("MO2: Collecting files from {} to temp location", subpath);
+        info!("MO2: Collecting files from {subpath} to temp location");
 
         let dest_base = temp_dir.join(subpath);
         fs::create_dir_all(&dest_base)?;
@@ -145,7 +145,7 @@ impl Mo2Helper {
             file_count += 1;
         }
 
-        info!("MO2: Collected {} files from {}", file_count, subpath);
+        info!("MO2: Collected {file_count} files from {subpath}");
         Ok(Some(temp_dir.to_path_buf()))
     }
 

@@ -19,6 +19,7 @@ use config::{ArchiveTool, BuildMode, Config};
 #[derive(Parser, Debug)]
 #[command(name = "generateprevisibines")]
 #[command(about = "Automate Fallout 4 precombine and previs generation", long_about = None)]
+#[allow(clippy::struct_excessive_bools)]
 struct Args {
     /// Plugin name (e.g., MyMod.esp)
     #[arg(value_name = "PLUGIN")]
@@ -36,7 +37,7 @@ struct Args {
     #[arg(short = 'x', long = "xbox", conflicts_with_all = ["clean", "filtered"])]
     xbox: bool,
 
-    /// Use BSArch instead of Archive2
+    /// Use `BSArch` instead of Archive2
     #[arg(long = "bsarch")]
     bsarch: bool,
 
@@ -81,6 +82,7 @@ impl Args {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn main() -> Result<()> {
     // Initialize logging to %TEMP%
     let log_path = utils::init_logging().context("Failed to initialize logging")?;
@@ -193,14 +195,14 @@ fn main() -> Result<()> {
     let fo4_exe = fo4_dir.join("Fallout4.exe");
     if fo4_exe.exists() {
         let version = utils::get_simple_version(&fo4_exe);
-        println!("Fallout 4:      {}", version);
+        println!("Fallout 4:      {version}");
     }
 
     let fo4edit_version = utils::get_simple_version(&fo4edit_path);
-    println!("FO4Edit:        {}", fo4edit_version);
+    println!("FO4Edit:        {fo4edit_version}");
 
     let ck_version = utils::get_simple_version(&ck_path);
-    println!("Creation Kit:   {}", ck_version);
+    println!("Creation Kit:   {ck_version}");
 
     let archive_version = utils::get_simple_version(&archive_path);
     println!(
@@ -220,7 +222,7 @@ fn main() -> Result<()> {
             }
             println!();
             let mo2_version = utils::get_simple_version(mo2_path);
-            println!("Mod Organizer 2: {}", mo2_version);
+            println!("Mod Organizer 2: {mo2_version}");
 
             // Validate mo2_data_dir if provided
             let mo2_data_dir = if let Some(ref data_dir) = args.mo2_data_dir {
@@ -265,19 +267,19 @@ fn main() -> Result<()> {
         println!("MO2 mode:       Disabled");
     }
     if let Some(ref plugin) = args.plugin {
-        println!("Plugin:         {}", plugin);
+        println!("Plugin:         {plugin}");
     }
     println!();
 
     // Create configuration
     let mut config = Config::new(args.get_build_mode(), archive_tool);
-    config.fo4_dir = fo4_dir.clone();
+    config.fo4_dir.clone_from(&fo4_dir);
     config.fo4edit_path = fo4edit_path;
     config.creation_kit_path = ck_path;
     config.archive_exe_path = archive_path;
     config.ckpe_config_path = ckpe_config_path;
     config.ck_log_path = ck_log_path;
-    config.plugin_name = args.plugin.clone();
+    config.plugin_name.clone_from(&args.plugin);
     config.mo2_mode = args.mo2_mode;
     config.mo2_path = mo2_config;
     config.mo2_data_dir = mo2_data_dir_config;
@@ -336,10 +338,10 @@ fn main() -> Result<()> {
         println!();
         println!("Existing previs/precombine files found:");
         if nif_count > 0 {
-            println!("  {} .nif files in precombined directory", nif_count);
+            println!("  {nif_count} .nif files in precombined directory");
         }
         if uvd_count > 0 {
-            println!("  {} .uvd files in vis directory", uvd_count);
+            println!("  {uvd_count} .uvd files in vis directory");
         }
         println!("These will be managed during the workflow steps.");
     }
@@ -367,7 +369,7 @@ fn main() -> Result<()> {
         prompts::prompt_plugin_name(is_clean_mode)?
     };
 
-    info!("Plugin name: {}", plugin_name);
+    info!("Plugin name: {plugin_name}");
 
     // Check if plugin exists
     let data_dir = fo4_dir.join("Data");
@@ -387,7 +389,11 @@ fn main() -> Result<()> {
                             .ok_or_else(|| anyhow::anyhow!("Invalid step number"))?;
 
                         println!();
-                        println!("Starting from: Step {} - {}", start_step.number(), start_step.name());
+                        println!(
+                            "Starting from: Step {} - {}",
+                            start_step.number(),
+                            start_step.name()
+                        );
                         println!();
                         let executor =
                             workflow::WorkflowExecutor::new(&config, plugin_name, interactive);

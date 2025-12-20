@@ -25,12 +25,12 @@ pub enum WorkflowStep {
 
 impl WorkflowStep {
     /// Get step number (1-8)
-    pub fn number(&self) -> u8 {
-        *self as u8
+    pub fn number(self) -> u8 {
+        self as u8
     }
 
     /// Get step name for display
-    pub fn name(&self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::GeneratePrecombined => "Generate Precombines Via CK",
             Self::MergeCombinedObjects => "Merge PrecombineObjects.esp Via xEdit",
@@ -44,7 +44,7 @@ impl WorkflowStep {
     }
 
     /// Check if step is clean-mode only
-    pub fn is_clean_mode_only(&self) -> bool {
+    pub fn is_clean_mode_only(self) -> bool {
         matches!(self, Self::CompressPSG | Self::BuildCDX)
     }
 
@@ -64,7 +64,7 @@ impl WorkflowStep {
     }
 
     /// Get next step
-    pub fn next(&self) -> Option<Self> {
+    pub fn next(self) -> Option<Self> {
         Self::from_number(self.number() + 1)
     }
 }
@@ -279,18 +279,15 @@ impl<'a> WorkflowExecutor<'a> {
         if self.interactive {
             // Prompt user to clean
             if prompts::prompt_clean_directory(dir_name)? {
-                info!("Cleaning directory: {}", dir_name);
+                info!("Cleaning directory: {dir_name}");
                 fs::remove_dir_all(dir)?;
                 fs::create_dir_all(dir)?;
             } else {
-                bail!("Cannot proceed: Directory '{}' is not empty", dir_name);
+                bail!("Cannot proceed: Directory '{dir_name}' is not empty");
             }
         } else {
             // Non-interactive mode: fail
-            bail!(
-                "Directory '{}' is not empty. Clean it or run interactively.",
-                dir_name
-            );
+            bail!("Directory '{dir_name}' is not empty. Clean it or run interactively.");
         }
 
         Ok(())
@@ -298,7 +295,7 @@ impl<'a> WorkflowExecutor<'a> {
 
     /// Step 1: Generate Precombines Via CK
     ///
-    /// Runs CreationKit to generate precombined meshes (.nif files) for the plugin.
+    /// Runs `CreationKit` to generate precombined meshes (.nif files) for the plugin.
     /// Precombined meshes combine multiple static objects into single meshes for
     /// better performance.
     ///
@@ -310,7 +307,7 @@ impl<'a> WorkflowExecutor<'a> {
     /// # Process
     ///
     /// 1. Cleans working directories if needed
-    /// 2. Runs CreationKit with precombine generation flags
+    /// 2. Runs `CreationKit` with precombine generation flags
     /// 3. Validates that .nif files were created
     /// 4. In clean mode, validates that .psg file was created
     ///
@@ -324,7 +321,7 @@ impl<'a> WorkflowExecutor<'a> {
     /// Returns an error if:
     /// - User declines to clean non-empty directories (interactive mode)
     /// - Directories are not empty (non-interactive mode)
-    /// - CreationKit fails to run or crashes
+    /// - `CreationKit` fails to run or crashes
     /// - No precombined meshes were generated
     fn step1_generate_precombined(&self) -> Result<()> {
         // Pre-check: meshes\precombined and vis must be empty
@@ -359,9 +356,7 @@ impl<'a> WorkflowExecutor<'a> {
         // Post-check: .psg file created (clean mode only)
         if self.config.build_mode == BuildMode::Clean {
             let plugin_base = validation::get_plugin_base_name(&self.plugin_name);
-            let psg_file = self
-                .data_dir
-                .join(format!("{} - Geometry.psg", plugin_base));
+            let psg_file = self.data_dir.join(format!("{plugin_base} - Geometry.psg"));
 
             if !psg_file.exists() {
                 warn!("PSG file not created: {}", psg_file.display());
@@ -373,7 +368,7 @@ impl<'a> WorkflowExecutor<'a> {
 
     /// Step 2: Merge PrecombineObjects.esp Via xEdit
     ///
-    /// Runs FO4Edit to merge the temporary PrecombineObjects.esp (created by CreationKit)
+    /// Runs `FO4Edit` to merge the temporary PrecombineObjects.esp (created by `CreationKit`)
     /// into the main plugin. This consolidates precombine data into the plugin itself.
     ///
     /// # Pre-Checks
@@ -384,7 +379,7 @@ impl<'a> WorkflowExecutor<'a> {
     ///
     /// Returns an error if:
     /// - No precombined meshes found (Step 1 not completed)
-    /// - FO4Edit fails to run or merge operation fails
+    /// - `FO4Edit` fails to run or merge operation fails
     fn step2_merge_combined_objects(&self) -> Result<()> {
         // Pre-check: Precombined meshes exist
         let precombined_dir = self.data_dir.join("meshes").join("precombined");
@@ -413,7 +408,7 @@ impl<'a> WorkflowExecutor<'a> {
     ///
     /// # Process
     ///
-    /// - Uses Archive2 or BSArch (depending on configuration)
+    /// - Uses Archive2 or `BSArch` (depending on configuration)
     /// - Archives all .nif files from `meshes/precombined`
     /// - MO2-aware: Collects files from MO2 staging directory if configured
     ///
@@ -424,7 +419,7 @@ impl<'a> WorkflowExecutor<'a> {
     /// - No precombined meshes found to archive
     fn step3_create_precombined_archive(&self) -> Result<()> {
         let plugin_base = validation::get_plugin_base_name(&self.plugin_name);
-        let archive_name = format!("{} - Main.ba2", plugin_base);
+        let archive_name = format!("{plugin_base} - Main.ba2");
 
         let (archive2_path, bsarch_path) = match self.config.archive_tool {
             crate::config::ArchiveTool::Archive2 => {
@@ -447,13 +442,13 @@ impl<'a> WorkflowExecutor<'a> {
 
         archive_manager.create_archive_from_precombines(&archive_name, is_xbox, mo2_data_dir)?;
 
-        info!("Created archive: {}", archive_name);
+        info!("Created archive: {archive_name}");
         Ok(())
     }
 
     /// Step 4: Compress PSG Via CK (clean mode only)
     ///
-    /// Runs CreationKit to compress the PSG (PreSceneGraph) file created in Step 1.
+    /// Runs `CreationKit` to compress the PSG (`PreSceneGraph`) file created in Step 1.
     /// This step is only performed in clean mode, not in filtered mode.
     ///
     /// # Pre-Checks
@@ -462,20 +457,18 @@ impl<'a> WorkflowExecutor<'a> {
     ///
     /// # Process
     ///
-    /// 1. Runs CreationKit to compress the PSG file
+    /// 1. Runs `CreationKit` to compress the PSG file
     /// 2. Deletes the original PSG file after compression
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - PSG file not found (Step 1 may have failed)
-    /// - CreationKit fails to compress the PSG
+    /// - `CreationKit` fails to compress the PSG
     /// - PSG file cannot be deleted after compression
     fn step4_compress_psg(&self) -> Result<()> {
         let plugin_base = validation::get_plugin_base_name(&self.plugin_name);
-        let psg_file = self
-            .data_dir
-            .join(format!("{} - Geometry.psg", plugin_base));
+        let psg_file = self.data_dir.join(format!("{plugin_base} - Geometry.psg"));
 
         // Pre-check: .psg file exists
         if !psg_file.exists() {
@@ -509,12 +502,12 @@ impl<'a> WorkflowExecutor<'a> {
 
     /// Step 5: Build CDX Via CK (clean mode only)
     ///
-    /// Runs CreationKit to build CDX (Combined Data Index) files. This step is only
+    /// Runs `CreationKit` to build CDX (Combined Data Index) files. This step is only
     /// performed in clean mode, not in filtered mode.
     ///
     /// # Errors
     ///
-    /// Returns an error if CreationKit fails to build the CDX files
+    /// Returns an error if `CreationKit` fails to build the CDX files
     fn step5_build_cdx(&self) -> Result<()> {
         let ck_log = self
             .config
@@ -537,7 +530,7 @@ impl<'a> WorkflowExecutor<'a> {
 
     /// Step 6: Generate Previs Via CK
     ///
-    /// Runs CreationKit to generate previs (precomputed visibility) data. Previs data
+    /// Runs `CreationKit` to generate previs (precomputed visibility) data. Previs data
     /// tells the engine which objects are visible from different locations, improving
     /// performance by culling invisible objects.
     ///
@@ -548,7 +541,7 @@ impl<'a> WorkflowExecutor<'a> {
     /// # Process
     ///
     /// 1. Cleans `vis` directory if needed
-    /// 2. Runs CreationKit to generate previs data
+    /// 2. Runs `CreationKit` to generate previs data
     /// 3. Validates that .uvd files were created
     ///
     /// # Post-Checks
@@ -560,7 +553,7 @@ impl<'a> WorkflowExecutor<'a> {
     /// Returns an error if:
     /// - User declines to clean non-empty `vis` directory (interactive mode)
     /// - `vis` directory is not empty (non-interactive mode)
-    /// - CreationKit fails to run or crashes
+    /// - `CreationKit` fails to run or crashes
     /// - No previs data was generated
     fn step6_generate_previs(&self) -> Result<()> {
         // Pre-check: vis directory empty
@@ -595,20 +588,20 @@ impl<'a> WorkflowExecutor<'a> {
 
     /// Step 7: Merge Previs.esp Via xEdit
     ///
-    /// Runs FO4Edit to merge the temporary Previs.esp (created by CreationKit)
+    /// Runs `FO4Edit` to merge the temporary Previs.esp (created by `CreationKit`)
     /// into the main plugin. This consolidates previs data into the plugin itself.
     ///
     /// # Pre-Checks
     ///
     /// - Verifies previs data (.uvd files) exist from Step 6
-    /// - Verifies Previs.esp was created by CreationKit
+    /// - Verifies Previs.esp was created by `CreationKit`
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - No previs data found (Step 6 not completed)
-    /// - Previs.esp not found (CreationKit failed to create it)
-    /// - FO4Edit fails to run or merge operation fails
+    /// - Previs.esp not found (`CreationKit` failed to create it)
+    /// - `FO4Edit` fails to run or merge operation fails
     fn step7_merge_previs(&self) -> Result<()> {
         // Pre-check: .uvd files exist
         let vis_dir = self.data_dir.join("vis");
@@ -643,9 +636,9 @@ impl<'a> WorkflowExecutor<'a> {
     ///
     /// # Process
     ///
-    /// - Uses Archive2 or BSArch (depending on configuration)
+    /// - Uses Archive2 or `BSArch` (depending on configuration)
     /// - For Archive2: Extract → Add files → Re-archive (no append support)
-    /// - For BSArch: Appends files directly to existing archive
+    /// - For `BSArch`: Appends files directly to existing archive
     /// - MO2-aware: Collects files from MO2 staging directory if configured
     ///
     /// # Errors
@@ -656,7 +649,7 @@ impl<'a> WorkflowExecutor<'a> {
     /// - For Archive2: Extraction or re-archiving fails
     fn step8_add_previs_to_archive(&self) -> Result<()> {
         let plugin_base = validation::get_plugin_base_name(&self.plugin_name);
-        let archive_name = format!("{} - Main.ba2", plugin_base);
+        let archive_name = format!("{plugin_base} - Main.ba2");
 
         let (archive2_path, bsarch_path) = match self.config.archive_tool {
             crate::config::ArchiveTool::Archive2 => {
@@ -679,7 +672,7 @@ impl<'a> WorkflowExecutor<'a> {
 
         archive_manager.add_previs_to_archive(&archive_name, is_xbox, mo2_data_dir)?;
 
-        info!("Added previs data to archive: {}", archive_name);
+        info!("Added previs data to archive: {archive_name}");
         Ok(())
     }
 
@@ -694,31 +687,7 @@ impl<'a> WorkflowExecutor<'a> {
 
         let xprevis_plugins = filesystem::find_xprevis_patch_plugins(&self.data_dir)?;
 
-        if !xprevis_plugins.is_empty() {
-            println!();
-            println!("INFO: Found xPrevisPatch plugin(s):");
-            for plugin in &xprevis_plugins {
-                println!("  - {}", plugin);
-            }
-
-            // Use the first xPrevisPatch plugin found
-            let source_plugin = self.data_dir.join(&xprevis_plugins[0]);
-
-            println!();
-            println!("Copying {} to {} ...", xprevis_plugins[0], self.plugin_name);
-
-            fs::copy(&source_plugin, &target_plugin).with_context(|| {
-                format!(
-                    "Failed to copy {} to {}",
-                    source_plugin.display(),
-                    target_plugin.display()
-                )
-            })?;
-
-            println!("✓ Plugin created with cell data from xPrevisPatch");
-            println!("  The xPrevisPatch source file remains in your Data folder.");
-            println!();
-        } else {
+        if xprevis_plugins.is_empty() {
             // Neither target plugin nor xPrevisPatch exists - this is an error
             bail!(
                 "Plugin '{}' does not exist in Data folder, and no xPrevisPatch plugin found to use as a seed.\n\
@@ -734,6 +703,30 @@ impl<'a> WorkflowExecutor<'a> {
             );
         }
 
+        println!();
+        println!("INFO: Found xPrevisPatch plugin(s):");
+        for plugin in &xprevis_plugins {
+            println!("  - {plugin}");
+        }
+
+        // Use the first xPrevisPatch plugin found
+        let source_plugin = self.data_dir.join(&xprevis_plugins[0]);
+
+        println!();
+        println!("Copying {} to {} ...", xprevis_plugins[0], self.plugin_name);
+
+        fs::copy(&source_plugin, &target_plugin).with_context(|| {
+            format!(
+                "Failed to copy {} to {}",
+                source_plugin.display(),
+                target_plugin.display()
+            )
+        })?;
+
+        println!("✓ Plugin created with cell data from xPrevisPatch");
+        println!("  The xPrevisPatch source file remains in your Data folder.");
+        println!();
+
         Ok(())
     }
 
@@ -748,7 +741,7 @@ impl<'a> WorkflowExecutor<'a> {
                     fs::remove_file(&file_path).with_context(|| {
                         format!("Failed to delete working file: {}", file_path.display())
                     })?;
-                    info!("Deleted: {}", file_name);
+                    info!("Deleted: {file_name}");
                 }
             }
             println!("\nWorking files cleaned up successfully");
@@ -767,7 +760,7 @@ impl<'a> WorkflowExecutor<'a> {
         info!("=== All done! ===");
         info!("Plugin: {}", self.plugin_name);
         info!("Build Mode: {:?}", self.config.build_mode);
-        info!("Completed in: {}m {}s", minutes, seconds);
+        info!("Completed in: {minutes}m {seconds}s");
         info!("");
         info!(
             "Previsibines generated successfully for {}!",
@@ -781,7 +774,7 @@ impl<'a> WorkflowExecutor<'a> {
         if self.interactive {
             println!();
             if let Err(e) = self.cleanup_working_files() {
-                warn!("Failed to clean up working files: {}", e);
+                warn!("Failed to clean up working files: {e}");
             }
         } else {
             info!("  • Clean up temp files if needed (Previs.esp, PrecombineObjects.esp)");

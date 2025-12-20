@@ -95,7 +95,7 @@ pub fn get_file_version(exe_path: &Path) -> Result<String> {
             PCWSTR(path_wide.as_ptr()),
             Some(0),
             size,
-            buffer.as_mut_ptr() as *mut _,
+            buffer.as_mut_ptr().cast(),
         )
         .ok()
         .context(format!(
@@ -109,10 +109,10 @@ pub fn get_file_version(exe_path: &Path) -> Result<String> {
         let subblock: Vec<u16> = "\\".encode_utf16().chain(std::iter::once(0)).collect();
 
         VerQueryValueW(
-            buffer.as_ptr() as *const _,
+            buffer.as_ptr().cast(),
             PCWSTR(subblock.as_ptr()),
-            &mut info_ptr as *mut _ as *mut *mut _,
-            &mut len,
+            (&raw mut info_ptr).cast::<*mut _>(),
+            &raw mut len,
         )
         .ok()
         .context(format!(
@@ -122,6 +122,7 @@ pub fn get_file_version(exe_path: &Path) -> Result<String> {
 
         // Cast to VS_FIXEDFILEINFO structure
         // We need the file version (dwFileVersionMS and dwFileVersionLS)
+        #[allow(clippy::cast_ptr_alignment)]
         let file_info = info_ptr as *const VS_FIXEDFILEINFO;
         if file_info.is_null() {
             anyhow::bail!("Version info pointer is null");
@@ -149,16 +150,16 @@ pub fn get_file_version(exe_path: &Path) -> Result<String> {
             );
         }
 
-        Ok(format!("{}.{}.{}.{}", major, minor, build, revision))
+        Ok(format!("{major}.{minor}.{build}.{revision}"))
     }
 }
 
 //noinspection RsStructNaming
-/// VS_FIXEDFILEINFO structure (from Windows SDK)
+/// `VS_FIXEDFILEINFO` structure (from Windows SDK)
 ///
 /// **IMPORTANT**: Field names must match Windows SDK exactly for FFI safety.
 /// The struct uses `#[repr(C)]` for correct memory layout when casting from
-/// Windows API pointers. Renaming fields to snake_case would break the layout.
+/// Windows API pointers. Renaming fields to `snake_case` would break the layout.
 ///
 /// # Safety
 ///
@@ -204,7 +205,7 @@ struct VS_FIXEDFILEINFO {
 ///
 /// This function will return an error if:
 /// - The log file cannot be created in the temp directory (insufficient permissions, disk full)
-/// - The env_logger initialization fails
+/// - The `env_logger` initialization fails
 ///
 /// # Examples
 ///

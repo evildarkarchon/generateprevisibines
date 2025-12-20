@@ -16,7 +16,7 @@
 //!
 //! ## Workaround #1: DLL Management
 //!
-//! **Problem:** CreationKit crashes when ENB or ReShade DLLs are loaded.
+//! **Problem:** `CreationKit` crashes when ENB or `ReShade` DLLs are loaded.
 //!
 //! **Solution:** The [`DllGuard`] automatically renames interfering DLLs before CK runs
 //! and restores them afterward. Files renamed:
@@ -31,13 +31,13 @@
 //!
 //! ## Workaround #2: Log Parsing Instead of Exit Codes
 //!
-//! **Problem:** CreationKit exit codes are unreliable and cannot be used to determine
+//! **Problem:** `CreationKit` exit codes are unreliable and cannot be used to determine
 //! success or failure. CK often exits with non-zero codes after successful operations,
 //! and sometimes exits with code 0 even when operations failed.
 //!
 //! **Solution:** Every CK operation:
 //! 1. Deletes the old log file before starting
-//! 2. Runs CreationKit
+//! 2. Runs `CreationKit`
 //! 3. Parses the new log file for known critical error patterns
 //! 4. Ignores exit codes entirely (logs them as warnings only)
 //!
@@ -54,7 +54,7 @@
 //!
 //! # Mod Organizer 2 Support
 //!
-//! When configured with [`with_mo2`](CreationKitRunner::with_mo2), CreationKit is launched
+//! When configured with [`with_mo2`](CreationKitRunner::with_mo2), `CreationKit` is launched
 //! through MO2's virtual file system. This ensures CK sees mods in the correct load order.
 //!
 //! # Examples
@@ -95,12 +95,12 @@ use std::process::Command;
 use crate::config::BuildMode;
 use crate::tools::dll_manager::{DllGuard, DllManager};
 
-/// Critical error pattern: CreationKit handle limit exceeded
+/// Critical error pattern: `CreationKit` handle limit exceeded
 ///
 /// **Error String:** `"OUT OF HANDLE ARRAY ENTRIES"`
 ///
-/// This error appears in CreationKit's log when it runs out of internal object handles.
-/// CreationKit uses a fixed-size array to track game objects during processing. When
+/// This error appears in `CreationKit`'s log when it runs out of internal object handles.
+/// `CreationKit` uses a fixed-size array to track game objects during processing. When
 /// a mod contains too many objects (references, forms, cells), this array overflows.
 ///
 /// # When This Occurs
@@ -123,14 +123,14 @@ use crate::tools::dll_manager::{DllGuard, DllManager};
 ///
 /// # Detection
 ///
-/// Checked in `check_log_for_errors()` after every CreationKit operation.
+/// Checked in `check_log_for_errors()` after every `CreationKit` operation.
 const HANDLE_LIMIT_ERROR: &str = "OUT OF HANDLE ARRAY ENTRIES";
 
 /// Critical error pattern: Previs generation task failed
 ///
 /// **Error String:** `"visibility task did not complete"`
 ///
-/// This error appears when CreationKit's previs (pre-calculated visibility) generation
+/// This error appears when `CreationKit`'s previs (pre-calculated visibility) generation
 /// fails for one or more cells. Unlike handle limit errors, this may affect only some
 /// cells while others succeed.
 ///
@@ -138,7 +138,7 @@ const HANDLE_LIMIT_ERROR: &str = "OUT OF HANDLE ARRAY ENTRIES";
 ///
 /// - Cells with malformed geometry
 /// - Complex geometry that exceeds previs calculation limits
-/// - Internal CreationKit processing errors
+/// - Internal `CreationKit` processing errors
 /// - Corrupted mesh files
 ///
 /// # Impact
@@ -176,7 +176,7 @@ const PREVIS_ERROR: &str = "visibility task did not complete";
 ///
 /// **REQUIRED WORKAROUND #1: DLL Management**
 ///
-/// CreationKit crashes when ENB or ReShade DLLs (d3d11.dll, dxgi.dll, etc.) are loaded.
+/// `CreationKit` crashes when ENB or `ReShade` DLLs (d3d11.dll, dxgi.dll, etc.) are loaded.
 /// The `DllGuard` automatically renames these files before CK runs and restores them afterward.
 /// See original batch script lines 422-427, 330-335.
 ///
@@ -184,7 +184,7 @@ const PREVIS_ERROR: &str = "visibility task did not complete";
 ///
 /// **REQUIRED WORKAROUND #2: Log Parsing Instead of Exit Codes**
 ///
-/// CreationKit frequently exits with non-zero status codes even on successful operations.
+/// `CreationKit` frequently exits with non-zero status codes even on successful operations.
 /// Exit codes alone are UNRELIABLE for determining success/failure. Instead, this runner:
 /// - Deletes old log files before each operation
 /// - Parses the new log file for known critical error patterns
@@ -231,7 +231,7 @@ pub struct CreationKitRunner {
 }
 
 impl CreationKitRunner {
-    /// Create a new CreationKit runner
+    /// Create a new `CreationKit` runner
     pub fn new(ck_exe: impl AsRef<Path>, fallout4_dir: impl AsRef<Path>) -> Self {
         Self {
             ck_exe: ck_exe.as_ref().to_path_buf(),
@@ -255,7 +255,7 @@ impl CreationKitRunner {
 
     /// Generate precombined meshes
     ///
-    /// Executes CreationKit with the `-GeneratePrecombined` command to create optimized
+    /// Executes `CreationKit` with the `-GeneratePrecombined` command to create optimized
     /// combined meshes for improved game performance. This is Step 2 of the workflow.
     ///
     /// # Arguments
@@ -284,7 +284,7 @@ impl CreationKitRunner {
     /// # Errors
     ///
     /// This function will return an error if:
-    /// - CreationKit cannot be launched (file not found, permission denied)
+    /// - `CreationKit` cannot be launched (file not found, permission denied)
     /// - DLL renaming fails (files in use, permission denied)
     /// - Log file indicates critical errors (handle limit exceeded)
     /// - Old log file cannot be deleted before starting
@@ -314,12 +314,11 @@ impl CreationKitRunner {
     pub fn generate_precombined(&self, plugin_name: &str, build_mode: BuildMode) -> Result<()> {
         let (arg1, arg2) = match build_mode {
             BuildMode::Clean => ("clean", "all"),
-            BuildMode::Filtered => ("filtered", "all"),
-            BuildMode::Xbox => ("filtered", "all"), // Xbox uses filtered
+            BuildMode::Filtered | BuildMode::Xbox => ("filtered", "all"),
         };
 
         self.run_with_dll_guard(
-            &[&format!("-GeneratePrecombined:{}", plugin_name), arg1, arg2],
+            &[&format!("-GeneratePrecombined:{plugin_name}"), arg1, arg2],
             "Generate Precombined",
         )
     }
@@ -328,13 +327,10 @@ impl CreationKitRunner {
     ///
     /// Runs: `CreationKit -CompressPSG:"<plugin>"`
     ///
-    /// Note: The output file name (e.g., "MyMod - Geometry.csg") is NOT part of the command.
+    /// Note: The output file name (e.g., "`MyMod` - Geometry.csg") is NOT part of the command.
     /// CK determines the output filename automatically from the plugin name.
     pub fn compress_psg(&self, plugin_name: &str) -> Result<()> {
-        self.run_with_dll_guard(
-            &[&format!("-CompressPSG:{}", plugin_name)],
-            "Compress PSG",
-        )
+        self.run_with_dll_guard(&[&format!("-CompressPSG:{plugin_name}")], "Compress PSG")
     }
 
     /// Build CDX file (clean mode only)
@@ -344,15 +340,12 @@ impl CreationKitRunner {
     /// Note: The command takes the PLUGIN name, not the CDX filename.
     /// CK automatically creates the .cdx file from the plugin name.
     pub fn build_cdx(&self, plugin_name: &str) -> Result<()> {
-        self.run_with_dll_guard(
-            &[&format!("-BuildCDX:{}", plugin_name)],
-            "Build CDX"
-        )
+        self.run_with_dll_guard(&[&format!("-BuildCDX:{plugin_name}")], "Build CDX")
     }
 
     /// Generate previs data
     ///
-    /// Executes CreationKit with the `-GeneratePreVisData` command to create previs
+    /// Executes `CreationKit` with the `-GeneratePreVisData` command to create previs
     /// (pre-calculated visibility) data for improved game performance. This is Step 7
     /// of the workflow.
     ///
@@ -373,7 +366,7 @@ impl CreationKitRunner {
     /// # Errors
     ///
     /// This function will return an error if:
-    /// - CreationKit cannot be launched (file not found, permission denied)
+    /// - `CreationKit` cannot be launched (file not found, permission denied)
     /// - DLL renaming fails (files in use, permission denied)
     /// - Log file indicates critical errors:
     ///   - **`OUT OF HANDLE ARRAY ENTRIES`**: Handle limit exceeded
@@ -385,13 +378,13 @@ impl CreationKitRunner {
     /// # Special Error Detection
     ///
     /// This function performs ADDITIONAL log checking beyond the standard error detection.
-    /// After running CreationKit, it specifically searches for the error pattern
+    /// After running `CreationKit`, it specifically searches for the error pattern
     /// `"visibility task did not complete"` which indicates previs generation failures.
     ///
     /// This error typically occurs when:
     /// - Cells are too complex for previs calculation
     /// - Geometry is malformed or has issues
-    /// - CreationKit encounters internal processing errors
+    /// - `CreationKit` encounters internal processing errors
     ///
     /// # Examples
     ///
@@ -413,32 +406,35 @@ impl CreationKitRunner {
     /// - Generated files are placed in `Data/vis/`
     pub fn generate_previs(&self, plugin_name: &str) -> Result<()> {
         self.run_with_dll_guard(
-            &[&format!("-GeneratePreVisData:{}", plugin_name), "clean", "all"],
+            &[
+                &format!("-GeneratePreVisData:{plugin_name}"),
+                "clean",
+                "all",
+            ],
             "Generate Previs",
         )?;
 
         // Check for specific previs failure in log
-        if let Some(ref log_path) = self.log_file {
-            if log_path.exists() {
-                let log_content =
-                    fs::read_to_string(log_path).context("Failed to read CreationKit log")?;
+        if let Some(ref log_path) = self.log_file
+            && log_path.exists()
+        {
+            let log_content =
+                fs::read_to_string(log_path).context("Failed to read CreationKit log")?;
 
-                if log_content.contains(PREVIS_ERROR) {
-                    bail!(
-                        "Previs generation failed: '{}' found in log.\n\
-                        This usually indicates cells that couldn't generate previs data.",
-                        PREVIS_ERROR
-                    );
-                }
+            if log_content.contains(PREVIS_ERROR) {
+                bail!(
+                    "Previs generation failed: '{PREVIS_ERROR}' found in log.\n\
+                        This usually indicates cells that couldn't generate previs data."
+                );
             }
         }
 
         Ok(())
     }
 
-    /// Run CreationKit with DLL guard and log management
+    /// Run `CreationKit` with DLL guard and log management
     ///
-    /// Internal wrapper that handles all the necessary workarounds for running CreationKit
+    /// Internal wrapper that handles all the necessary workarounds for running `CreationKit`
     /// safely in an automated environment. This function coordinates DLL management, log
     /// file handling, process execution, and error detection.
     ///
@@ -451,7 +447,7 @@ impl CreationKitRunner {
     ///
     /// 1. **Log Cleanup**: Deletes old log file (if exists) to ensure fresh error detection
     /// 2. **DLL Guard**: Creates `DllGuard` to temporarily rename ENB/ReShade DLLs
-    /// 3. **Execution**: Runs CreationKit (optionally through MO2)
+    /// 3. **Execution**: Runs `CreationKit` (optionally through MO2)
     /// 4. **Error Detection**: Parses log file for critical errors
     /// 5. **Exit Code Handling**: Logs exit code but does NOT fail on non-zero codes
     /// 6. **DLL Restoration**: `DllGuard` automatically restores DLLs when dropped
@@ -460,8 +456,8 @@ impl CreationKitRunner {
     ///
     /// **CRITICAL INFORMATION:**
     ///
-    /// CreationKit frequently exits with non-zero status codes even after successful operations.
-    /// This is not a bug in this code - it's a known limitation of CreationKit itself.
+    /// `CreationKit` frequently exits with non-zero status codes even after successful operations.
+    /// This is not a bug in this code - it's a known limitation of `CreationKit` itself.
     ///
     /// **Example scenarios where CK exits non-zero on success:**
     /// - Precombined generation completes but CK exits with code 1
@@ -474,7 +470,7 @@ impl CreationKitRunner {
     /// # Returns
     ///
     /// Returns `Ok(())` if:
-    /// - CreationKit executes (regardless of exit code)
+    /// - `CreationKit` executes (regardless of exit code)
     /// - Log file shows no critical errors
     ///
     /// # Errors
@@ -489,21 +485,22 @@ impl CreationKitRunner {
     /// # Notes
     ///
     /// - This is a private function; use the public wrappers (`generate_precombined`, etc.)
-    /// - DLL restoration happens automatically via RAII (DllGuard drop)
+    /// - DLL restoration happens automatically via RAII (`DllGuard` drop)
     /// - If log file is not configured, error checking is skipped (warning logged)
     /// - MO2 mode is automatically used if `mo2_path` is set
     fn run_with_dll_guard(&self, args: &[&str], operation: &str) -> Result<()> {
-        info!("Running CreationKit: {}", operation);
+        info!("Running CreationKit: {operation}");
 
         // Delete old log file if it exists
         // NOTE: This operation may fail if the log is open in another process or
         // another instance is running. We treat this as a hard error to prevent
         // mixing logs from multiple runs.
-        if let Some(ref log_path) = self.log_file {
-            if log_path.exists() {
-                fs::remove_file(log_path).with_context(|| {
-                    format!(
-                        "Failed to delete old log: {}\n\
+        if let Some(ref log_path) = self.log_file
+            && log_path.exists()
+        {
+            fs::remove_file(log_path).with_context(|| {
+                format!(
+                    "Failed to delete old log: {}\n\
                         \n\
                         The file may be locked by another process. Common causes:\n\
                         - Log file is open in a text editor or log viewer\n\
@@ -511,11 +508,10 @@ impl CreationKitRunner {
                         - Antivirus software is scanning the file\n\
                         \n\
                         Please close any programs viewing the log and try again.",
-                        log_path.display()
-                    )
-                })?;
-                info!("Deleted old CK log file");
-            }
+                    log_path.display()
+                )
+            })?;
+            info!("Deleted old CK log file");
         }
 
         // Create DLL manager and guard
@@ -562,21 +558,21 @@ impl CreationKitRunner {
             );
         }
 
-        info!("CreationKit {} completed", operation);
+        info!("CreationKit {operation} completed");
         Ok(())
     }
 
     /// Check log file for critical errors
     ///
-    /// Parses the CreationKit log file to detect known critical error patterns that indicate
-    /// workflow failure. This is **REQUIRED** because CreationKit's exit codes are unreliable
+    /// Parses the `CreationKit` log file to detect known critical error patterns that indicate
+    /// workflow failure. This is **REQUIRED** because `CreationKit`'s exit codes are unreliable
     /// and cannot be used to determine success/failure.
     ///
     /// # Why Log Parsing is Required (Not Code Smell)
     ///
     /// **CRITICAL INFORMATION:**
     ///
-    /// CreationKit frequently exits with non-zero status codes even after successful operations.
+    /// `CreationKit` frequently exits with non-zero status codes even after successful operations.
     /// Conversely, it sometimes exits with code 0 even when operations failed. The ONLY reliable
     /// way to detect failures is by parsing the log file for known error patterns.
     ///
@@ -587,7 +583,7 @@ impl CreationKitRunner {
     /// Currently detects the following fatal errors:
     ///
     /// - **`OUT OF HANDLE ARRAY ENTRIES`** (`HANDLE_LIMIT_ERROR` constant)
-    ///   - Indicates CreationKit ran out of internal object handles
+    ///   - Indicates `CreationKit` ran out of internal object handles
     ///   - Means the mod is too complex for CK's internal data structures
     ///   - **Solution**: Split the mod into smaller pieces or reduce object count
     ///   - This error is ALWAYS fatal and cannot be worked around
@@ -625,7 +621,7 @@ impl CreationKitRunner {
     ///
     /// # Notes
     ///
-    /// - Called automatically after every CreationKit operation
+    /// - Called automatically after every `CreationKit` operation
     /// - `generate_previs` performs ADDITIONAL checks for `PREVIS_ERROR` pattern
     /// - Log file is deleted before each CK run to ensure fresh error detection
     /// - Future enhancements may add detection for additional error patterns
@@ -650,10 +646,9 @@ impl CreationKitRunner {
         // Check for handle limit errors
         if log_content.contains(HANDLE_LIMIT_ERROR) {
             bail!(
-                "CreationKit hit handle limit: '{}' found in log.\n\
+                "CreationKit hit handle limit: '{HANDLE_LIMIT_ERROR}' found in log.\n\
                 This indicates too many objects for CK to process.\n\
-                You may need to split your mod or reduce complexity.",
-                HANDLE_LIMIT_ERROR
+                You may need to split your mod or reduce complexity."
             );
         }
 

@@ -26,7 +26,7 @@ pub fn prompt_plugin_name(clean_mode: bool) -> Result<String> {
         // Ensure extension is present
         let plugin_name =
             if !input.to_lowercase().ends_with(".esp") && !input.to_lowercase().ends_with(".esm") {
-                format!("{}.esp", input)
+                format!("{input}.esp")
             } else {
                 input.to_string()
             };
@@ -34,8 +34,7 @@ pub fn prompt_plugin_name(clean_mode: bool) -> Result<String> {
         match validate_plugin_name(&plugin_name, clean_mode) {
             Ok(()) => return Ok(plugin_name),
             Err(e) => {
-                println!("{}", e);
-                continue;
+                println!("{e}");
             }
         }
     }
@@ -104,8 +103,7 @@ pub fn prompt_restart_step() -> Result<Option<u8>> {
 pub fn prompt_clean_directory(dir_name: &str) -> Result<bool> {
     Confirm::new()
         .with_prompt(format!(
-            "Directory '{}' is not empty. Delete existing files?",
-            dir_name
+            "Directory '{dir_name}' is not empty. Delete existing files?"
         ))
         .default(false)
         .interact()

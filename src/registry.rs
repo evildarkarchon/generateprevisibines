@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use winreg::RegKey;
-use winreg::enums::*;
+use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE};
 
-/// Find FO4Edit path by checking multiple locations
+/// Find `FO4Edit` path by checking multiple locations
 ///
 /// Searches for FO4Edit.exe in the following order:
 /// 1. Current working directory (`./FO4Edit.exe`)
-/// 2. Windows Registry key `HKCR\FO4Script\DefaultIcon` (set by FO4Edit installer)
+/// 2. Windows Registry key `HKCR\FO4Script\DefaultIcon` (set by `FO4Edit` installer)
 ///
 /// The registry value contains a path in the format `"C:\Path\To\FO4Edit.exe,0"`
 /// which is parsed to extract the executable path.
@@ -63,7 +63,7 @@ pub fn find_fo4edit_path() -> Result<PathBuf> {
 
     let fo4edit_path = PathBuf::from(path);
     if !fo4edit_path.exists() {
-        anyhow::bail!("FO4Edit path from registry does not exist: {}", path);
+        anyhow::bail!("FO4Edit path from registry does not exist: {path}");
     }
 
     Ok(fo4edit_path)
@@ -74,7 +74,7 @@ pub fn find_fo4edit_path() -> Result<PathBuf> {
 /// Reads the installation path from the registry key created by the Fallout 4 installer:
 /// `HKLM\SOFTWARE\Wow6432Node\Bethesda Softworks\Fallout4` with value `"Installed Path"`.
 ///
-/// This is the standard location for 64-bit installations on 64-bit Windows (WOW6432Node).
+/// This is the standard location for 64-bit installations on 64-bit Windows (`WOW6432Node`).
 ///
 /// # Returns
 ///
@@ -158,7 +158,7 @@ pub fn find_fo4_directory() -> Result<PathBuf> {
 ///
 /// - The Creation Kit is a separate download from Bethesda and is not included with the base game
 /// - Some Fallout 4 installations may not have the Creation Kit installed
-pub fn find_creation_kit(fo4_dir: &PathBuf) -> Result<PathBuf> {
+pub fn find_creation_kit(fo4_dir: &Path) -> Result<PathBuf> {
     let ck_path = fo4_dir.join("CreationKit.exe");
     if !ck_path.exists() {
         anyhow::bail!(
@@ -209,7 +209,7 @@ pub fn find_creation_kit(fo4_dir: &PathBuf) -> Result<PathBuf> {
 /// - Archive2.exe is included with the Creation Kit, not the base game
 /// - Some users manually copy Archive2.exe to the root FO4 directory for convenience
 /// - Archive2 has NO append functionality (must extract, add files, and re-archive)
-pub fn find_archive2(fo4_dir: &PathBuf) -> Result<PathBuf> {
+pub fn find_archive2(fo4_dir: &Path) -> Result<PathBuf> {
     let archive2_path = fo4_dir.join("Tools").join("Archive2").join("Archive2.exe");
     if archive2_path.exists() {
         return Ok(archive2_path);
@@ -226,9 +226,9 @@ pub fn find_archive2(fo4_dir: &PathBuf) -> Result<PathBuf> {
 
 /// Find BSArch.exe archiving tool
 ///
-/// Searches for BSArch (Bethesda Archive command-line tool) in multiple locations.
-/// BSArch is an alternative to Archive2 with better append support and is often preferred
-/// for automation workflows. Unlike Archive2, BSArch can add files to existing archives
+/// Searches for `BSArch` (Bethesda Archive command-line tool) in multiple locations.
+/// `BSArch` is an alternative to Archive2 with better append support and is often preferred
+/// for automation workflows. Unlike Archive2, `BSArch` can add files to existing archives
 /// without extracting and re-archiving.
 ///
 /// The search order is:
@@ -250,7 +250,7 @@ pub fn find_archive2(fo4_dir: &PathBuf) -> Result<PathBuf> {
 ///
 /// This function will return an error if:
 /// - `BSArch.exe` is not found in any of the searched locations
-/// - BSArch is not installed or not in the expected locations
+/// - `BSArch` is not installed or not in the expected locations
 ///
 /// # Examples
 ///
@@ -265,25 +265,25 @@ pub fn find_archive2(fo4_dir: &PathBuf) -> Result<PathBuf> {
 ///
 /// # Notes
 ///
-/// - BSArch is a third-party tool and is NOT included with Fallout 4 or Creation Kit
-/// - Users must download BSArch separately from community sources
-/// - BSArch can be used via the `--bsarch` command-line flag to prefer it over Archive2
-/// - BSArch supports direct append operations, making it more efficient than Archive2
+/// - `BSArch` is a third-party tool and is NOT included with Fallout 4 or Creation Kit
+/// - Users must download `BSArch` separately from community sources
+/// - `BSArch` can be used via the `--bsarch` command-line flag to prefer it over Archive2
+/// - `BSArch` supports direct append operations, making it more efficient than Archive2
 ///
 /// # See Also
 ///
-/// Use the `--bsarch` command-line argument to enable BSArch mode instead of Archive2
-pub fn find_bsarch(fo4_dir: &PathBuf) -> Result<PathBuf> {
+/// Use the `--bsarch` command-line argument to enable `BSArch` mode instead of Archive2
+pub fn find_bsarch(fo4_dir: &Path) -> Result<PathBuf> {
     let mut locations = vec![
         // Check current directory first
         std::env::current_dir().ok().map(|p| p.join("BSArch.exe")),
     ];
 
     // Check executable's directory
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            locations.push(Some(exe_dir.join("BSArch.exe")));
-        }
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(exe_dir) = exe_path.parent()
+    {
+        locations.push(Some(exe_dir.join("BSArch.exe")));
     }
 
     // Check FO4 directory locations
@@ -353,20 +353,14 @@ pub fn find_bsarch(fo4_dir: &PathBuf) -> Result<PathBuf> {
 /// # See Also
 ///
 /// - `ckpe_config::check_pointer_handle_setting()` - Validates required CKPE settings
-pub fn find_ckpe_config(fo4_dir: &PathBuf) -> Option<PathBuf> {
+pub fn find_ckpe_config(fo4_dir: &Path) -> Option<PathBuf> {
     let locations = vec![
         fo4_dir.join("CreationKitPlatformExtended.toml"),
         fo4_dir.join("CreationKitPlatformExtended.ini"),
         fo4_dir.join("fallout4_test.ini"),
     ];
 
-    for path in locations {
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
-    None
+    locations.into_iter().find(|path| path.exists())
 }
 
 #[cfg(test)]

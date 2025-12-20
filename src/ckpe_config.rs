@@ -16,20 +16,20 @@ pub struct CKPEConfig {
     /// Path to Creation Kit log file (if specified)
     pub log_file_path: Option<PathBuf>,
 
-    /// Config file format (TOML, INI, or fallout4_test.ini)
+    /// Config file format (TOML, INI, or `fallout4_test.ini`)
     pub config_type: ConfigType,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ConfigType {
-    TOML,            // CreationKitPlatformExtended.toml - highest priority
-    INI,             // CreationKitPlatformExtended.ini - second priority
+    Toml,            // CreationKitPlatformExtended.toml - highest priority
+    Ini,             // CreationKitPlatformExtended.ini - second priority
     Fallout4TestINI, // fallout4_test.ini - legacy, lowest priority
 }
 
 impl CKPEConfig {
     /// Parse a CKPE configuration file
-    /// Priority: .toml > .ini > fallout4_test.ini
+    /// Priority: .toml > .ini > `fallout4_test.ini`
     /// This ensures newer config formats take precedence over legacy ones
     pub fn parse(config_path: &Path) -> Result<Self> {
         let content = fs::read_to_string(config_path).context(format!(
@@ -40,22 +40,21 @@ impl CKPEConfig {
         // Determine config type based on file extension and name
         // Priority: TOML > INI > Fallout4TestINI (to prefer newer formats)
         let config_type = if config_path.extension().and_then(|e| e.to_str()) == Some("toml") {
-            ConfigType::TOML
+            ConfigType::Toml
         } else if config_path.extension().and_then(|e| e.to_str()) == Some("ini") {
             // Check if it's the legacy fallout4_test.ini file
             if config_path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| n.eq_ignore_ascii_case("fallout4_test.ini"))
-                .unwrap_or(false)
+                .is_some_and(|n| n.eq_ignore_ascii_case("fallout4_test.ini"))
             {
                 ConfigType::Fallout4TestINI
             } else {
-                ConfigType::INI
+                ConfigType::Ini
             }
         } else {
             // Default to INI for unknown extensions
-            ConfigType::INI
+            ConfigType::Ini
         };
 
         let pointer_handle_enabled = Self::check_pointer_handle_setting(&content, config_type);
@@ -102,27 +101,27 @@ impl CKPEConfig {
             // Check for any variant of the setting
             for pattern in &patterns {
                 match config_type {
-                    ConfigType::TOML | ConfigType::INI => {
+                    ConfigType::Toml | ConfigType::Ini => {
                         // TOML format: bBSPointerHandle = true
                         // 'b' prefix indicates boolean type - only true/false allowed
-                        if line_without_comment.starts_with(pattern) {
-                            if let Some(value) = line_without_comment.split('=').nth(1) {
-                                let value_trimmed = value.trim();
-                                if value_trimmed.eq_ignore_ascii_case("true") {
-                                    return true;
-                                }
+                        if line_without_comment.starts_with(pattern)
+                            && let Some(value) = line_without_comment.split('=').nth(1)
+                        {
+                            let value_trimmed = value.trim();
+                            if value_trimmed.eq_ignore_ascii_case("true") {
+                                return true;
                             }
                         }
                     }
                     ConfigType::Fallout4TestINI => {
                         // INI format: bBSPointerHandle=true
                         // 'b' prefix indicates boolean type - only true/false allowed
-                        if line_without_comment.starts_with(pattern) {
-                            if let Some(value) = line_without_comment.split('=').nth(1) {
-                                let value_trimmed = value.trim();
-                                if value_trimmed.eq_ignore_ascii_case("true") {
-                                    return true;
-                                }
+                        if line_without_comment.starts_with(pattern)
+                            && let Some(value) = line_without_comment.split('=').nth(1)
+                        {
+                            let value_trimmed = value.trim();
+                            if value_trimmed.eq_ignore_ascii_case("true") {
+                                return true;
                             }
                         }
                     }
@@ -135,7 +134,7 @@ impl CKPEConfig {
 
     /// Extract log file path from config
     /// For CreationKitPlatformExtended.ini: sOutputFile is in [Log] section
-    /// For fallout4_test.ini: OutputFile is in [CreationKit_Log] section
+    /// For `fallout4_test.ini`: `OutputFile` is in [`CreationKit_Log`] section
     /// For TOML: can be anywhere
     fn extract_log_file_path(content: &str, config_type: ConfigType) -> Option<PathBuf> {
         let mut current_section = String::new();
@@ -159,15 +158,16 @@ impl CKPEConfig {
 
             // Track current section for INI files
             if line_without_comment.starts_with('[') && line_without_comment.ends_with(']') {
-                current_section = line_without_comment[1..line_without_comment.len() - 1].to_string();
+                current_section =
+                    line_without_comment[1..line_without_comment.len() - 1].to_string();
                 continue;
             }
 
             // For TOML, check anywhere
             // For INI files, check in appropriate sections
             let should_check = match config_type {
-                ConfigType::TOML => true,
-                ConfigType::INI => current_section.eq_ignore_ascii_case("Log"),
+                ConfigType::Toml => true,
+                ConfigType::Ini => current_section.eq_ignore_ascii_case("Log"),
                 ConfigType::Fallout4TestINI => {
                     current_section.eq_ignore_ascii_case("CreationKit_Log")
                 }
@@ -176,15 +176,14 @@ impl CKPEConfig {
             if should_check {
                 // Look for log file path setting
                 // sOutputFile (new CKPE), OutputFile (old), sLogFile (TOML)
-                if line_without_comment.starts_with("sOutputFile")
+                if (line_without_comment.starts_with("sOutputFile")
                     || line_without_comment.starts_with("OutputFile")
-                    || line_without_comment.starts_with("sLogFile")
+                    || line_without_comment.starts_with("sLogFile"))
+                    && let Some(value) = line_without_comment.split('=').nth(1)
                 {
-                    if let Some(value) = line_without_comment.split('=').nth(1) {
-                        let path_str = value.trim().trim_matches('"');
-                        if !path_str.is_empty() && !path_str.eq_ignore_ascii_case("none") {
-                            return Some(PathBuf::from(path_str));
-                        }
+                    let path_str = value.trim().trim_matches('"');
+                    if !path_str.is_empty() && !path_str.eq_ignore_ascii_case("none") {
+                        return Some(PathBuf::from(path_str));
                     }
                 }
             }
@@ -236,7 +235,7 @@ mod tests {
 
         let config = CKPEConfig::parse(&config_path).unwrap();
         assert!(config.pointer_handle_enabled);
-        assert_eq!(config.config_type, ConfigType::TOML);
+        assert_eq!(config.config_type, ConfigType::Toml);
         assert!(config.log_file_path.is_some());
     }
 
@@ -255,7 +254,7 @@ mod tests {
 
         let config = CKPEConfig::parse(&config_path).unwrap();
         assert!(config.pointer_handle_enabled);
-        assert_eq!(config.config_type, ConfigType::INI);
+        assert_eq!(config.config_type, ConfigType::Ini);
         assert!(config.log_file_path.is_some());
         assert_eq!(
             config.log_file_path.unwrap(),
@@ -325,13 +324,12 @@ mod tests {
         .unwrap();
         writeln!(file, "").unwrap();
         writeln!(file, "[Log]").unwrap();
-        writeln!(file, "sOutputFile=ck.log\t\t\t\t\t\t; Print log output")
-            .unwrap();
+        writeln!(file, "sOutputFile=ck.log\t\t\t\t\t\t; Print log output").unwrap();
         drop(file);
 
         let config = CKPEConfig::parse(&config_path).unwrap();
         assert!(config.pointer_handle_enabled);
-        assert_eq!(config.config_type, ConfigType::INI);
+        assert_eq!(config.config_type, ConfigType::Ini);
         assert!(config.log_file_path.is_some());
         assert_eq!(config.log_file_path.unwrap(), PathBuf::from("ck.log"));
     }

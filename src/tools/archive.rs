@@ -25,14 +25,14 @@
 //!
 //! ## BSArch.exe (Third-Party)
 //!
-//! BSArch is a community-created archive tool with superior automation support.
+//! `BSArch` is a community-created archive tool with superior automation support.
 //!
 //! **Advantages:**
 //! - **Direct append support** - can add files to archives without extraction
 //! - Multi-threaded compression (faster)
 //! - Better command-line interface for automation
 //!
-//! BSArch is the recommended tool when available, especially for workflows that
+//! `BSArch` is the recommended tool when available, especially for workflows that
 //! add files to existing archives (Step 8: adding previs data to precombined archives).
 //!
 //! # MO2 Virtual File System Considerations
@@ -78,7 +78,7 @@ use std::process::Command;
 use crate::config::ArchiveTool;
 use crate::mo2_helper::Mo2Helper;
 
-/// Archive manager that abstracts Archive2 and BSArch operations
+/// Archive manager that abstracts Archive2 and `BSArch` operations
 ///
 /// Provides a unified interface for creating and modifying Fallout 4 BA2 archives
 /// using either Archive2.exe or BSArch.exe. The implementation automatically handles
@@ -86,7 +86,7 @@ use crate::mo2_helper::Mo2Helper;
 ///
 /// # Key Differences Between Tools
 ///
-/// | Feature | Archive2 | BSArch |
+/// | Feature | Archive2 | `BSArch` |
 /// |---------|----------|--------|
 /// | Append support | **NO** (must extract/repack) | **YES** (direct append) |
 /// | Multi-threading | No | Yes |
@@ -105,9 +105,9 @@ use crate::mo2_helper::Mo2Helper;
 /// **This is NOT code smell - it's an Archive2.exe limitation.** The original batch
 /// script (lines 390-414) uses the same workaround. Do not attempt to "optimize" this.
 ///
-/// # BSArch Advantages
+/// # `BSArch` Advantages
 ///
-/// BSArch can append files directly to existing archives without extraction, making
+/// `BSArch` can append files directly to existing archives without extraction, making
 /// it significantly faster for workflows that add files to archives (e.g., Step 8:
 /// adding previs data to precombined archives).
 ///
@@ -155,14 +155,14 @@ pub struct ArchiveManager {
 impl ArchiveManager {
     /// Create a new archive manager
     ///
-    /// Initializes an archive manager configured to use either Archive2 or BSArch.
+    /// Initializes an archive manager configured to use either Archive2 or `BSArch`.
     /// The appropriate executable path must be provided for the selected tool.
     ///
     /// # Arguments
     ///
     /// * `tool` - Which archive tool to use ([`ArchiveTool::Archive2`] or [`ArchiveTool::BSArch`])
     /// * `archive2_exe` - Path to Archive2.exe (required if `tool` is Archive2, ignored otherwise)
-    /// * `bsarch_exe` - Path to BSArch.exe (required if `tool` is BSArch, ignored otherwise)
+    /// * `bsarch_exe` - Path to BSArch.exe (required if `tool` is `BSArch`, ignored otherwise)
     /// * `fallout4_dir` - Path to Fallout 4 installation directory (e.g., `C:\Games\Fallout4`)
     ///
     /// # Returns
@@ -230,7 +230,7 @@ impl ArchiveManager {
     /// Create a new archive from a directory
     ///
     /// Creates a BA2 archive from all files in the specified directory. The behavior
-    /// differs between Archive2 and BSArch regarding source file cleanup.
+    /// differs between Archive2 and `BSArch` regarding source file cleanup.
     ///
     /// # Arguments
     ///
@@ -258,11 +258,11 @@ impl ArchiveManager {
     /// This is Archive2's standard behavior - it assumes you want to replace loose files
     /// with archived versions.
     ///
-    /// ## BSArch
+    /// ## `BSArch`
     /// 1. Creates the archive from `source_dir`
     /// 2. **Preserves** the source directory and files
     ///
-    /// BSArch keeps the source files, allowing you to verify the archive before cleanup.
+    /// `BSArch` keeps the source files, allowing you to verify the archive before cleanup.
     ///
     /// # Examples
     ///
@@ -287,7 +287,7 @@ impl ArchiveManager {
     ///
     /// - Archive is always created in `Data/` directory
     /// - **Archive2:** Source files are permanently deleted - ensure workflow completed successfully
-    /// - **BSArch:** You may want to manually delete source files after verification
+    /// - **`BSArch`:** You may want to manually delete source files after verification
     pub fn create_archive(
         &self,
         source_dir: impl AsRef<Path>,
@@ -323,7 +323,7 @@ impl ArchiveManager {
     /// in Mod Organizer 2 mode, this handles MO2's Virtual File System (VFS) by collecting
     /// files from the staging directory instead of the real Data directory.
     ///
-    /// This is typically used in **Step 5** of the workflow after CreationKit generates
+    /// This is typically used in **Step 5** of the workflow after `CreationKit` generates
     /// precombined meshes.
     ///
     /// # Arguments
@@ -355,7 +355,7 @@ impl ArchiveManager {
     /// 3. Archives the collected files using the selected tool
     /// 4. Deletes the temporary collection directory
     ///
-    /// This is necessary because Archive2 and BSArch cannot see files in MO2's Virtual
+    /// This is necessary because Archive2 and `BSArch` cannot see files in MO2's Virtual
     /// File System. The files must be in a real directory for archiving.
     ///
     /// # File Collection Process
@@ -363,7 +363,7 @@ impl ArchiveManager {
     /// - **Standard mode:** Archives directly from `Data/meshes/precombined`
     /// - **MO2 mode:** Uses [`Mo2Helper::collect_precombines`](crate::mo2_helper::Mo2Helper::collect_precombines)
     ///   to gather files from the VFS
-    /// - After archiving, source files are deleted (Archive2) or kept (BSArch)
+    /// - After archiving, source files are deleted (Archive2) or kept (`BSArch`)
     ///
     /// # Examples
     ///
@@ -399,7 +399,7 @@ impl ArchiveManager {
     ///
     /// - The archive is created in `Data/` directory regardless of MO2 mode
     /// - For Archive2, source files are deleted after archiving
-    /// - For BSArch, source files are preserved
+    /// - For `BSArch`, source files are preserved
     /// - Temporary MO2 collection directories are always cleaned up
     pub fn create_archive_from_precombines(
         &self,
@@ -446,7 +446,7 @@ impl ArchiveManager {
     /// Add files to an existing archive
     ///
     /// Appends new files to an existing BA2 archive. The implementation differs
-    /// significantly between Archive2 and BSArch due to **Archive2's critical limitation**.
+    /// significantly between Archive2 and `BSArch` due to **Archive2's critical limitation**.
     ///
     /// This is typically used in **Step 8** of the workflow to add previs data (`.uvd` files)
     /// to the archive containing precombined meshes.
@@ -495,16 +495,16 @@ impl ArchiveManager {
     ///
     /// **Do not attempt to "optimize" this - Archive2.exe provides no append functionality.**
     ///
-    /// ## Why Not Just Use BSArch?
+    /// ## Why Not Just Use `BSArch`?
     ///
-    /// BSArch is recommended when available, but:
-    /// - Not all users have BSArch installed
+    /// `BSArch` is recommended when available, but:
+    /// - Not all users have `BSArch` installed
     /// - Archive2 ships with the Creation Kit (guaranteed availability)
     /// - Some users prefer official Bethesda tools
     ///
-    /// # BSArch Behavior
+    /// # `BSArch` Behavior
     ///
-    /// BSArch can **append files directly** to existing archives without extraction:
+    /// `BSArch` can **append files directly** to existing archives without extraction:
     /// 1. Add new files to the archive using `bsarch pack` command
     /// 2. Delete source directory
     ///
@@ -538,7 +538,7 @@ impl ArchiveManager {
     ///
     /// For a 500MB archive with 10MB of new files:
     /// - **Archive2:** ~3-5 minutes (extract 500MB, compress 510MB)
-    /// - **BSArch:** ~5-10 seconds (compress and append 10MB)
+    /// - **`BSArch`:** ~5-10 seconds (compress and append 10MB)
     ///
     /// # Notes
     ///
@@ -587,7 +587,7 @@ impl ArchiveManager {
                     self.archive2_extract(&archive_path, &temp_extract)?;
 
                     // Copy new files to extracted directory
-                    self.copy_dir_recursive(source_dir, &temp_extract)?;
+                    Self::copy_dir_recursive(source_dir, &temp_extract)?;
 
                     // Delete old archive
                     fs::remove_file(&archive_path)?;
@@ -658,14 +658,14 @@ impl ArchiveManager {
     /// 3. Adds collected files to the archive using the selected tool
     /// 4. Deletes the temporary collection directory
     ///
-    /// This is necessary because Archive2 and BSArch cannot see files in MO2's Virtual
+    /// This is necessary because Archive2 and `BSArch` cannot see files in MO2's Virtual
     /// File System. The files must be in a real directory for archiving.
     ///
     /// # Archive Tool Behavior
     ///
     /// - **Archive2:** Extracts entire archive, adds previs files, re-archives everything
     ///   (see [`add_to_archive`](Self::add_to_archive) for details on the extract/repack process)
-    /// - **BSArch:** Directly appends previs files to existing archive (much faster)
+    /// - **`BSArch`:** Directly appends previs files to existing archive (much faster)
     ///
     /// # File Collection Process
     ///
@@ -707,9 +707,9 @@ impl ArchiveManager {
     ///
     /// For a 500MB precombined archive with 10MB of previs data:
     /// - **Archive2:** ~3-5 minutes (must extract and re-compress entire 510MB)
-    /// - **BSArch:** ~5-10 seconds (directly appends 10MB)
+    /// - **`BSArch`:** ~5-10 seconds (directly appends 10MB)
     ///
-    /// BSArch is **strongly recommended** for this operation due to the significant
+    /// `BSArch` is **strongly recommended** for this operation due to the significant
     /// performance difference.
     ///
     /// # Notes
@@ -867,11 +867,11 @@ impl ArchiveManager {
         Ok(())
     }
 
-    /// Pack archive using BSArch
+    /// Pack archive using `BSArch`
     ///
     /// Internal helper that invokes BSArch.exe to create or append to a BA2 archive.
     ///
-    /// Unlike Archive2, BSArch can both create new archives and append to existing ones
+    /// Unlike Archive2, `BSArch` can both create new archives and append to existing ones
     /// using the same command. If the archive exists, files are appended; if not, it's created.
     ///
     /// # Arguments
@@ -879,7 +879,7 @@ impl ArchiveManager {
     /// * `source_dir` - Directory containing files to archive or append
     /// * `archive_path` - Full path to the archive file (created if doesn't exist)
     ///
-    /// # BSArch Command
+    /// # `BSArch` Command
     ///
     /// Executes: `BSArch.exe pack <source_dir> <archive_path> -mt -fo4 -z`
     ///
@@ -899,7 +899,7 @@ impl ArchiveManager {
         info!("Packing archive with BSArch: {}", archive_path.display());
 
         let output = Command::new(bsarch_exe)
-            .args(&[
+            .args([
                 "pack",
                 &source_dir.to_string_lossy(),
                 &archive_path.to_string_lossy(),
@@ -942,7 +942,7 @@ impl ArchiveManager {
     /// # Errors
     ///
     /// Returns an error if any file or directory operation fails
-    fn copy_dir_recursive(&self, src: &Path, dst: &Path) -> Result<()> {
+    fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         if !dst.exists() {
             fs::create_dir_all(dst)?;
         }
@@ -954,7 +954,7 @@ impl ArchiveManager {
             let dst_path = dst.join(entry.file_name());
 
             if file_type.is_dir() {
-                self.copy_dir_recursive(&src_path, &dst_path)?;
+                Self::copy_dir_recursive(&src_path, &dst_path)?;
             } else {
                 fs::copy(&src_path, &dst_path)?;
             }

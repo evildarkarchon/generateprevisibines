@@ -41,13 +41,13 @@ pub struct Config {
     /// Fallout 4 installation directory
     pub fo4_dir: PathBuf,
 
-    /// FO4Edit executable path
+    /// `FO4Edit` executable path
     pub fo4edit_path: PathBuf,
 
     /// Creation Kit executable path
     pub creation_kit_path: PathBuf,
 
-    /// Archive2 or BSArch executable path
+    /// Archive2 or `BSArch` executable path
     pub archive_exe_path: PathBuf,
 
     /// CKPE configuration file path
@@ -59,11 +59,11 @@ pub struct Config {
     /// Use Mod Organizer 2 mode (run tools through MO2's VFS)
     pub mo2_mode: bool,
 
-    /// Path to ModOrganizer.exe (only used if mo2_mode is true)
+    /// Path to ModOrganizer.exe (only used if `mo2_mode` is true)
     pub mo2_path: Option<PathBuf>,
 
     /// Path to MO2's VFS staging directory (e.g., overwrite folder)
-    /// Required when mo2_mode is true for archiving operations
+    /// Required when `mo2_mode` is true for archiving operations
     pub mo2_data_dir: Option<PathBuf>,
 }
 
@@ -153,14 +153,13 @@ impl Config {
             }
 
             // Validate mo2_data_dir if provided
-            if let Some(ref mo2_data_dir) = self.mo2_data_dir {
-                if !mo2_data_dir.exists() {
+            if let Some(ref mo2_data_dir) = self.mo2_data_dir
+                && !mo2_data_dir.exists() {
                     anyhow::bail!(
                         "MO2 data directory not found at: {}",
                         mo2_data_dir.display()
                     );
                 }
-            }
         }
 
         Ok(())

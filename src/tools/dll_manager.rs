@@ -1,16 +1,16 @@
-//! DLL management for CreationKit compatibility
+//! DLL management for `CreationKit` compatibility
 //!
-//! This module provides utilities for managing ENB and ReShade DLLs that interfere
-//! with CreationKit execution. CreationKit is incompatible with certain graphics
+//! This module provides utilities for managing ENB and `ReShade` DLLs that interfere
+//! with `CreationKit` execution. `CreationKit` is incompatible with certain graphics
 //! enhancement DLLs and will crash if they are loaded.
 //!
 //! # The DLL Problem
 //!
 //! **IMPORTANT: This is NOT code smell or over-engineering. This is a REQUIRED workaround.**
 //!
-//! CreationKit crashes when the following graphics enhancement DLLs are loaded:
+//! `CreationKit` crashes when the following graphics enhancement DLLs are loaded:
 //! - ENB (Enhanced Natural Beauty) DLLs: `d3d11.dll`, `d3d10.dll`, `d3d9.dll`, `dxgi.dll`, `enbimgui.dll`
-//! - ReShade DLLs: `d3dcompiler_46e.dll`
+//! - `ReShade` DLLs: `d3dcompiler_46e.dll`
 //!
 //! These DLLs hook DirectX functions to enhance game graphics, but CK's rendering
 //! pipeline is incompatible with these hooks and will crash on launch.
@@ -54,7 +54,7 @@ use log::{info, warn};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// DLL files that interfere with CreationKit (ENB/ReShade)
+/// DLL files that interfere with `CreationKit` (ENB/ReShade)
 /// These must be renamed before running CK to prevent crashes
 /// Matches batch script lines 422-427, 330-335
 const INTERFERING_DLLS: &[&str] = &[
@@ -72,9 +72,9 @@ const DISABLED_SUFFIX: &str = "-PJMdisabled";
 /// Manages ENB/ReShade DLL disable/restore operations
 ///
 /// **IMPORTANT: This is NOT code smell to be refactored away.**
-/// It's a necessary workaround for CreationKit's incompatibility with ENB/ReShade DLLs.
+/// It's a necessary workaround for `CreationKit`'s incompatibility with ENB/ReShade DLLs.
 ///
-/// CreationKit crashes when certain graphics enhancement DLLs are loaded. This manager
+/// `CreationKit` crashes when certain graphics enhancement DLLs are loaded. This manager
 /// temporarily renames them to disable, then restores them after CK exits.
 ///
 /// # Usage Pattern
@@ -149,7 +149,7 @@ impl DllManager {
 
     /// Disable all interfering DLLs by renaming them
     ///
-    /// **REQUIRED WORKAROUND:** CreationKit crashes when ENB or ReShade DLLs are loaded.
+    /// **REQUIRED WORKAROUND:** `CreationKit` crashes when ENB or `ReShade` DLLs are loaded.
     /// This function temporarily disables them by appending `-PJMdisabled` to their file extensions.
     ///
     /// # Disabled DLLs
@@ -188,7 +188,7 @@ impl DllManager {
     /// # Notes
     ///
     /// - Disabled DLLs are tracked internally for later restoration
-    /// - Call `restore_dlls()` after CreationKit exits to re-enable graphics enhancements
+    /// - Call `restore_dlls()` after `CreationKit` exits to re-enable graphics enhancements
     /// - The `-PJMdisabled` suffix matches the original batch script convention (lines 422-427, 330-335)
     pub fn disable_dlls(&mut self) -> Result<usize> {
         let dlls_to_disable = self.scan();
@@ -222,9 +222,7 @@ impl DllManager {
             info!(
                 "Disabled DLL: {}",
                 dll_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy())
-                    .unwrap_or_else(|| std::borrow::Cow::Borrowed("<unknown>"))
+                    .file_name().map_or_else(|| std::borrow::Cow::Borrowed("<unknown>"), |n| n.to_string_lossy())
             );
             self.disabled_dlls.push(disabled_path);
             disabled_count += 1;
@@ -236,7 +234,7 @@ impl DllManager {
     /// Restore all previously disabled DLLs
     ///
     /// Renames all previously disabled DLLs back to their original names, re-enabling
-    /// ENB and ReShade graphics enhancements. This is called after CreationKit exits.
+    /// ENB and `ReShade` graphics enhancements. This is called after `CreationKit` exits.
     ///
     /// # Restored DLLs
     ///
@@ -308,9 +306,7 @@ impl DllManager {
                 info!(
                     "Restored DLL: {}",
                     original_path
-                        .file_name()
-                        .map(|n| n.to_string_lossy())
-                        .unwrap_or_else(|| std::borrow::Cow::Borrowed("<unknown>"))
+                        .file_name().map_or_else(|| std::borrow::Cow::Borrowed("<unknown>"), |n| n.to_string_lossy())
                 );
                 restored_count += 1;
             } else {
@@ -329,13 +325,13 @@ impl DllManager {
 /// RAII guard that ensures DLLs are restored when dropped
 ///
 /// This guard implements the RAII (Resource Acquisition Is Initialization) pattern
-/// to guarantee that disabled DLLs are always restored, even if CreationKit crashes
+/// to guarantee that disabled DLLs are always restored, even if `CreationKit` crashes
 /// or a panic occurs during execution.
 ///
 /// # How It Works
 ///
 /// 1. **Acquire:** Creating the guard disables all interfering DLLs
-/// 2. **Use:** CreationKit runs safely with DLLs disabled
+/// 2. **Use:** `CreationKit` runs safely with DLLs disabled
 /// 3. **Release:** When the guard goes out of scope (drops), DLLs are automatically restored
 ///
 /// The restoration happens in the `Drop` implementation, which is called even during
@@ -391,7 +387,7 @@ impl<'a> DllGuard<'a> {
     pub fn new(manager: &'a mut DllManager) -> Result<Self> {
         let count = manager.disable_dlls()?;
         if count > 0 {
-            info!("DLL Guard: Disabled {} DLL(s)", count);
+            info!("DLL Guard: Disabled {count} DLL(s)");
         }
         Ok(Self { manager })
     }
@@ -401,11 +397,11 @@ impl Drop for DllGuard<'_> {
     fn drop(&mut self) {
         match self.manager.restore_dlls() {
             Ok(count) if count > 0 => {
-                info!("DLL Guard: Restored {} DLL(s)", count);
+                info!("DLL Guard: Restored {count} DLL(s)");
             }
             Ok(_) => {}
             Err(e) => {
-                warn!("DLL Guard: Failed to restore DLLs: {}", e);
+                warn!("DLL Guard: Failed to restore DLLs: {e}");
             }
         }
     }

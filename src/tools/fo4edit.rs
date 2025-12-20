@@ -1,8 +1,8 @@
-//! FO4Edit automation with required keyboard automation workarounds
+//! `FO4Edit` automation with required keyboard automation workarounds
 //!
-//! This module provides utilities for running FO4Edit in automated workflows. FO4Edit is
+//! This module provides utilities for running `FO4Edit` in automated workflows. `FO4Edit` is
 //! the community-created tool for editing Fallout 4 plugins and running batch scripts.
-//! Unlike CreationKit, FO4Edit is designed to be more scriptable, but it still has
+//! Unlike `CreationKit`, `FO4Edit` is designed to be more scriptable, but it still has
 //! significant automation challenges that require workarounds.
 //!
 //! # Overview
@@ -17,25 +17,25 @@
 //!
 //! ## Workaround #1: Keyboard Automation for Module Selection Dialog
 //!
-//! **Problem:** FO4Edit displays a "Module Selection" dialog even when launched with the
+//! **Problem:** `FO4Edit` displays a "Module Selection" dialog even when launched with the
 //! `-autoexit` flag and a pre-configured `Plugins.txt` file. There is NO headless mode,
 //! NO command-line option to suppress this dialog, and NO way to automate it except via
 //! keyboard input.
 //!
 //! **Solution:** The [`send_enter_keystroke`](FO4EditRunner::send_enter_keystroke) function uses the
 //! Windows `SendInput` API to:
-//! 1. Wait for the FO4Edit window to appear (3-second delay)
-//! 2. Find the window by title "FO4Edit"
+//! 1. Wait for the `FO4Edit` window to appear (3-second delay)
+//! 2. Find the window by title "`FO4Edit`"
 //! 3. Bring the window to the foreground
 //! 4. Send ENTER key press + release events
 //!
-//! **This is NOT code smell - it's the ONLY way to automate FO4Edit.**
+//! **This is NOT code smell - it's the ONLY way to automate `FO4Edit`.**
 //!
-//! See original batch script lines 499-511 for the same workaround using PowerShell.
+//! See original batch script lines 499-511 for the same workaround using `PowerShell`.
 //!
 //! ## Workaround #2: Force Close After Script Completion
 //!
-//! **Problem:** FO4Edit's `-autoexit` flag is unreliable. Even after the script completes
+//! **Problem:** `FO4Edit`'s `-autoexit` flag is unreliable. Even after the script completes
 //! successfully and writes the log file, the main window often remains open indefinitely.
 //! This blocks the workflow from continuing.
 //!
@@ -50,8 +50,8 @@
 //!
 //! # Mod Organizer 2 Support
 //!
-//! When configured with [`with_mo2`](FO4EditRunner::with_mo2), FO4Edit is launched through
-//! MO2's virtual file system. This ensures FO4Edit sees mods in the correct load order and
+//! When configured with [`with_mo2`](FO4EditRunner::with_mo2), `FO4Edit` is launched through
+//! MO2's virtual file system. This ensures `FO4Edit` sees mods in the correct load order and
 //! can access files from MO2's staging directories.
 //!
 //! **Important:** MO2 introduces timing delays. The original batch script uses 5-10 second
@@ -62,7 +62,7 @@
 //!
 //! # Error Detection
 //!
-//! FO4Edit writes detailed logs during script execution. This module:
+//! `FO4Edit` writes detailed logs during script execution. This module:
 //! - Deletes old log files before each operation (ensures fresh error detection)
 //! - Waits for the log file to be created (indicates script has started)
 //! - Parses the log for error patterns:
@@ -90,7 +90,7 @@
 //!
 //! # Platform Requirements
 //!
-//! **Windows only.** FO4Edit automation requires:
+//! **Windows only.** `FO4Edit` automation requires:
 //! - Windows `SendInput` API for keyboard automation
 //! - Windows `FindWindowW` API for window detection
 //! - Windows `SendMessageW` API for window closing
@@ -102,7 +102,7 @@
 //!
 //! - Original batch script (`GeneratePrevisibines.bat`) lines 499-511 for keyboard automation
 //! - Project CLAUDE.md for detailed workaround documentation
-//! - `creation_kit` module for similar workarounds with CreationKit
+//! - `creation_kit` module for similar workarounds with `CreationKit`
 
 use anyhow::{Context, Result, bail};
 use log::{info, warn};
@@ -115,7 +115,7 @@ use std::time::Duration;
 
 #[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VK_RETURN,
+    INPUT, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VK_RETURN,
 };
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -126,8 +126,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 ///
 /// **Script:** `Batch_FO4MergeCombinedObjectsAndCheck.pas`
 ///
-/// This FO4Edit script merges the temporary `PrecombineObjects.esp` plugin (created by
-/// CreationKit's `-GeneratePrecombined` command) back into the main plugin. This is Step 5
+/// This `FO4Edit` script merges the temporary `PrecombineObjects.esp` plugin (created by
+/// `CreationKit`'s `-GeneratePrecombined` command) back into the main plugin. This is Step 5
 /// of the workflow.
 ///
 /// # What This Script Does
@@ -147,7 +147,7 @@ pub const SCRIPT_MERGE_COMBINED: &str = "Batch_FO4MergeCombinedObjectsAndCheck.p
 ///
 /// **Script:** `Batch_FO4MergePrevisandCleanRefr.pas`
 ///
-/// This FO4Edit script merges the temporary `Previs.esp` plugin (created by CreationKit's
+/// This `FO4Edit` script merges the temporary `Previs.esp` plugin (created by `CreationKit`'s
 /// `-GeneratePreVisData` command) back into the main plugin. This is Step 8 of the workflow.
 ///
 /// # What This Script Does
@@ -164,11 +164,11 @@ pub const SCRIPT_MERGE_COMBINED: &str = "Batch_FO4MergeCombinedObjectsAndCheck.p
 /// Used by [`FO4EditRunner::merge_previs`]
 pub const SCRIPT_MERGE_PREVIS: &str = "Batch_FO4MergePrevisandCleanRefr.pas";
 
-/// Success indicator in FO4Edit log files
+/// Success indicator in `FO4Edit` log files
 ///
 /// **Pattern:** `"Completed: No Errors."`
 ///
-/// FO4Edit scripts write this string to the log file when they complete successfully
+/// `FO4Edit` scripts write this string to the log file when they complete successfully
 /// without encountering any errors. This is checked after script execution to verify
 /// success.
 ///
@@ -186,11 +186,11 @@ pub const SCRIPT_MERGE_PREVIS: &str = "Batch_FO4MergePrevisandCleanRefr.pas";
 /// unless `LOG_ERROR` is also present).
 const LOG_SUCCESS: &str = "Completed: No Errors.";
 
-/// Error indicator in FO4Edit log files
+/// Error indicator in `FO4Edit` log files
 ///
 /// **Pattern:** `"Error:"`
 ///
-/// FO4Edit scripts write this string to the log file when they encounter errors during
+/// `FO4Edit` scripts write this string to the log file when they encounter errors during
 /// execution. This is a general error pattern that catches most failure conditions.
 ///
 /// # Common Errors
@@ -212,28 +212,28 @@ const LOG_ERROR: &str = "Error:";
 
 /// Runner for FO4Edit.exe operations
 ///
-/// Provides a safe interface for running FO4Edit in automated workflows. FO4Edit is the
+/// Provides a safe interface for running `FO4Edit` in automated workflows. `FO4Edit` is the
 /// community-created tool for editing Fallout 4 plugins and running batch scripts. While
-/// more scriptable than CreationKit, it still requires significant workarounds for full automation.
+/// more scriptable than `CreationKit`, it still requires significant workarounds for full automation.
 ///
 /// # Key Features
 ///
-/// - **Keyboard Automation**: Automatically dismisses Module Selection dialog via SendInput API
-/// - **Force Close**: Ensures FO4Edit window closes even when `-autoexit` fails
+/// - **Keyboard Automation**: Automatically dismisses Module Selection dialog via `SendInput` API
+/// - **Force Close**: Ensures `FO4Edit` window closes even when `-autoexit` fails
 /// - **Log Parsing**: Detects errors from log files for reliable error detection
-/// - **MO2 Support**: Can launch FO4Edit through Mod Organizer 2's virtual file system
+/// - **MO2 Support**: Can launch `FO4Edit` through Mod Organizer 2's virtual file system
 /// - **Plugins.txt Management**: Creates temporary plugin lists for script execution
 ///
 /// # Automation Workflow
 ///
 /// Each script execution follows this process:
-/// 1. **Create Plugins.txt**: Writes plugin name to temporary file for FO4Edit to load
+/// 1. **Create Plugins.txt**: Writes plugin name to temporary file for `FO4Edit` to load
 /// 2. **Delete old log**: Ensures fresh error detection by removing previous log files
-/// 3. **Launch FO4Edit**: Starts FO4Edit with script arguments (optionally through MO2)
+/// 3. **Launch `FO4Edit`**: Starts `FO4Edit` with script arguments (optionally through MO2)
 /// 4. **Send ENTER keystroke**: Dismisses Module Selection dialog (REQUIRED WORKAROUND)
 /// 5. **Wait for log**: Polls for log file creation (indicates script is running)
 /// 6. **Wait for completion**: Allows script to finish execution (5-second delay)
-/// 7. **Force close window**: Sends WM_CLOSE + taskkill fallback (REQUIRED WORKAROUND)
+/// 7. **Force close window**: Sends `WM_CLOSE` + taskkill fallback (REQUIRED WORKAROUND)
 /// 8. **Parse log**: Checks for error patterns to determine success/failure
 /// 9. **Cleanup**: Removes temporary Plugins.txt file
 ///
@@ -241,19 +241,19 @@ const LOG_ERROR: &str = "Error:";
 ///
 /// **REQUIRED WORKAROUND #1: Keyboard Automation**
 ///
-/// FO4Edit displays a Module Selection dialog even when launched with `-autoexit` flag and
+/// `FO4Edit` displays a Module Selection dialog even when launched with `-autoexit` flag and
 /// a pre-configured `Plugins.txt` file. There is NO headless mode, NO command-line option
 /// to suppress this dialog. The ONLY way to dismiss it is by sending an ENTER keystroke
 /// via the Windows `SendInput` API.
 ///
-/// **This is NOT code smell - it's the ONLY way to automate FO4Edit.**
+/// **This is NOT code smell - it's the ONLY way to automate `FO4Edit`.**
 ///
 /// See [`send_enter_keystroke`](FO4EditRunner::send_enter_keystroke) for implementation details.
-/// See original batch script lines 499-511 for the same workaround using PowerShell.
+/// See original batch script lines 499-511 for the same workaround using `PowerShell`.
 ///
 /// **REQUIRED WORKAROUND #2: Force Close Window**
 ///
-/// FO4Edit's `-autoexit` flag is unreliable. Even after the script completes successfully
+/// `FO4Edit`'s `-autoexit` flag is unreliable. Even after the script completes successfully
 /// and writes the log file, the main window often remains open indefinitely. This blocks
 /// the workflow from continuing. We must forcefully close the window using `WM_CLOSE` +
 /// `taskkill` fallback.
@@ -265,7 +265,7 @@ const LOG_ERROR: &str = "Error:";
 ///
 /// # Error Detection
 ///
-/// FO4Edit scripts write detailed logs during execution. Error detection relies ENTIRELY
+/// `FO4Edit` scripts write detailed logs during execution. Error detection relies ENTIRELY
 /// on log file parsing:
 /// - **`Error:`** - General error pattern (fatal)
 /// - **`Completed: No Errors.`** - Success indicator (logged as warning if missing)
@@ -291,7 +291,7 @@ const LOG_ERROR: &str = "Error:";
 ///
 /// # Platform Requirements
 ///
-/// **Windows only.** FO4Edit automation requires:
+/// **Windows only.** `FO4Edit` automation requires:
 /// - Windows `SendInput` API for keyboard automation
 /// - Windows `FindWindowW` API for window detection
 /// - Windows `SendMessageW` API for window closing
@@ -311,7 +311,7 @@ pub struct FO4EditRunner {
 }
 
 impl FO4EditRunner {
-    /// Create a new FO4Edit runner
+    /// Create a new `FO4Edit` runner
     pub fn new(fo4edit_exe: impl AsRef<Path>, fallout4_dir: impl AsRef<Path>) -> Self {
         Self {
             fo4edit_exe: fo4edit_exe.as_ref().to_path_buf(),
@@ -326,9 +326,9 @@ impl FO4EditRunner {
         self
     }
 
-    /// Run FO4Edit script to merge combined objects
+    /// Run `FO4Edit` script to merge combined objects
     ///
-    /// Script: Batch_FO4MergeCombinedObjectsAndCheck.pas
+    /// Script: `Batch_FO4MergeCombinedObjectsAndCheck.pas`
     /// Merges PrecombineObjects.esp into the main plugin
     pub fn merge_combined_objects(&self, plugin_name: &str) -> Result<()> {
         self.run_script(
@@ -339,9 +339,9 @@ impl FO4EditRunner {
         )
     }
 
-    /// Run FO4Edit script to merge previs data
+    /// Run `FO4Edit` script to merge previs data
     ///
-    /// Script: Batch_FO4MergePrevisandCleanRefr.pas
+    /// Script: `Batch_FO4MergePrevisandCleanRefr.pas`
     /// Merges Previs.esp into the main plugin
     pub fn merge_previs(&self, plugin_name: &str) -> Result<()> {
         self.run_script(
@@ -352,34 +352,34 @@ impl FO4EditRunner {
         )
     }
 
-    /// Run an FO4Edit script with full automation
+    /// Run an `FO4Edit` script with full automation
     ///
-    /// Internal wrapper that handles all the necessary workarounds for running FO4Edit scripts
+    /// Internal wrapper that handles all the necessary workarounds for running `FO4Edit` scripts
     /// in an automated environment. This coordinates plugin list creation, keyboard automation,
     /// log parsing, and window management.
     ///
     /// # Arguments
     ///
     /// * `plugin_name` - Name of the plugin to process (e.g., "MyMod.esp")
-    /// * `script_name` - Name of the Pascal script to run (e.g., "Batch_FO4MergeCombinedObjectsAndCheck.pas")
+    /// * `script_name` - Name of the Pascal script to run (e.g., "`Batch_FO4MergeCombinedObjectsAndCheck.pas`")
     /// * `operation` - Human-readable operation name for logging (e.g., "Merge Combined Objects")
     ///
     /// # Process Flow
     ///
     /// 1. **Create Plugins.txt**: Writes plugin name to `%TEMP%\FO4Edit_Plugins_{plugin}.txt`
     /// 2. **Delete old log**: Removes `%TEMP%\FO4Edit_Log_{plugin}.txt` if it exists
-    /// 3. **Build arguments**: Constructs FO4Edit command line with:
+    /// 3. **Build arguments**: Constructs `FO4Edit` command line with:
     ///    - `-fo4`: Fallout 4 mode
     ///    - `-autoexit`: Exit after script completes (unreliable, see workaround #2)
     ///    - `-P:{path}`: Path to Plugins.txt
     ///    - `-Script:{name}`: Script to execute
     ///    - `-Mod:{plugin}`: Target plugin name
     ///    - `-log:{path}`: Log file path
-    /// 4. **Launch FO4Edit**: Spawns process (optionally through MO2)
+    /// 4. **Launch `FO4Edit`**: Spawns process (optionally through MO2)
     /// 5. **Send ENTER keystroke**: Dismisses Module Selection dialog (REQUIRED WORKAROUND #1)
     /// 6. **Wait for log**: Polls for log file creation (up to 30 seconds)
     /// 7. **Wait for completion**: Sleeps 5 seconds for script to finish
-    /// 8. **Force close window**: Sends WM_CLOSE + taskkill fallback (REQUIRED WORKAROUND #2)
+    /// 8. **Force close window**: Sends `WM_CLOSE` + taskkill fallback (REQUIRED WORKAROUND #2)
     /// 9. **Parse log**: Checks for errors using `check_log_for_errors`
     /// 10. **Cleanup**: Removes temporary Plugins.txt file
     ///
@@ -391,25 +391,25 @@ impl FO4EditRunner {
     ///
     /// This function will return an error if:
     /// - Temporary Plugins.txt cannot be created (disk full, permission denied)
-    /// - FO4Edit cannot be launched (file not found, not executable)
+    /// - `FO4Edit` cannot be launched (file not found, not executable)
     /// - MO2 execution fails (if using MO2 mode)
     /// - Log file indicates errors (contains "Error:" pattern)
     /// - Log file cannot be read after execution
     ///
     /// # Keyboard Automation (Required Workaround)
     ///
-    /// **CRITICAL:** The `send_enter_keystroke` call is NOT optional. FO4Edit displays a Module
+    /// **CRITICAL:** The `send_enter_keystroke` call is NOT optional. `FO4Edit` displays a Module
     /// Selection dialog even with `-autoexit` and a pre-configured Plugins.txt. There is NO
     /// headless mode. The dialog MUST be dismissed via keyboard input.
     ///
-    /// **This is NOT code smell - it's the ONLY way to automate FO4Edit.**
+    /// **This is NOT code smell - it's the ONLY way to automate `FO4Edit`.**
     ///
-    /// If the window is not found, a warning is logged but execution continues (FO4Edit may
+    /// If the window is not found, a warning is logged but execution continues (`FO4Edit` may
     /// have already proceeded or may be running in a different mode).
     ///
     /// # Force Close (Required Workaround)
     ///
-    /// **CRITICAL:** The `close_fo4edit_window` call is NOT optional. FO4Edit's `-autoexit`
+    /// **CRITICAL:** The `close_fo4edit_window` call is NOT optional. `FO4Edit`'s `-autoexit`
     /// flag is unreliable and often leaves the main window open after script completion.
     /// Without force-closing, the workflow would block indefinitely.
     ///
@@ -417,20 +417,20 @@ impl FO4EditRunner {
     ///
     /// # MO2 Mode Behavior
     ///
-    /// When `self.mo2_path` is set, FO4Edit is launched through Mod Organizer 2's VFS:
+    /// When `self.mo2_path` is set, `FO4Edit` is launched through Mod Organizer 2's VFS:
     /// - Uses `MO2Command::new()` to construct MO2-wrapped command
-    /// - Ensures FO4Edit sees mods in correct load order
+    /// - Ensures `FO4Edit` sees mods in correct load order
     /// - Accesses files from MO2's staging directories
     ///
     /// # Timing Delays
     ///
-    /// - **3 seconds**: Wait for FO4Edit window to appear (before keystroke)
+    /// - **3 seconds**: Wait for `FO4Edit` window to appear (before keystroke)
     /// - **30 seconds**: Maximum wait for log file creation (1-second polls)
     /// - **5 seconds**: Wait for script completion (after log appears)
     /// - **2 seconds**: Wait for graceful close (before taskkill fallback)
     ///
     /// **These delays are REQUIRED, not arbitrary.** They account for:
-    /// - FO4Edit initialization time
+    /// - `FO4Edit` initialization time
     /// - MO2 VFS synchronization
     /// - Script execution time
     /// - Window message processing
@@ -463,7 +463,7 @@ impl FO4EditRunner {
         script_name: &str,
         operation: &str,
     ) -> Result<()> {
-        info!("Running FO4Edit: {}", operation);
+        info!("Running FO4Edit: {operation}");
 
         // Create temporary Plugins.txt
         // Match batch file filenames exactly to minimize path issues and ensure compatibility
@@ -476,7 +476,7 @@ impl FO4EditRunner {
         // Echo *%~3 > "%LocPlugins_%"
         // Echo *%~4 >> "%LocPlugins_%"
         // Use CRLF for Windows compatibility (echo behavior)
-        let plugins_content = format!("*{}\r\n*{}", plugin_name, second_plugin);
+        let plugins_content = format!("*{plugin_name}\r\n*{second_plugin}");
         fs::write(&plugins_file, plugins_content)
             .with_context(|| format!("Failed to create Plugins.txt: {}", plugins_file.display()))?;
 
@@ -506,7 +506,7 @@ impl FO4EditRunner {
             // Use MO2 mode
             info!("Launching through Mod Organizer 2: {}", mo2_path.display());
             let mut cmd = MO2Command::new(mo2_path, &self.fo4edit_exe)
-                .args(args.iter().map(|s| s.as_str()))
+                .args(args.iter().map(std::string::String::as_str))
                 .execute();
             cmd.current_dir(&self.fallout4_dir)
                 .spawn()
@@ -543,7 +543,7 @@ impl FO4EditRunner {
         // Clean up child process
         if let Err(e) = child.wait() {
             // Expected if process was force-closed, but log for debugging
-            info!("Process wait returned: {} (expected if force-closed)", e);
+            info!("Process wait returned: {e} (expected if force-closed)");
         }
 
         // Parse log for success/errors
@@ -552,7 +552,7 @@ impl FO4EditRunner {
         // Cleanup temp files
         let _ = fs::remove_file(&plugins_file);
 
-        info!("FO4Edit {} completed successfully", operation);
+        info!("FO4Edit {operation} completed successfully");
         Ok(())
     }
 
@@ -560,41 +560,41 @@ impl FO4EditRunner {
     ///
     /// **CRITICAL REQUIRED WORKAROUND - DO NOT REMOVE**
     ///
-    /// FO4Edit displays a "Module Selection" dialog even when launched with the `-autoexit`
+    /// `FO4Edit` displays a "Module Selection" dialog even when launched with the `-autoexit`
     /// flag and a pre-configured `Plugins.txt` file. There is **NO** headless mode, **NO**
-    /// command-line option to suppress this dialog, and **NO** way to automate FO4Edit
+    /// command-line option to suppress this dialog, and **NO** way to automate `FO4Edit`
     /// except via keyboard input.
     ///
-    /// **This is NOT code smell - it's the ONLY way to automate FO4Edit.**
+    /// **This is NOT code smell - it's the ONLY way to automate `FO4Edit`.**
     ///
     /// # Why This Workaround Exists
     ///
-    /// FO4Edit was designed as an interactive tool. Even when running batch scripts with
+    /// `FO4Edit` was designed as an interactive tool. Even when running batch scripts with
     /// `-autoexit` and a pre-loaded plugin list (`-P:Plugins.txt`), it ALWAYS shows the
     /// Module Selection window. The window must be dismissed manually or via keyboard
     /// automation for the script to proceed.
     ///
-    /// The original batch script (lines 499-511) used PowerShell's `SendKeys` method to
+    /// The original batch script (lines 499-511) used `PowerShell`'s `SendKeys` method to
     /// accomplish the same task. This Rust implementation uses the Windows `SendInput` API
     /// for the same purpose.
     ///
     /// # Process
     ///
-    /// 1. **Wait 3 seconds**: Allows FO4Edit window to fully initialize
-    /// 2. **Find window**: Uses `FindWindowW` to locate window by title "FO4Edit"
+    /// 1. **Wait 3 seconds**: Allows `FO4Edit` window to fully initialize
+    /// 2. **Find window**: Uses `FindWindowW` to locate window by title "`FO4Edit`"
     /// 3. **Bring to foreground**: Uses `SetForegroundWindow` to focus the window
     /// 4. **Wait 500ms**: Ensures window has focus before sending input
-    /// 5. **Send ENTER**: Uses `SendInput` to send VK_RETURN key down + key up events
+    /// 5. **Send ENTER**: Uses `SendInput` to send `VK_RETURN` key down + key up events
     ///
     /// # Window Not Found Behavior
     ///
-    /// If the FO4Edit window is not found after the 3-second wait:
+    /// If the `FO4Edit` window is not found after the 3-second wait:
     /// - A warning is logged
     /// - The function returns `Ok(())` (not an error)
     /// - The workflow continues
     ///
     /// **Why not fail?** The window may have already proceeded automatically (rare), or
-    /// FO4Edit may be running in a different mode. Failing here would block workflows
+    /// `FO4Edit` may be running in a different mode. Failing here would block workflows
     /// that might otherwise succeed. The log file parsing will detect actual failures.
     ///
     /// # Returns
@@ -628,25 +628,25 @@ impl FO4EditRunner {
     ///
     /// # Timing Considerations
     ///
-    /// - **3-second wait**: Required for FO4Edit to create and display its window
+    /// - **3-second wait**: Required for `FO4Edit` to create and display its window
     /// - **500ms wait**: Ensures window has focus before sending input
     ///
     /// **These delays are REQUIRED, not arbitrary.** Reducing them will cause failures.
     ///
     /// # Notes
     ///
-    /// - This function is called automatically by `run_script` after launching FO4Edit
+    /// - This function is called automatically by `run_script` after launching `FO4Edit`
     /// - The ENTER key is sent regardless of which button is focused (OK is default)
-    /// - Window title must exactly match "FO4Edit" (case-sensitive)
+    /// - Window title must exactly match "`FO4Edit`" (case-sensitive)
     /// - Errors from `SetForegroundWindow` are ignored (may fail if another app has focus lock)
     ///
     /// # See Also
     ///
-    /// - Original batch script lines 499-511 for PowerShell implementation
+    /// - Original batch script lines 499-511 for `PowerShell` implementation
     /// - Module-level documentation for detailed workaround explanations
     /// - Project CLAUDE.md section "Non-Automatable Tools"
     #[cfg(windows)]
-    #[allow(unsafe_code)]
+    #[allow(unsafe_code, clippy::unused_self, clippy::unnecessary_wraps)]
     fn send_enter_keystroke(&self) -> Result<()> {
         info!("Waiting for Module Selection window...");
 
@@ -689,7 +689,7 @@ impl FO4EditRunner {
         inputs[0].Anonymous.ki = KEYBDINPUT {
             wVk: VK_RETURN,
             wScan: 0,
-            dwFlags: Default::default(),
+            dwFlags: KEYBD_EVENT_FLAGS::default(),
             time: 0,
             dwExtraInfo: 0,
         };
@@ -717,6 +717,7 @@ impl FO4EditRunner {
         // FO4Edit's Module Selection dialog has no headless mode and must be automated
         // via keyboard input (intentional workaround documented in CLAUDE.md).
         unsafe {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
             SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
         }
 
@@ -730,10 +731,10 @@ impl FO4EditRunner {
         bail!("FO4Edit automation requires Windows");
     }
 
-    /// Wait for log file to be created by FO4Edit
+    /// Wait for log file to be created by `FO4Edit`
     ///
-    /// Polls for the existence of the FO4Edit log file to determine when the script has
-    /// started executing. FO4Edit creates the log file early in execution, so this indicates
+    /// Polls for the existence of the `FO4Edit` log file to determine when the script has
+    /// started executing. `FO4Edit` creates the log file early in execution, so this indicates
     /// the script has loaded and begun processing.
     ///
     /// # Arguments
@@ -755,7 +756,7 @@ impl FO4EditRunner {
     /// - The workflow continues
     ///
     /// **Why not fail on timeout?** The log file may be created in an unexpected location,
-    /// or FO4Edit may be running in a different mode. Failing here would block workflows
+    /// or `FO4Edit` may be running in a different mode. Failing here would block workflows
     /// that might otherwise succeed. The subsequent `check_log_for_errors` call will detect
     /// actual failures.
     ///
@@ -781,7 +782,7 @@ impl FO4EditRunner {
     ///
     /// # Timing Considerations
     ///
-    /// - **30-second timeout**: Should be more than enough for FO4Edit to initialize
+    /// - **30-second timeout**: Should be more than enough for `FO4Edit` to initialize
     /// - **1-second poll interval**: Balances responsiveness with CPU usage
     ///
     /// Typical log creation times:
@@ -791,18 +792,19 @@ impl FO4EditRunner {
     /// # Notes
     ///
     /// - This function is called automatically by `run_script` after sending the ENTER keystroke
-    /// - The log file is created by FO4Edit, not by this code
+    /// - The log file is created by `FO4Edit`, not by this code
     /// - Existence of the log file indicates the script has started (not necessarily completed)
     /// - The script may still be running when this function returns
     ///
     /// # See Also
     ///
     /// - `check_log_for_errors` for log parsing after script completion
+    #[allow(clippy::unused_self, clippy::unnecessary_wraps)]
     fn wait_for_log_file(&self, log_file: &Path) -> Result<()> {
-        info!("Waiting for log file creation...");
-
         const POLL_INTERVAL_SECS: u64 = 1;
         const DEFAULT_TIMEOUT_SECS: u64 = 3600;
+
+        info!("Waiting for log file creation...");
 
         // Support configurable timeout for slower systems or network drives
         // Set FO4EDIT_TIMEOUT_SECS environment variable to override (in seconds)
@@ -820,18 +822,15 @@ impl FO4EditRunner {
             thread::sleep(Duration::from_secs(POLL_INTERVAL_SECS));
         }
 
-        warn!(
-            "Log file not created within {} second timeout",
-            timeout_secs
-        );
+        warn!("Log file not created within {timeout_secs} second timeout");
         Ok(())
     }
 
-    /// Close FO4Edit main window forcefully
+    /// Close `FO4Edit` main window forcefully
     ///
     /// **CRITICAL REQUIRED WORKAROUND - DO NOT REMOVE**
     ///
-    /// FO4Edit's `-autoexit` flag is unreliable and frequently fails to close the main window
+    /// `FO4Edit`'s `-autoexit` flag is unreliable and frequently fails to close the main window
     /// after script completion. Even after the script finishes successfully and writes the log
     /// file, the window often remains open indefinitely, blocking the workflow from continuing.
     ///
@@ -839,43 +838,43 @@ impl FO4EditRunner {
     ///
     /// # Why This Workaround Exists
     ///
-    /// FO4Edit's `-autoexit` flag is supposed to close the application after a script completes,
+    /// `FO4Edit`'s `-autoexit` flag is supposed to close the application after a script completes,
     /// but in practice it is extremely unreliable:
     /// - Sometimes the window stays open even after successful completion
     /// - Sometimes it closes but with significant delay (30+ seconds)
-    /// - The behavior is inconsistent across different FO4Edit versions
+    /// - The behavior is inconsistent across different `FO4Edit` versions
     ///
     /// The original batch script (lines 499-511) used the same workaround: wait for the log
     /// file to be written (indicating completion), then forcefully close the window using
-    /// PowerShell's process termination.
+    /// `PowerShell`'s process termination.
     ///
     /// # Process
     ///
     /// This function uses a two-step approach to ensure the window closes:
     ///
-    /// 1. **Graceful close attempt**: Sends `WM_CLOSE` message to the FO4Edit window
-    ///    - Finds window by title "FO4Edit" using `FindWindowW`
+    /// 1. **Graceful close attempt**: Sends `WM_CLOSE` message to the `FO4Edit` window
+    ///    - Finds window by title "`FO4Edit`" using `FindWindowW`
     ///    - Sends `WM_CLOSE` message using `SendMessageW`
-    ///    - Allows FO4Edit to clean up resources and exit gracefully
+    ///    - Allows `FO4Edit` to clean up resources and exit gracefully
     ///
-    /// 2. **Wait 2 seconds**: Gives FO4Edit time to respond to WM_CLOSE
+    /// 2. **Wait 2 seconds**: Gives `FO4Edit` time to respond to `WM_CLOSE`
     ///
     /// 3. **Force close fallback**: Uses `taskkill /F /IM FO4Edit.exe`
     ///    - Forcefully terminates the process if still running
-    ///    - Ensures the workflow can continue even if WM_CLOSE was ignored
+    ///    - Ensures the workflow can continue even if `WM_CLOSE` was ignored
     ///    - Errors are silently ignored (process may have already exited)
     ///
     /// # Window Not Found Behavior
     ///
-    /// If the FO4Edit window is not found:
+    /// If the `FO4Edit` window is not found:
     /// - The function proceeds directly to the `taskkill` fallback
-    /// - This is normal if FO4Edit has already exited (rare but possible)
+    /// - This is normal if `FO4Edit` has already exited (rare but possible)
     ///
     /// # Return Value
     ///
     /// This function does not return a value (it's infallible). All errors are silently ignored:
     /// - Window not found → Continue to taskkill
-    /// - WM_CLOSE fails → Continue to taskkill
+    /// - `WM_CLOSE` fails → Continue to taskkill
     /// - taskkill fails → Ignore (process may have already exited)
     ///
     /// **Why ignore errors?** By the time this function is called, the log file has already
@@ -886,16 +885,16 @@ impl FO4EditRunner {
     ///
     /// **Windows only.** This function uses Windows-specific APIs and tools:
     /// - `FindWindowW`: Locate window by title
-    /// - `SendMessageW`: Send WM_CLOSE message
+    /// - `SendMessageW`: Send `WM_CLOSE` message
     /// - `taskkill.exe`: Force-terminate process
     ///
     /// On non-Windows platforms, this function is a no-op (does nothing).
     ///
     /// # Timing Considerations
     ///
-    /// - **2-second wait**: Allows FO4Edit to respond to WM_CLOSE before force-killing
+    /// - **2-second wait**: Allows `FO4Edit` to respond to `WM_CLOSE` before force-killing
     ///
-    /// **This delay is REQUIRED.** It gives FO4Edit a chance to clean up properly before
+    /// **This delay is REQUIRED.** It gives `FO4Edit` a chance to clean up properly before
     /// resorting to forced termination.
     ///
     /// # Examples
@@ -915,7 +914,7 @@ impl FO4EditRunner {
     /// - The child process handle may report "already exited" after this function runs
     /// - All errors are silently ignored to ensure workflow continues
     /// - The fallback `taskkill` ensures cleanup even if the window message fails
-    /// - Window title must exactly match "FO4Edit" (case-sensitive)
+    /// - Window title must exactly match "`FO4Edit`" (case-sensitive)
     ///
     /// # See Also
     ///
@@ -923,7 +922,7 @@ impl FO4EditRunner {
     /// - Module-level documentation for detailed workaround explanations
     /// - Project CLAUDE.md section "Non-Automatable Tools"
     #[cfg(windows)]
-    #[allow(unsafe_code)]
+    #[allow(unsafe_code, clippy::unused_self)]
     fn close_fo4edit_window(&self) {
         info!("Closing FO4Edit window...");
 
@@ -960,7 +959,7 @@ impl FO4EditRunner {
         // This ensures the process is terminated even if it ignores WM_CLOSE
         thread::sleep(Duration::from_secs(2));
         let _ = Command::new("taskkill")
-            .args(&["/F", "/IM", "FO4Edit.exe"])
+            .args(["/F", "/IM", "FO4Edit.exe"])
             .output();
     }
 
@@ -971,13 +970,13 @@ impl FO4EditRunner {
 
     /// Check log file for errors and success indicators
     ///
-    /// Parses the FO4Edit log file to detect known error patterns and verify successful
-    /// completion. This is the ONLY reliable way to determine if a FO4Edit script succeeded,
-    /// as FO4Edit provides no other feedback mechanism (exit codes are not meaningful).
+    /// Parses the `FO4Edit` log file to detect known error patterns and verify successful
+    /// completion. This is the ONLY reliable way to determine if a `FO4Edit` script succeeded,
+    /// as `FO4Edit` provides no other feedback mechanism (exit codes are not meaningful).
     ///
     /// # Arguments
     ///
-    /// * `log_file` - Path to the FO4Edit log file to parse
+    /// * `log_file` - Path to the `FO4Edit` log file to parse
     /// * `operation` - Human-readable operation name for error messages (e.g., "Merge Combined Objects")
     ///
     /// # Error Patterns Detected
@@ -992,7 +991,7 @@ impl FO4EditRunner {
     /// # Success Indicators
     ///
     /// - **`"Completed: No Errors."`** (`LOG_SUCCESS` constant) - Expected on success
-    ///   - FO4Edit scripts write this when completing successfully
+    ///   - `FO4Edit` scripts write this when completing successfully
     ///   - If NOT found, logs a warning but does NOT fail
     ///   - Absence of success message may indicate incomplete execution
     ///
@@ -1011,7 +1010,7 @@ impl FO4EditRunner {
     ///
     /// Unlike `CreationKitRunner::check_log_for_errors`, this function REQUIRES the log
     /// file to exist. If the log file is missing, this returns an error. This is because
-    /// FO4Edit is expected to create the log file early in execution (we wait for it in
+    /// `FO4Edit` is expected to create the log file early in execution (we wait for it in
     /// `wait_for_log_file`).
     ///
     /// # Errors
@@ -1035,7 +1034,7 @@ impl FO4EditRunner {
     ///
     /// # Notes
     ///
-    /// - This function is called automatically by `run_script` after FO4Edit exits
+    /// - This function is called automatically by `run_script` after `FO4Edit` exits
     /// - The log file is expected to exist (we wait for it in `wait_for_log_file`)
     /// - Missing success message generates a warning, not an error
     /// - The error message includes the log file path for manual inspection
@@ -1045,6 +1044,7 @@ impl FO4EditRunner {
     /// - `LOG_ERROR` constant for the exact error pattern
     /// - `LOG_SUCCESS` constant for the success pattern
     /// - `wait_for_log_file` for log creation waiting logic
+    #[allow(clippy::unused_self)]
     fn check_log_for_errors(&self, log_file: &Path, operation: &str) -> Result<()> {
         if !log_file.exists() {
             bail!("Log file not found: {}", log_file.display());
@@ -1066,8 +1066,7 @@ impl FO4EditRunner {
         // For merge operations, check for success message
         if !log_content.contains(LOG_SUCCESS) {
             warn!(
-                "FO4Edit log doesn't contain success message '{}', but no errors detected",
-                LOG_SUCCESS
+                "FO4Edit log doesn't contain success message '{LOG_SUCCESS}', but no errors detected"
             );
         }
 

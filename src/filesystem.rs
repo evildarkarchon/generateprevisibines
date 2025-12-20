@@ -110,13 +110,9 @@ pub fn ensure_output_directories(data_dir: &Path) -> Result<(PathBuf, PathBuf)> 
 /// - Skips directories and non-file entries
 /// - Returns absolute paths, not relative paths
 #[allow(dead_code)] // Part of public filesystem utility API; available for external use
-pub fn scan_directory_for_files(
-    dir: &Path,
-    extension: &str,
-    recursive: bool,
-) -> Result<Vec<PathBuf>> {
+pub fn scan_directory_for_files(dir: &Path, extension: &str, recursive: bool) -> Vec<PathBuf> {
     if !dir.exists() {
-        return Ok(Vec::new());
+        return Vec::new();
     }
 
     let mut files = Vec::new();
@@ -128,17 +124,16 @@ pub fn scan_directory_for_files(
         WalkDir::new(dir).max_depth(1)
     };
 
-    for entry in walker.into_iter().filter_map(|e| e.ok()) {
-        if entry.file_type().is_file() {
-            if let Some(ext) = entry.path().extension() {
-                if ext.to_string_lossy().to_lowercase() == extension_lower {
-                    files.push(entry.path().to_path_buf());
-                }
-            }
+    for entry in walker.into_iter().filter_map(std::result::Result::ok) {
+        if entry.file_type().is_file()
+            && let Some(ext) = entry.path().extension()
+            && ext.to_string_lossy().to_lowercase() == extension_lower
+        {
+            files.push(entry.path().to_path_buf());
         }
     }
 
-    Ok(files)
+    files
 }
 
 /// Count files in a directory with a specific extension
@@ -149,14 +144,13 @@ pub fn count_files(dir: &Path, extension: &str) -> usize {
 
     WalkDir::new(dir)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| e.file_type().is_file())
         .filter(|e| {
             e.path()
                 .extension()
                 .and_then(|ext| ext.to_str())
-                .map(|ext| ext.eq_ignore_ascii_case(extension))
-                .unwrap_or(false)
+                .is_some_and(|ext| ext.eq_ignore_ascii_case(extension))
         })
         .count()
 }
@@ -279,7 +273,7 @@ pub fn delete_matching_files(dir: &Path, extension: &str) -> Result<usize> {
         return Ok(0);
     }
 
-    let files = scan_directory_for_files(dir, extension, true)?;
+    let files = scan_directory_for_files(dir, extension, true);
     let count = files.len();
 
     for file in files {
@@ -298,7 +292,7 @@ pub fn get_directory_size(dir: &Path) -> u64 {
 
     WalkDir::new(dir)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| e.file_type().is_file())
         .filter_map(|e| e.metadata().ok())
         .map(|m| m.len())
@@ -371,6 +365,7 @@ pub fn find_xprevis_patch_plugins(data_dir: &Path) -> Result<Vec<String>> {
             let file_name_lower = file_name.to_lowercase();
 
             // Check if it's a plugin file and contains xprevispatch
+            #[allow(clippy::case_sensitive_file_extension_comparisons)]
             if (file_name_lower.ends_with(".esp") || file_name_lower.ends_with(".esm"))
                 && file_name_lower.contains("xprevispatch")
             {
@@ -385,15 +380,15 @@ pub fn find_xprevis_patch_plugins(data_dir: &Path) -> Result<Vec<String>> {
 /// Find working files that should be cleaned up after workflow
 ///
 /// During the previs generation workflow, several temporary "working files" are created
-/// by CreationKit and other tools. These files should be identified and optionally deleted
+/// by `CreationKit` and other tools. These files should be identified and optionally deleted
 /// after the workflow completes to keep the Data directory clean.
 ///
 /// # Working File Patterns
 ///
 /// This function searches for the following files:
-/// - `Previs.esp` - Temporary plugin created by CreationKit for previs generation
+/// - `Previs.esp` - Temporary plugin created by `CreationKit` for previs generation
 /// - `PrecombinedObjects.esp` - Temporary plugin for precombined mesh generation
-/// - `SeventySix*.esp` - Any plugin starting with "SeventySix" (Fallout 76-related temp files)
+/// - `SeventySix*.esp` - Any plugin starting with "`SeventySix`" (Fallout 76-related temp files)
 ///
 /// All matching is case-insensitive.
 ///
@@ -497,10 +492,10 @@ mod tests {
         File::create(temp_dir.path().join("test2.esp")).unwrap();
         File::create(temp_dir.path().join("test3.txt")).unwrap();
 
-        let esp_files = scan_directory_for_files(temp_dir.path(), "esp", false).unwrap();
+        let esp_files = scan_directory_for_files(temp_dir.path(), "esp", false);
         assert_eq!(esp_files.len(), 2);
 
-        let txt_files = scan_directory_for_files(temp_dir.path(), "txt", false).unwrap();
+        let txt_files = scan_directory_for_files(temp_dir.path(), "txt", false);
         assert_eq!(txt_files.len(), 1);
     }
 
