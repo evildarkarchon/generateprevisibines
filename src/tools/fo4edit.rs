@@ -802,7 +802,8 @@ impl FO4EditRunner {
     #[allow(clippy::unused_self, clippy::unnecessary_wraps)]
     fn wait_for_log_file(&self, log_file: &Path) -> Result<()> {
         const POLL_INTERVAL_SECS: u64 = 1;
-        const DEFAULT_TIMEOUT_SECS: u64 = 3600;
+        // 15 minutes default - balances xEdit's slow performance with reasonable wait time
+        const DEFAULT_TIMEOUT_SECS: u64 = 900;
 
         info!("Waiting for log file creation...");
 
@@ -812,6 +813,16 @@ impl FO4EditRunner {
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(DEFAULT_TIMEOUT_SECS);
+
+        // Warn if timeout is excessively long (> 30 minutes)
+        if timeout_secs > 1800 {
+            warn!(
+                "FO4EDIT_TIMEOUT_SECS set to {} seconds ({} minutes). This may be excessive.",
+                timeout_secs,
+                timeout_secs / 60
+            );
+        }
+
         let max_iterations = timeout_secs / POLL_INTERVAL_SECS;
 
         for i in 0..max_iterations {

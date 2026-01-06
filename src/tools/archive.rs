@@ -70,7 +70,7 @@
 //! ```
 
 use anyhow::{Context, Result, bail};
-use log::info;
+use log::{error, info, warn};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -589,13 +589,33 @@ impl ArchiveManager {
                     // Copy new files to extracted directory
                     Self::copy_dir_recursive(source_dir, &temp_extract)?;
 
-                    // Delete old archive
-                    fs::remove_file(&archive_path)?;
+                    // Create backup by renaming (safer than delete-then-create)
+                    let backup_path = archive_path.with_extension("ba2.bak");
+                    fs::rename(&archive_path, &backup_path)
+                        .with_context(|| format!("Failed to create backup of archive: {}", archive_path.display()))?;
 
                     // Re-create archive with all files
-                    self.archive2_create(&temp_extract, &archive_path, is_xbox)?;
-
-                    Ok(())
+                    match self.archive2_create(&temp_extract, &archive_path, is_xbox) {
+                        Ok(()) => {
+                            // Success - remove backup
+                            if let Err(e) = fs::remove_file(&backup_path) {
+                                warn!("Failed to remove backup archive: {e}");
+                            }
+                            Ok(())
+                        }
+                        Err(e) => {
+                            // Failed - restore backup
+                            error!("Archive creation failed, restoring backup");
+                            if let Err(restore_err) = fs::rename(&backup_path, &archive_path) {
+                                error!(
+                                    "CRITICAL: Failed to restore backup! Backup is at: {}. Error: {}",
+                                    backup_path.display(),
+                                    restore_err
+                                );
+                            }
+                            Err(e)
+                        }
+                    }
                 })();
 
                 // Cleanup temp directory regardless of success/failure

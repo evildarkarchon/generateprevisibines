@@ -271,7 +271,7 @@ impl<'a> WorkflowExecutor<'a> {
             return Ok(());
         }
 
-        if filesystem::is_directory_empty(dir) {
+        if filesystem::is_directory_empty(dir)? {
             return Ok(());
         }
 
@@ -349,7 +349,7 @@ impl<'a> WorkflowExecutor<'a> {
         ck_runner.generate_precombined(&self.plugin_name, self.config.build_mode)?;
 
         // Post-check: .nif files created
-        if !precombined_dir.exists() || filesystem::is_directory_empty(&precombined_dir) {
+        if !precombined_dir.exists() || filesystem::is_directory_empty(&precombined_dir)? {
             bail!("No precombined meshes were generated");
         }
 
@@ -384,7 +384,7 @@ impl<'a> WorkflowExecutor<'a> {
         // Pre-check: Precombined meshes exist
         let precombined_dir = self.data_dir.join("meshes").join("precombined");
 
-        if !precombined_dir.exists() || filesystem::is_directory_empty(&precombined_dir) {
+        if !precombined_dir.exists() || filesystem::is_directory_empty(&precombined_dir)? {
             bail!("No precombined meshes found. Run Step 1 first.");
         }
 
@@ -579,7 +579,7 @@ impl<'a> WorkflowExecutor<'a> {
         ck_runner.generate_previs(&self.plugin_name)?;
 
         // Post-check: .uvd files created
-        if !vis_dir.exists() || filesystem::is_directory_empty(&vis_dir) {
+        if !vis_dir.exists() || filesystem::is_directory_empty(&vis_dir)? {
             bail!("No previs data was generated");
         }
 
@@ -606,7 +606,7 @@ impl<'a> WorkflowExecutor<'a> {
         // Pre-check: .uvd files exist
         let vis_dir = self.data_dir.join("vis");
 
-        if !vis_dir.exists() || filesystem::is_directory_empty(&vis_dir) {
+        if !vis_dir.exists() || filesystem::is_directory_empty(&vis_dir)? {
             bail!("No previs data found. Run Step 6 first.");
         }
 
@@ -775,6 +775,7 @@ impl<'a> WorkflowExecutor<'a> {
             println!();
             if let Err(e) = self.cleanup_working_files() {
                 warn!("Failed to clean up working files: {e}");
+                warn!("You may need to manually delete Previs.esp and/or PrecombineObjects.esp from Data/");
             }
         } else {
             info!("  • Clean up temp files if needed (Previs.esp, PrecombineObjects.esp)");

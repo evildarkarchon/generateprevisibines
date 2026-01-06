@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use log::warn;
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -109,7 +108,6 @@ pub fn ensure_output_directories(data_dir: &Path) -> Result<(PathBuf, PathBuf)> 
 /// - Does not follow symlinks
 /// - Skips directories and non-file entries
 /// - Returns absolute paths, not relative paths
-#[allow(dead_code)] // Part of public filesystem utility API; available for external use
 pub fn scan_directory_for_files(dir: &Path, extension: &str, recursive: bool) -> Vec<PathBuf> {
     if !dir.exists() {
         return Vec::new();
@@ -179,35 +177,35 @@ pub fn count_files(dir: &Path, extension: &str) -> usize {
 /// # use generateprevisibines::filesystem::is_directory_empty;
 ///
 /// let data_dir = Path::new("C:\\Games\\Fallout4\\Data");
-/// if is_directory_empty(data_dir) {
-///     println!("Data directory is empty or inaccessible");
-/// } else {
-///     println!("Data directory contains files");
+/// match is_directory_empty(data_dir) {
+///     Ok(true) => println!("Data directory is empty or doesn't exist"),
+///     Ok(false) => println!("Data directory contains files"),
+///     Err(e) => println!("Error checking directory: {}", e),
 /// }
 /// ```
 ///
 /// # Notes
 ///
-/// - Non-existent directories are considered "empty" (`true`)
-/// - Directories that cannot be read are also considered "empty" (`true`)
+/// - Non-existent directories are considered "empty" (`Ok(true)`)
 /// - Only checks for the presence of entries, not their type (files vs. directories)
-pub fn is_directory_empty(dir: &Path) -> bool {
+///
+/// # Errors
+///
+/// Returns an error if the directory exists but cannot be read (e.g., permission denied).
+pub fn is_directory_empty(dir: &Path) -> Result<bool> {
     if !dir.exists() {
-        return true;
+        return Ok(true);
     }
 
-    match fs::read_dir(dir) {
-        Ok(mut entries) => entries.next().is_none(),
-        Err(e) => {
-            // Log warning to surface permission issues while preserving backwards compatibility
-            warn!(
-                "Failed to read directory '{}': {}. Treating as empty.",
-                dir.display(),
-                e
-            );
-            true
-        }
-    }
+    let mut entries = fs::read_dir(dir).with_context(|| {
+        format!(
+            "Failed to read directory '{}' ({:?})",
+            dir.display(),
+            dir.metadata().map(|m| m.permissions())
+        )
+    })?;
+
+    Ok(entries.next().is_none())
 }
 
 /// Delete all files in a directory matching a file extension
@@ -514,9 +512,15 @@ mod tests {
     #[test]
     fn test_is_directory_empty() {
         let temp_dir = TempDir::new().unwrap();
-        assert!(is_directory_empty(temp_dir.path()));
+        assert!(is_directory_empty(temp_dir.path()).unwrap());
 
         File::create(temp_dir.path().join("test.txt")).unwrap();
-        assert!(!is_directory_empty(temp_dir.path()));
+        assert!(!is_directory_empty(temp_dir.path()).unwrap());
+    }
+
+    #[test]
+    fn test_is_directory_empty_nonexistent() {
+        let nonexistent = std::path::Path::new("nonexistent_dir_12345");
+        assert!(is_directory_empty(nonexistent).unwrap());
     }
 }

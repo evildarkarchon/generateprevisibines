@@ -28,7 +28,9 @@ pub fn validate_plugin_name(name: &str, clean_mode: bool) -> Result<()> {
     }
 
     // Get base name (without extension) for reserved name check
-    let base_name = get_plugin_base_name(&name_lower);
+    // Note: name_lower is already lowercase, so we can strip extension directly
+    // without calling get_plugin_base_name (which would do another lowercase conversion)
+    let base_name = &name_lower[..name_lower.len() - 4];
 
     // Check for exact match against reserved names (case insensitive)
     // Only reject if the base name EXACTLY matches a reserved word
