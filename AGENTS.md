@@ -21,30 +21,6 @@ cargo clippy             # Lint with pedantic warnings enabled
 - DLL renaming (CK crashes with ENB/ReShade DLLs)
 - Archive2 extract-repack (no append functionality)
 
-## Architecture
-
-### Main Components
-
-- **main.rs** - CLI argument parsing (clap), tool discovery, configuration setup, workflow entry point
-- **workflow.rs** - `WorkflowExecutor` orchestrates the 8-step process via `WorkflowStep` enum
-- **config.rs** - `Config` struct holding paths, build mode (`Clean`/`Filtered`/`Xbox`), archive tool selection
-
-### Tool Wrappers (`src/tools/`)
-
-- **creation_kit.rs** - `CreationKitRunner`: generates precombines, compresses PSG, builds CDX, generates previs
-- **fo4edit.rs** - `FO4EditRunner`: merges generated ESPs using Windows SendInput for keystroke automation
-- **archive.rs** - `ArchiveManager`: handles BA2 creation via Archive2 or BSArch
-- **dll_manager.rs** - Disables/restores ENB/ReShade DLLs that crash Creation Kit
-
-### Support Modules
-
-- **registry.rs** - Windows Registry lookups for tool paths (HKCR, HKLM)
-- **ckpe_config.rs** - Parses CKPE `.toml`/`.ini` configs, validates `bBSPointerHandleExtremly=true`
-- **validation.rs** - Plugin name validation (reserved names, space restrictions)
-- **prompts.rs** - Interactive Y/N prompts via dialoguer
-- **filesystem.rs** - Directory creation, file counting, cleanup operations
-- **mo2_helper.rs** + **mo2-mode/** subcrate - Mod Organizer 2 VFS integration
-
 ### Key Types
 
 - `BuildMode`: `Clean` (full workflow), `Filtered` (skip PSG/CDX), `Xbox` (filtered + Xbox compression)
@@ -56,3 +32,4 @@ cargo clippy             # Lint with pedantic warnings enabled
 - [docs/workarounds.md](docs/workarounds.md) - Required workarounds with batch line references
 - [docs/behaviors.md](docs/behaviors.md) - Key behaviors and UX expectations to preserve
 - [docs/technical.md](docs/technical.md) - Windows APIs, recommended crates, code style, testing
+- [docs/future-features.md](docs/future-features.md) - Post-scaffold implementation backlog

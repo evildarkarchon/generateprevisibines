@@ -1,0 +1,42 @@
+[package]
+name = "generateprevisibines"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Rust port of GeneratePrevisibines.bat for Fallout 4 precombine/previs automation"
+license = "GPL-3.0-or-later"
+readme = "README.md"
+
+[[bin]]
+name = "generateprevisibines"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+dialoguer = "0.11"
+thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+
+[dev-dependencies]
+tempfile = "3.14"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+doc_markdown = "allow"
+missing_errors_doc = "allow"
+struct_excessive_bools = "allow"
+case_sensitive_file_extension_comparisons = "allow"
