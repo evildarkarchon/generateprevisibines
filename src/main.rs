@@ -4,16 +4,16 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
+use generateprevisibines::interactive::ExistingPluginAction;
 use generateprevisibines::{
     cli::Cli,
-    discovery, interactive, logging,
+    discovery, interactive,
+    run::{RunDiagnostic, WorkflowRequest, WorkflowRun},
     tools::{
-        assert_resume_step_implemented, filter_runnable_steps, ProductionRunner, ScaffoldRunner,
-        ToolContext,
+        ProductionRunner, ScaffoldRunner, assert_resume_step_implemented, filter_runnable_steps,
     },
-    validation, workflow,
+    workflow,
 };
-use generateprevisibines::{interactive::ExistingPluginAction, workflow::WorkflowEngine};
 use tracing_subscriber::EnvFilter;
 
 fn main() -> ExitCode {
@@ -41,98 +41,50 @@ fn run() -> generateprevisibines::Result<()> {
         .and_then(|p| p.parent().map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let tools = discovery::discover_tools(&exe_dir, cli.fo4_dir.clone())?;
-
-    if let Some(ref fo4edit) = tools.fo4edit {
-        tracing::info!(
-            "{}",
-            discovery::format_version_line("FO4Edit", fo4edit, None)
-        );
-    }
-    if let Some(ref fo4) = tools.fallout4_dir {
-        tracing::info!("Fallout 4 directory: {}", fo4.display());
-    }
-
-    let Some(fallout4_dir) = tools.fallout4_dir.clone() else {
-        return Err(generateprevisibines::Error::Other(
-            "Fallout 4 directory could not be determined. Use --FO4 <DIR>.".into(),
-        ));
-    };
+    let tools = WorkflowRun::discover_tools(&exe_dir, cli.fo4_dir.clone())?;
+    let fallout4_dir = WorkflowRun::fallout4_dir(&tools)?;
 
     if cli.dry_run {
+        emit_run_diagnostics(&WorkflowRun::tool_diagnostics(&tools));
         run_dry_run(&cli, fallout4_dir);
         return Ok(());
     }
 
-    let Some((mut config, ck_log_path)) = resolve_config(&cli, &tools, fallout4_dir)? else {
+    let Some(request) = resolve_request(&cli, &tools, fallout4_dir)? else {
         return Ok(());
     };
 
-    validate_ckpe_and_scripts(&config, &exe_dir, &tools)?;
+    let workflow_run = WorkflowRun::prepare(&request, &exe_dir, tools)?;
+    emit_run_diagnostics(workflow_run.diagnostics());
+    workflow_run.execute(ProductionRunner::new())?;
 
-    config.ck_log_path = Some(ck_log_path);
-
-    assert_resume_step_implemented(&config)?;
-
-    let planned = WorkflowEngine::<ProductionRunner>::planned_steps(&config);
-    let runnable = filter_runnable_steps(&planned);
-    if runnable.is_empty() {
-        return Err(generateprevisibines::Error::StepNotImplemented(
-            planned
-                .first()
-                .map_or(1, |s| s.number()),
-        ));
-    }
-    if runnable.len() < planned.len() {
-        tracing::warn!(
-            skipped = planned.len() - runnable.len(),
-            "Later workflow steps are not implemented yet; running Step 1 only."
-        );
-    }
-
-    let log_path = logging::session_log_path(&config.plugin);
-    logging::init_session_log(
-        &log_path,
-        config.build_mode.as_str(),
-        &config.plugin.file_name,
-    )?;
-
-    let creation_kit = tools.creation_kit.ok_or_else(|| {
-        generateprevisibines::Error::Other(format!(
-            "CreationKit.exe not found in {}",
-            config.fallout4_dir.display()
-        ))
-    })?;
-
-    let ctx = ToolContext {
-        session_log: Some(log_path.clone()),
-        unattended_log: Some(logging::unattended_log_path()),
-        fallout4_dir: config.fallout4_dir.clone(),
-        creation_kit,
-        ck_log_path: config.ck_log_path.clone(),
-    };
-
-    let engine = WorkflowEngine::new(ProductionRunner::new());
-    engine.run_steps(&runnable, &config, &ctx)?;
-
-    println!("Build step(s) complete. Log: {}", log_path.display());
+    println!(
+        "Build step(s) complete. Log: {}",
+        workflow_run.log_path().display()
+    );
     Ok(())
 }
 
-/// Resolve plugin + config. `Ok(None)` when the user exits from interactive prompts.
-fn resolve_config(
+/// Resolve plugin + request. `Ok(None)` when the user exits from interactive prompts.
+fn resolve_request(
     cli: &Cli,
     tools: &discovery::ToolPaths,
     fallout4_dir: PathBuf,
-) -> generateprevisibines::Result<Option<(generateprevisibines::ProjectConfig, PathBuf)>> {
+) -> generateprevisibines::Result<Option<WorkflowRequest>> {
     let build_mode = cli.build_mode();
     let archive_tool = cli.archive_tool();
-    let xedit_data_dir = cli.fo4_dir.as_ref().map(|d| d.join("Data"));
     let fo4edit_path = tools.fo4edit.clone();
 
-    if cli.plugin.is_some() {
-        let mut config = cli.clone().into_project_config(fallout4_dir)?;
-        config.fo4edit_path = fo4edit_path;
+    if let Some(plugin_name) = &cli.plugin {
+        let request = WorkflowRequest::new(
+            build_mode,
+            archive_tool,
+            generateprevisibines::config::PluginIdentity::parse(plugin_name),
+            true,
+            cli.resume_from,
+            cli.fo4_dir.clone(),
+        );
+        let config = request.to_project_config(fallout4_dir, fo4edit_path, None)?;
 
         match interactive::ensure_plugin_ready(&config)? {
             ExistingPluginAction::Exit => return Ok(None),
@@ -144,8 +96,7 @@ fn resolve_config(
             ExistingPluginAction::Continue => {}
         }
 
-        let ck_log = resolve_ck_log_from_install(&config)?;
-        return Ok(Some((config, ck_log)));
+        return Ok(Some(request));
     }
 
     let mut resume_from = cli.resume_from;
@@ -155,23 +106,21 @@ fn resolve_config(
             return Ok(None);
         };
 
-        let mut config = Cli::project_config(
-            fallout4_dir.clone(),
+        let mut request = WorkflowRequest::new(
             build_mode,
             archive_tool,
             plugin,
             false,
             resume_from,
-            xedit_data_dir.clone(),
-            fo4edit_path.clone(),
-            None,
-        )?;
+            cli.fo4_dir.clone(),
+        );
+        let config = request.to_project_config(fallout4_dir.clone(), fo4edit_path.clone(), None)?;
 
         match interactive::ensure_plugin_ready(&config)? {
             ExistingPluginAction::Exit => return Ok(None),
             ExistingPluginAction::ChooseResumeStep => {
                 if let Some(step) = interactive::prompt_resume_step(build_mode)? {
-                    config.resume_from = Some(step);
+                    request.resume_from = Some(step);
                 } else {
                     resume_from = None;
                     continue;
@@ -180,50 +129,8 @@ fn resolve_config(
             ExistingPluginAction::Continue => {}
         }
 
-        let ck_log = resolve_ck_log_from_install(&config)?;
-        return Ok(Some((config, ck_log)));
+        return Ok(Some(request));
     }
-}
-
-fn resolve_ck_log_from_install(
-    config: &generateprevisibines::ProjectConfig,
-) -> generateprevisibines::Result<PathBuf> {
-    let ckpe_path = config
-        .fallout4_dir
-        .join(validation::detect_ckpe_config_kind(&config.fallout4_dir).file_name());
-    let contents = std::fs::read_to_string(&ckpe_path)?;
-    let (_kind, log_file) = validation::validate_ckpe_config(&config.fallout4_dir, &contents)?;
-    Ok(interactive::resolve_ck_log_path(
-        &config.fallout4_dir,
-        &log_file,
-    ))
-}
-
-fn validate_ckpe_and_scripts(
-    config: &generateprevisibines::ProjectConfig,
-    exe_dir: &std::path::Path,
-    tools: &discovery::ToolPaths,
-) -> generateprevisibines::Result<()> {
-    let ckpe_path = config
-        .fallout4_dir
-        .join(validation::detect_ckpe_config_kind(&config.fallout4_dir).file_name());
-    if ckpe_path.is_file() {
-        let contents = std::fs::read_to_string(&ckpe_path)?;
-        let (kind, log_file) = validation::validate_ckpe_config(&config.fallout4_dir, &contents)?;
-        tracing::info!("Using CKPE config: {} (log: {log_file})", kind.file_name());
-    } else {
-        return Err(generateprevisibines::Error::CkpeConfig(format!(
-            "CKPE not configured. File {} missing",
-            validation::detect_ckpe_config_kind(&config.fallout4_dir).file_name()
-        )));
-    }
-
-    if let Some(ref fo4edit) = tools.fo4edit {
-        let scripts_dir = fo4edit.parent().unwrap_or(exe_dir).join("Edit Scripts");
-        validation::validate_required_xedit_scripts(&scripts_dir)?;
-    }
-
-    Ok(())
 }
 
 fn run_dry_run(cli: &Cli, fallout4_dir: PathBuf) {
@@ -281,4 +188,29 @@ fn print_banner() {
     println!("If you use MO2 then tools must be run from within MO2.");
     println!("============================================================================");
     println!();
+}
+
+fn emit_run_diagnostics(diagnostics: &[RunDiagnostic]) {
+    for diagnostic in diagnostics {
+        match diagnostic {
+            RunDiagnostic::Fo4EditDiscovered(path) => {
+                tracing::info!("{}", discovery::format_version_line("FO4Edit", path, None));
+            }
+            RunDiagnostic::Fallout4Directory(path) => {
+                tracing::info!("Fallout 4 directory: {}", path.display());
+            }
+            RunDiagnostic::CkpeConfig {
+                file_name,
+                log_file,
+            } => {
+                tracing::info!("Using CKPE config: {file_name} (log: {log_file})");
+            }
+            RunDiagnostic::LaterStepsNotImplemented { skipped, .. } => {
+                tracing::warn!(
+                    skipped,
+                    "Later workflow steps are not implemented yet; running Step 1 only."
+                );
+            }
+        }
+    }
 }

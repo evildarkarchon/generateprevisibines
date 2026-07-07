@@ -136,9 +136,10 @@ pub struct BatchParsedArgs {
 impl Cli {
     /// Build a [`ProjectConfig`] after Fallout 4 directory resolution (CLI plugin required).
     pub fn into_project_config(self, fallout4_dir: PathBuf) -> Result<ProjectConfig> {
-        let plugin_name = self.plugin.clone().ok_or_else(|| {
-            Error::Other("plugin name required in non-interactive mode".into())
-        })?;
+        let plugin_name = self
+            .plugin
+            .clone()
+            .ok_or_else(|| Error::Other("plugin name required in non-interactive mode".into()))?;
         Self::project_config(
             fallout4_dir,
             self.build_mode(),

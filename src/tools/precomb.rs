@@ -4,8 +4,8 @@ use crate::checks::{self, has_precombined_nifs};
 use crate::config::{ProjectConfig, WorkflowStep};
 use crate::error::{Error, Result};
 use crate::interactive;
-use crate::tools::creation_kit::{CkOperation, CreationKitOps};
 use crate::tools::ToolContext;
+use crate::tools::creation_kit::{CkOperation, CreationKitOps};
 
 /// Run Step 1 including preamble, CK, and post-checks.
 pub fn run_generate_precombines(

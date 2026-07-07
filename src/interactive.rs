@@ -46,7 +46,9 @@ pub fn parse_resume_step_choice(input: &str, build_mode: BuildMode) -> Option<Re
     }
     let step = WorkflowStep::from_number(n)?;
     let allowed = WorkflowStep::steps_for_mode(build_mode);
-    allowed.contains(&step).then_some(ResumeStepChoice::Step(step))
+    allowed
+        .contains(&step)
+        .then_some(ResumeStepChoice::Step(step))
 }
 
 /// Copy seed plugin `xPrevisPatch.esp` and wait for MO2 VFS if needed.
@@ -103,7 +105,10 @@ pub fn prompt_seed_copy(data_dir: &Path, plugin_path: &Path) -> Result<bool> {
     let seed = data_dir.join("xPrevisPatch.esp");
     println!(
         "Plugin {} does not exist.",
-        plugin_path.file_name().unwrap_or_default().to_string_lossy()
+        plugin_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
     );
     if !seed.is_file() {
         return Err(Error::SeedPluginMissing);
@@ -146,9 +151,7 @@ pub fn prompt_resume_step(build_mode: BuildMode) -> Result<Option<WorkflowStep>>
     println!("[0] Re-enter plugin name");
 
     loop {
-        let raw: String = Input::new()
-            .with_prompt("Step number")
-            .interact_text()?;
+        let raw: String = Input::new().with_prompt("Step number").interact_text()?;
 
         match parse_resume_step_choice(&raw, build_mode) {
             Some(ResumeStepChoice::RePromptPlugin) => return Ok(None),

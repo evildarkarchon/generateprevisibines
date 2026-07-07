@@ -31,7 +31,10 @@ fn find_first_precombined_nif(dir: &Path) -> Option<PathBuf> {
             if let Some(found) = find_first_precombined_nif(&path) {
                 return Some(found);
             }
-        } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("nif")) {
+        } else if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("nif"))
+        {
             return Some(path);
         }
     }

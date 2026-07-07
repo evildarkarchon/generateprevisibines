@@ -42,8 +42,8 @@ pub fn discover_fo4edit(exe_dir: &Path) -> Result<PathBuf> {
 
 #[cfg(windows)]
 fn fo4edit_from_registry() -> Result<PathBuf> {
-    use winreg::enums::HKEY_CLASSES_ROOT;
     use winreg::RegKey;
+    use winreg::enums::HKEY_CLASSES_ROOT;
 
     let hkcr = RegKey::predef(HKEY_CLASSES_ROOT);
     let key = hkcr.open_subkey("FO4Script\\DefaultIcon")?;
@@ -61,8 +61,8 @@ fn fo4edit_from_registry() -> Result<PathBuf> {
 /// Resolve Fallout 4 install directory from registry on Windows.
 #[cfg(windows)]
 pub fn discover_fallout4_dir() -> Result<PathBuf> {
-    use winreg::enums::HKEY_LOCAL_MACHINE;
     use winreg::RegKey;
+    use winreg::enums::HKEY_LOCAL_MACHINE;
 
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let key = hklm.open_subkey(r"SOFTWARE\Wow6432Node\Bethesda Softworks\Fallout4")?;

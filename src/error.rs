@@ -45,7 +45,9 @@ pub enum Error {
     )]
     SeedCopyFailed,
 
-    #[error("precombined meshes already exist — delete meshes\\precombined or resume from a later step")]
+    #[error(
+        "precombined meshes already exist — delete meshes\\precombined or resume from a later step"
+    )]
     PrecombinedMeshesExist,
 
     #[error("vis folder contains .uvd files — remove them before generating precombines")]

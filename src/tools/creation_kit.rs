@@ -6,8 +6,8 @@ use crate::config::ProjectConfig;
 use crate::error::{Error, Result};
 use crate::logging;
 use crate::timing::{self, MO2_DELAY_AFTER_CK_SECS};
-use crate::tools::dll::DllGuard;
 use crate::tools::ToolContext;
+use crate::tools::dll::DllGuard;
 
 /// Creation Kit command-line operations from the batch workflow.
 #[derive(Debug, Clone, Copy)]

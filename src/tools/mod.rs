@@ -42,7 +42,7 @@ impl Default for ToolContext {
 /// Abstraction over external tool execution for workflow orchestration.
 pub trait ToolRunner {
     fn run_step(&self, step: WorkflowStep, config: &ProjectConfig, ctx: &ToolContext)
-        -> Result<()>;
+    -> Result<()>;
 }
 
 /// No-op runner used in tests and `--dry-run`.
@@ -93,9 +93,7 @@ pub struct ProductionRunner {
 impl ProductionRunner {
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            ck: CreationKitOps,
-        }
+        Self { ck: CreationKitOps }
     }
 }
 
@@ -107,7 +105,9 @@ impl ToolRunner for ProductionRunner {
         ctx: &ToolContext,
     ) -> Result<()> {
         match step {
-            WorkflowStep::GeneratePrecombines => precomb::run_generate_precombines(config, ctx, &self.ck),
+            WorkflowStep::GeneratePrecombines => {
+                precomb::run_generate_precombines(config, ctx, &self.ck)
+            }
             _ => Err(Error::StepNotImplemented(step.number())),
         }
     }
