@@ -7,6 +7,7 @@ pub mod cli;
 pub mod config;
 pub mod discovery;
 pub mod error;
+pub mod intake;
 pub mod interactive;
 pub mod logging;
 pub mod run;
@@ -18,6 +19,10 @@ pub mod workflow;
 pub use cli::Cli;
 pub use config::{ArchiveTool, BuildMode, ProjectConfig, WorkflowStep};
 pub use error::{Error, Result};
+pub use intake::{
+    InteractiveWorkflowIntakePrompts, WorkflowIntakeOutcome, WorkflowIntakePrompts,
+    WorkflowRequestIntake,
+};
 pub use run::{RunDiagnostic, WorkflowRequest, WorkflowRun};
 pub use workflow::operations::{
     OperationAdapters, ProductionOperationAdapters, WorkflowOperationExecutor,

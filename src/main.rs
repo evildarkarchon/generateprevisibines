@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use generateprevisibines::interactive::ExistingPluginAction;
 use generateprevisibines::{
     cli::Cli,
-    discovery, interactive,
-    run::{RunDiagnostic, WorkflowRequest, WorkflowRun},
+    discovery,
+    intake::{WorkflowIntakeOutcome, WorkflowRequestIntake},
+    run::{RunDiagnostic, WorkflowRun},
     workflow::operations::{ProductionOperationAdapters, WorkflowOperationExecutor},
     workflow::{self, WorkflowPlan},
 };
@@ -40,19 +40,16 @@ fn run() -> generateprevisibines::Result<()> {
         .unwrap_or_else(|| PathBuf::from("."));
 
     let tools = WorkflowRun::discover_tools(&exe_dir, cli.fo4_dir.clone())?;
-    let fallout4_dir = WorkflowRun::fallout4_dir(&tools)?;
-
     if cli.dry_run {
         emit_run_diagnostics(&WorkflowRun::tool_diagnostics(&tools));
         run_dry_run(&cli);
         return Ok(());
     }
 
-    let Some(request) = resolve_request(&cli, &tools, fallout4_dir)? else {
-        return Ok(());
+    let workflow_run = match WorkflowRequestIntake::interactive().resolve(&cli, &exe_dir, tools)? {
+        WorkflowIntakeOutcome::Ready(run) => run,
+        WorkflowIntakeOutcome::Exited => return Ok(()),
     };
-
-    let workflow_run = WorkflowRun::prepare(&request, &exe_dir, tools)?;
     emit_run_diagnostics(workflow_run.diagnostics());
     workflow_run.execute()?;
 
@@ -61,74 +58,6 @@ fn run() -> generateprevisibines::Result<()> {
         workflow_run.log_path().display()
     );
     Ok(())
-}
-
-/// Resolve plugin + request. `Ok(None)` when the user exits from interactive prompts.
-fn resolve_request(
-    cli: &Cli,
-    tools: &discovery::ToolPaths,
-    fallout4_dir: PathBuf,
-) -> generateprevisibines::Result<Option<WorkflowRequest>> {
-    let build_mode = cli.build_mode();
-    let archive_tool = cli.archive_tool();
-    let fo4edit_path = tools.fo4edit.clone();
-
-    if let Some(plugin_name) = &cli.plugin {
-        let request = WorkflowRequest::new(
-            build_mode,
-            archive_tool,
-            generateprevisibines::config::PluginIdentity::parse(plugin_name),
-            true,
-            cli.resume_from,
-            cli.fo4_dir.clone(),
-        );
-        let config = request.to_project_config(fallout4_dir, fo4edit_path, None)?;
-
-        match interactive::ensure_plugin_ready(&config)? {
-            ExistingPluginAction::Exit => return Ok(None),
-            ExistingPluginAction::ChooseResumeStep => {
-                return Err(generateprevisibines::Error::Other(
-                    "resume step selection requires interactive mode".into(),
-                ));
-            }
-            ExistingPluginAction::Continue => {}
-        }
-
-        return Ok(Some(request));
-    }
-
-    let mut resume_from = cli.resume_from;
-
-    loop {
-        let Some(plugin) = interactive::prompt_plugin_name(build_mode)? else {
-            return Ok(None);
-        };
-
-        let mut request = WorkflowRequest::new(
-            build_mode,
-            archive_tool,
-            plugin,
-            false,
-            resume_from,
-            cli.fo4_dir.clone(),
-        );
-        let config = request.to_project_config(fallout4_dir.clone(), fo4edit_path.clone(), None)?;
-
-        match interactive::ensure_plugin_ready(&config)? {
-            ExistingPluginAction::Exit => return Ok(None),
-            ExistingPluginAction::ChooseResumeStep => {
-                if let Some(step) = interactive::prompt_resume_step(build_mode)? {
-                    request.resume_from = Some(step);
-                } else {
-                    resume_from = None;
-                    continue;
-                }
-            }
-            ExistingPluginAction::Continue => {}
-        }
-
-        return Ok(Some(request));
-    }
 }
 
 fn run_dry_run(cli: &Cli) {

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser};
 
-use crate::config::{ArchiveTool, BuildMode, PluginIdentity, ProjectConfig, WorkflowStep};
+use crate::config::{ArchiveTool, BuildMode, WorkflowStep};
 use crate::error::{Error, Result};
 use crate::validation;
 
@@ -157,55 +157,6 @@ pub struct BatchParsedArgs {
     pub archive_tool: ArchiveTool,
     pub fo4_dir: Option<PathBuf>,
     pub plugin: Option<String>,
-}
-
-impl Cli {
-    /// Build a [`ProjectConfig`] after Fallout 4 directory resolution (CLI plugin required).
-    pub fn into_project_config(self, fallout4_dir: PathBuf) -> Result<ProjectConfig> {
-        let plugin_name = self
-            .plugin
-            .clone()
-            .ok_or_else(|| Error::Other("plugin name required in non-interactive mode".into()))?;
-        Self::project_config(
-            fallout4_dir,
-            self.build_mode(),
-            self.archive_tool(),
-            PluginIdentity::parse(&plugin_name),
-            true,
-            self.resume_from,
-            self.fo4_dir.as_ref().map(|d| d.join("Data")),
-            None,
-            None,
-        )
-    }
-
-    /// Shared config builder for CLI and interactive flows.
-    #[allow(clippy::too_many_arguments)]
-    pub fn project_config(
-        fallout4_dir: PathBuf,
-        build_mode: BuildMode,
-        archive_tool: ArchiveTool,
-        plugin: PluginIdentity,
-        non_interactive: bool,
-        resume_from: Option<WorkflowStep>,
-        xedit_data_dir: Option<PathBuf>,
-        fo4edit_path: Option<PathBuf>,
-        ck_log_path: Option<PathBuf>,
-    ) -> Result<ProjectConfig> {
-        validation::validate_plugin(&plugin, build_mode)?;
-
-        Ok(ProjectConfig {
-            build_mode,
-            archive_tool,
-            fallout4_dir,
-            plugin,
-            non_interactive,
-            resume_from,
-            fo4edit_path,
-            xedit_data_dir,
-            ck_log_path,
-        })
-    }
 }
 
 #[cfg(test)]
