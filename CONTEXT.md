@@ -15,3 +15,7 @@ _Avoid_: Session, context, engine run
 **Workflow Plan**:
 The ordered workflow steps for a Workflow Run, including which steps belong to the selected build mode, where resume starts, and which planned steps are currently runnable.
 _Avoid_: Step list, runner capability, dry-run steps
+
+**Workflow Operation**:
+The domain behavior for one planned workflow step: its preconditions, external-tool action, postconditions, warnings, cleanup, and mode-specific rules. It is the step's build meaning before any specific process, filesystem, prompt, or timing adapter is chosen.
+_Avoid_: Tool runner step, step helper, command wrapper

@@ -68,7 +68,7 @@ cargo run -- --dry-run --filtered MyMod
 
 ### Non-interactive (scaffold)
 
-Validates config and walks the workflow engine with stub tool runners (no CK/FO4Edit yet):
+Validates config and executes the currently implemented Workflow Operations:
 
 ```bash
 cargo run --release -- MyMod.esp

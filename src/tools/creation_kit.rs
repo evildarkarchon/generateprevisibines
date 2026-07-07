@@ -2,15 +2,14 @@
 
 use std::process::Command;
 
-use crate::config::ProjectConfig;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::logging;
 use crate::timing::{self, MO2_DELAY_AFTER_CK_SECS};
 use crate::tools::ToolContext;
 use crate::tools::dll::DllGuard;
 
 /// Creation Kit command-line operations from the batch workflow.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CkOperation {
     GeneratePrecombined,
     CompressPsg,
@@ -39,7 +38,6 @@ impl CreationKitOps {
     pub fn run(
         &self,
         ctx: &ToolContext,
-        config: &ProjectConfig,
         operation: CkOperation,
         plugin_file: &str,
         qualifiers: &str,
@@ -65,15 +63,10 @@ impl CreationKitOps {
             logging::append_ck_log(session, ck_log)?;
         }
 
-        let combined = config.fo4edit_data_dir().join("CombinedObjects.esp");
-        if !combined.is_file() {
-            return Err(Error::MissingCombinedObjects);
-        }
-
         if !status.success() {
             tracing::warn!(
                 code = ?status.code(),
-                "Creation Kit exited with non-zero status but CombinedObjects.esp exists"
+                "Creation Kit exited with non-zero status; workflow operation postconditions determine success"
             );
         }
 
@@ -83,11 +76,9 @@ impl CreationKitOps {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::*;
     use crate::checks::precombine_qualifiers;
-    use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
+    use crate::config::BuildMode;
 
     #[test]
     fn qualifier_strings_match_batch() {
@@ -101,26 +92,5 @@ mod tests {
             CkOperation::GeneratePrecombined.flag(),
             "GeneratePrecombined"
         );
-    }
-
-    fn sample_config() -> ProjectConfig {
-        ProjectConfig {
-            build_mode: BuildMode::Clean,
-            archive_tool: ArchiveTool::Archive2,
-            fallout4_dir: Path::new("C:\\Fallout4").to_path_buf(),
-            plugin: PluginIdentity::parse("TestMod"),
-            non_interactive: true,
-            resume_from: None,
-            fo4edit_path: None,
-            xedit_data_dir: None,
-            ck_log_path: None,
-        }
-    }
-
-    #[test]
-    fn combined_objects_path_under_data() {
-        let config = sample_config();
-        let combined = config.fo4edit_data_dir().join("CombinedObjects.esp");
-        assert!(combined.to_string_lossy().contains("CombinedObjects.esp"));
     }
 }

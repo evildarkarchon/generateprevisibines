@@ -8,7 +8,7 @@ use crate::config::{BuildMode, PluginIdentity, ProjectConfig, WorkflowStep};
 use crate::error::{Error, Result};
 use crate::timing::{self, MO2_DELAY_AFTER_SEED_COPY_SECS};
 use crate::validation;
-use crate::workflow::WorkflowEngine;
+use crate::workflow;
 
 /// Result of prompting when the target plugin already exists (batch `:CheckPluginExists`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,7 +147,7 @@ pub fn prompt_existing_plugin_action(plugin_file: &str) -> Result<ExistingPlugin
 pub fn prompt_resume_step(build_mode: BuildMode) -> Result<Option<WorkflowStep>> {
     println!();
     println!("Choose which step to resume from:");
-    WorkflowEngine::<crate::tools::NoopRunner>::print_resume_menu(build_mode);
+    workflow::print_resume_menu(build_mode);
     println!("[0] Re-enter plugin name");
 
     loop {
@@ -161,21 +161,15 @@ pub fn prompt_resume_step(build_mode: BuildMode) -> Result<Option<WorkflowStep>>
     }
 }
 
-/// Interactive Y/N to delete existing precombined meshes (`:RePrecomb`).
-pub fn prompt_clear_precombined(precombined_dir: &Path) -> Result<bool> {
-    let remove = Confirm::new()
+/// Interactive Y/N confirmation for clearing existing precombined meshes (`:RePrecomb`).
+pub fn confirm_clear_precombined(precombined_dir: &Path) -> Result<bool> {
+    Ok(Confirm::new()
         .with_prompt(format!(
             "Precombined meshes exist in {}. Delete them before regenerating?",
             precombined_dir.display()
         ))
         .default(true)
-        .interact()?;
-
-    if remove && precombined_dir.is_dir() {
-        std::fs::remove_dir_all(precombined_dir)?;
-    }
-
-    Ok(remove)
+        .interact()?)
 }
 
 /// Orchestrate plugin existence, seed copy, archive guard, and resume prompts.

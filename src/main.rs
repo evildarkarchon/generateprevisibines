@@ -9,7 +9,7 @@ use generateprevisibines::{
     cli::Cli,
     discovery, interactive,
     run::{RunDiagnostic, WorkflowRequest, WorkflowRun},
-    tools::{ProductionRunner, ScaffoldRunner},
+    workflow::operations::{ProductionOperationAdapters, WorkflowOperationExecutor},
     workflow::{self, WorkflowPlan},
 };
 use tracing_subscriber::EnvFilter;
@@ -54,7 +54,7 @@ fn run() -> generateprevisibines::Result<()> {
 
     let workflow_run = WorkflowRun::prepare(&request, &exe_dir, tools)?;
     emit_run_diagnostics(workflow_run.diagnostics());
-    workflow_run.execute(ProductionRunner::new())?;
+    workflow_run.execute()?;
 
     println!(
         "Build step(s) complete. Log: {}",
@@ -135,10 +135,10 @@ fn run_dry_run(cli: &Cli, fallout4_dir: PathBuf) {
     let mode = cli.build_mode();
     println!("Build mode: {}", mode.as_str());
     println!("Archiver: {}", cli.archive_tool().program_name());
-    workflow::WorkflowEngine::<ScaffoldRunner>::print_resume_menu(mode);
+    workflow::print_resume_menu(mode);
 
     let config = dry_run_config(cli, fallout4_dir);
-    let capability = ProductionRunner::capability();
+    let capability = WorkflowOperationExecutor::<ProductionOperationAdapters>::capability();
     let steps = WorkflowPlan::planned_steps_for_config(&config);
     let runnable = capability.filter_steps(&steps);
 

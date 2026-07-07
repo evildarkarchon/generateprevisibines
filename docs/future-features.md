@@ -35,7 +35,7 @@ These are required before claiming the Rust binary replaces the batch script.
 Ordered slices recommended for parity work:
 
 1. ~~**Interactive plugin flow**~~ — implemented in `interactive` (`dialoguer` prompts, seed copy + 5s MO2 delay, Y/N/C, `:GetStep` resume).
-2. ~~**Step 1 — Generate precombines**~~ — implemented in `tools/precomb`, `tools/creation_kit`, `checks` (preamble/post, CK run + 10s delay). Steps 2–8 still fail fast via `ProductionRunner`.
+2. ~~**Step 1 — Generate precombines**~~ — implemented through the Workflow Operation seam with `tools/creation_kit` and `checks` (preamble/post, CK run + 10s delay). Steps 2–8 still fail fast through operation capability.
 3. **Step 2 — Merge CombinedObjects** — FO4Edit `Batch_FO4MergeCombinedObjectsAndCheck.pas`, warning on `Error:` in unattended log.
 4. **Step 3 — Archive precombines** — create `{plugin} - Main.ba2`, delete precombined folder when using Archive2.
 5. **Steps 4–5 — PSG / CDX** (clean only) — `CompressPSG`, `BuildCDX`, delete intermediate `.psg`.
@@ -44,7 +44,7 @@ Ordered slices recommended for parity work:
 8. **Step 8 — Add previs to archive** — `AddToArchive` with extract-repack path for Archive2.
 9. **Finish / cleanup** — list output files, optional delete CombinedObjects.esp / Previs.esp, restore DLLs.
 
-Each slice should wire through `WorkflowEngine` and a real `ToolRunner` implementation (not `ScaffoldRunner`).
+Each slice should wire through the Workflow Operation seam and real tool adapters.
 
 ---
 
@@ -65,7 +65,7 @@ Each slice should wire through `WorkflowEngine` and a real `ToolRunner` implemen
 |-------|--------|
 | Unit tests | CLI parsing, plugin validation, CKPE parsing, workflow step lists (existing) |
 | Fixture tests | Sample CKPE `.ini`/`.toml` files, mock `Edit Scripts` with version strings |
-| Mock `ToolRunner` | Assert step order and arguments without real CK/FO4Edit |
+| Mock operation adapters | Assert step order and arguments without real CK/FO4Edit |
 | Integration | Manual checklist on Windows + MO2 + real plugin (document in README) |
 
 Manual integration checklist (minimum):
@@ -141,7 +141,8 @@ src/
   validation.rs     # plugin + CKPE + xEdit scripts
   workflow.rs       # step planning + engine
   logging.rs        # session log + CK log append
-  tools/            # CK (step 1), DLL guard, precomb runner; FO4Edit/archive stubs
+  workflow/         # Workflow Operation executor and operation tests
+  tools/            # CK adapter, DLL guard, FO4Edit/archive stubs
   error.rs
 ```
 

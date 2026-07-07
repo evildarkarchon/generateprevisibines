@@ -9,9 +9,12 @@ use crate::config::{ArchiveTool, BuildMode, PluginIdentity, ProjectConfig, Workf
 use crate::discovery::{self, ToolPaths};
 use crate::error::{Error, Result};
 use crate::logging;
-use crate::tools::{ProductionRunner, ToolContext, ToolRunner};
+use crate::tools::ToolContext;
 use crate::validation;
-use crate::workflow::{WorkflowEngine, WorkflowPlan};
+use crate::workflow::WorkflowPlan;
+use crate::workflow::operations::{
+    OperationAdapters, ProductionOperationAdapters, WorkflowOperationExecutor,
+};
 
 /// User intent before tool paths, CKPE configuration, logs, or runnable steps are resolved.
 #[derive(Debug, Clone)]
@@ -77,7 +80,7 @@ pub enum RunDiagnostic {
     LaterStepsNotImplemented { skipped: usize, planned: usize },
 }
 
-/// A prepared build attempt ready to execute through a [`ToolRunner`] adapter.
+/// A prepared build attempt ready to execute through Workflow Operations.
 #[derive(Debug, Clone)]
 pub struct WorkflowRun {
     config: ProjectConfig,
@@ -132,7 +135,10 @@ impl WorkflowRun {
 
         validate_xedit_scripts_when_available(exe_dir, &tools)?;
 
-        let plan = WorkflowPlan::new(&config, ProductionRunner::capability())?;
+        let plan = WorkflowPlan::new(
+            &config,
+            WorkflowOperationExecutor::<ProductionOperationAdapters>::capability(),
+        )?;
         if plan.is_partial_due_to_capability() {
             diagnostics.push(RunDiagnostic::LaterStepsNotImplemented {
                 skipped: plan.skipped_unrunnable_count(),
@@ -171,10 +177,17 @@ impl WorkflowRun {
         })
     }
 
-    /// Execute the runnable subset of the prepared workflow through the supplied adapter.
-    pub fn execute<R: ToolRunner>(&self, runner: R) -> Result<()> {
-        let engine = WorkflowEngine::new(runner);
-        engine.run_steps(self.plan.runnable_steps(), &self.config, &self.ctx)
+    /// Execute the runnable subset of the prepared workflow through production operations.
+    pub fn execute(&self) -> Result<()> {
+        self.execute_with(&WorkflowOperationExecutor::production())
+    }
+
+    /// Execute the runnable subset of the prepared workflow through supplied operations.
+    pub fn execute_with<A: OperationAdapters>(
+        &self,
+        executor: &WorkflowOperationExecutor<A>,
+    ) -> Result<()> {
+        executor.run_steps(self.plan.runnable_steps(), self)
     }
 
     /// Diagnostics collected while preparing the run.
@@ -195,7 +208,7 @@ impl WorkflowRun {
         self.plan.planned_steps()
     }
 
-    /// Steps that will be executed by the current runner capability.
+    /// Steps that will be executed by the current operation capability.
     #[must_use]
     pub fn runnable_steps(&self) -> &[WorkflowStep] {
         self.plan.runnable_steps()
@@ -211,6 +224,11 @@ impl WorkflowRun {
     #[must_use]
     pub const fn config(&self) -> &ProjectConfig {
         &self.config
+    }
+
+    /// Tool invocation context for Workflow Operation adapters.
+    pub(crate) const fn tool_context(&self) -> &ToolContext {
+        &self.ctx
     }
 }
 
