@@ -13,6 +13,7 @@ use crate::tools::{CkOperation, CreationKitOps};
 use crate::workflow::OperationCapability;
 
 mod generate_precombines;
+mod precombine_workspace;
 
 const PRODUCTION_RUNNABLE_STEPS: &[WorkflowStep] = &[WorkflowStep::GeneratePrecombines];
 
