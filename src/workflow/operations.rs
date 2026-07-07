@@ -66,6 +66,7 @@ impl OperationAdapters for ProductionOperationAdapters {
 #[derive(Debug)]
 pub struct WorkflowOperationExecutor<A> {
     adapters: A,
+    capability: OperationCapability,
 }
 
 impl WorkflowOperationExecutor<ProductionOperationAdapters> {
@@ -80,12 +81,30 @@ impl<A: OperationAdapters> WorkflowOperationExecutor<A> {
     /// Create an executor backed by the provided adapters.
     #[must_use]
     pub const fn new(adapters: A) -> Self {
-        Self { adapters }
+        Self::new_with_capability(
+            adapters,
+            OperationCapability::new(PRODUCTION_RUNNABLE_STEPS),
+        )
+    }
+
+    /// Create an executor backed by the provided adapters and explicit operation capability.
+    #[must_use]
+    pub const fn new_with_capability(adapters: A, capability: OperationCapability) -> Self {
+        Self {
+            adapters,
+            capability,
+        }
+    }
+
+    /// Steps this operation executor can run.
+    #[must_use]
+    pub const fn capability(&self) -> OperationCapability {
+        self.capability
     }
 
     /// Steps implemented by the production operation executor.
     #[must_use]
-    pub const fn capability() -> OperationCapability {
+    pub const fn production_capability() -> OperationCapability {
         OperationCapability::new(PRODUCTION_RUNNABLE_STEPS)
     }
 
@@ -240,7 +259,8 @@ mod tests {
 
     #[test]
     fn production_capability_starts_with_step_one_only() {
-        let capability = WorkflowOperationExecutor::<ProductionOperationAdapters>::capability();
+        let capability =
+            WorkflowOperationExecutor::<ProductionOperationAdapters>::production_capability();
         assert_eq!(
             capability.runnable_steps(),
             &[WorkflowStep::GeneratePrecombines]

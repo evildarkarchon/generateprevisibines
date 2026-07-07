@@ -44,7 +44,7 @@ fn run() -> generateprevisibines::Result<()> {
 
     if cli.dry_run {
         emit_run_diagnostics(&WorkflowRun::tool_diagnostics(&tools));
-        run_dry_run(&cli, fallout4_dir);
+        run_dry_run(&cli);
         return Ok(());
     }
 
@@ -131,16 +131,22 @@ fn resolve_request(
     }
 }
 
-fn run_dry_run(cli: &Cli, fallout4_dir: PathBuf) {
+fn run_dry_run(cli: &Cli) {
     let mode = cli.build_mode();
     println!("Build mode: {}", mode.as_str());
     println!("Archiver: {}", cli.archive_tool().program_name());
     workflow::print_resume_menu(mode);
 
-    let config = dry_run_config(cli, fallout4_dir);
-    let capability = WorkflowOperationExecutor::<ProductionOperationAdapters>::capability();
-    let steps = WorkflowPlan::planned_steps_for_config(&config);
-    let runnable = capability.filter_steps(&steps);
+    let capability =
+        WorkflowOperationExecutor::<ProductionOperationAdapters>::production_capability();
+    let plan = WorkflowPlan::new(mode, cli.resume_from, capability);
+    let steps = plan.as_ref().map_or_else(
+        |_| WorkflowPlan::steps_for(mode, cli.resume_from),
+        |plan| plan.planned_steps().to_vec(),
+    );
+    let runnable = plan
+        .as_ref()
+        .map_or_else(|_| Vec::new(), |plan| plan.runnable_steps().to_vec());
 
     println!("\nPlanned steps:");
     for step in &steps {
@@ -163,31 +169,11 @@ fn run_dry_run(cli: &Cli, fallout4_dir: PathBuf) {
             steps.len()
         );
     }
-    if let Err(err) = WorkflowPlan::new(&config, capability) {
+    if let Err(err) = plan {
         println!("\nNote: {err}");
     }
 
     println!("\nDry run — external tools are not invoked.");
-}
-
-fn dry_run_config(cli: &Cli, fallout4_dir: PathBuf) -> generateprevisibines::ProjectConfig {
-    use generateprevisibines::config::PluginIdentity;
-
-    let plugin_name = cli.plugin.as_deref().unwrap_or("ExampleMod");
-    let plugin = PluginIdentity::parse(plugin_name);
-    let xedit_data_dir = cli.fo4_dir.as_ref().map(|d| d.join("Data"));
-
-    generateprevisibines::ProjectConfig {
-        build_mode: cli.build_mode(),
-        archive_tool: cli.archive_tool(),
-        fallout4_dir,
-        plugin,
-        non_interactive: cli.plugin.is_some(),
-        resume_from: cli.resume_from,
-        fo4edit_path: None,
-        xedit_data_dir,
-        ck_log_path: None,
-    }
 }
 
 fn print_banner() {

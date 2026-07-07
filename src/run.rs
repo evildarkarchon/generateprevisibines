@@ -11,10 +11,10 @@ use crate::error::{Error, Result};
 use crate::logging;
 use crate::tools::ToolContext;
 use crate::validation;
-use crate::workflow::WorkflowPlan;
 use crate::workflow::operations::{
     OperationAdapters, ProductionOperationAdapters, WorkflowOperationExecutor,
 };
+use crate::workflow::{OperationCapability, WorkflowPlan};
 
 /// User intent before tool paths, CKPE configuration, logs, or runnable steps are resolved.
 #[derive(Debug, Clone)]
@@ -116,8 +116,23 @@ impl WorkflowRun {
         diagnostics
     }
 
-    /// Prepare a workflow run by validating environment facts and building executable state.
+    /// Prepare a workflow run by validating environment facts against production capability.
     pub fn prepare(request: &WorkflowRequest, exe_dir: &Path, tools: ToolPaths) -> Result<Self> {
+        Self::prepare_with_capability(
+            request,
+            exe_dir,
+            tools,
+            WorkflowOperationExecutor::<ProductionOperationAdapters>::production_capability(),
+        )
+    }
+
+    /// Prepare a workflow run by validating environment facts and building executable state.
+    pub fn prepare_with_capability(
+        request: &WorkflowRequest,
+        exe_dir: &Path,
+        tools: ToolPaths,
+        capability: OperationCapability,
+    ) -> Result<Self> {
         let mut diagnostics = Self::tool_diagnostics(&tools);
         let fallout4_dir = Self::fallout4_dir(&tools)?;
         let ckpe = load_ckpe_installation(&fallout4_dir)?;
@@ -135,10 +150,7 @@ impl WorkflowRun {
 
         validate_xedit_scripts_when_available(exe_dir, &tools)?;
 
-        let plan = WorkflowPlan::new(
-            &config,
-            WorkflowOperationExecutor::<ProductionOperationAdapters>::capability(),
-        )?;
+        let plan = WorkflowPlan::new(config.build_mode, config.resume_from, capability)?;
         if plan.is_partial_due_to_capability() {
             diagnostics.push(RunDiagnostic::LaterStepsNotImplemented {
                 skipped: plan.skipped_unrunnable_count(),
@@ -187,6 +199,13 @@ impl WorkflowRun {
         &self,
         executor: &WorkflowOperationExecutor<A>,
     ) -> Result<()> {
+        if executor.capability() != self.plan.capability() {
+            return Err(Error::OperationCapabilityMismatch {
+                planned: capability_step_numbers(self.plan.capability()),
+                executor: capability_step_numbers(executor.capability()),
+            });
+        }
+
         executor.run_steps(self.plan.runnable_steps(), self)
     }
 
@@ -230,6 +249,14 @@ impl WorkflowRun {
     pub(crate) const fn tool_context(&self) -> &ToolContext {
         &self.ctx
     }
+}
+
+fn capability_step_numbers(capability: OperationCapability) -> Vec<u8> {
+    capability
+        .runnable_steps()
+        .iter()
+        .map(|step| step.number())
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -282,8 +309,28 @@ fn validate_xedit_scripts_when_available(exe_dir: &Path, tools: &ToolPaths) -> R
 mod tests {
     use super::*;
     use crate::config::PluginIdentity;
+    use crate::tools::CkOperation;
     use std::fs;
     use tempfile::tempdir;
+
+    #[derive(Debug)]
+    struct NoopAdapters;
+
+    impl OperationAdapters for NoopAdapters {
+        fn run_creation_kit(
+            &self,
+            _run: &WorkflowRun,
+            _operation: CkOperation,
+            _plugin_file: &str,
+            _qualifiers: &str,
+        ) -> Result<()> {
+            unreachable!("capability mismatch should stop before execution")
+        }
+
+        fn confirm_clear_precombined(&self, _precombined_dir: &Path) -> Result<bool> {
+            unreachable!("capability mismatch should stop before execution")
+        }
+    }
 
     #[test]
     fn request_to_project_config_uses_fo4_override_for_xedit_data() {
@@ -347,5 +394,45 @@ mod tests {
             RunDiagnostic::LaterStepsNotImplemented { .. }
         )));
         assert_eq!(run.config().ck_log_path, Some(fo4.join("CK.log")));
+    }
+
+    #[test]
+    fn execute_with_rejects_executor_capability_mismatch() {
+        let dir = tempdir().unwrap();
+        let fo4 = dir.path().join("Fallout4");
+        fs::create_dir_all(&fo4).unwrap();
+        fs::write(fo4.join("CreationKit.exe"), b"").unwrap();
+        fs::write(
+            fo4.join("fallout4_test.ini"),
+            "[CreationKit]\nBSHandleRefObjectPatch=true\n[CreationKit_Log]\nOutputFile=CK.log\n",
+        )
+        .unwrap();
+
+        let tools = ToolPaths {
+            fallout4_dir: Some(fo4),
+            creation_kit: Some(dir.path().join("Fallout4").join("CreationKit.exe")),
+            ..ToolPaths::default()
+        };
+        let request = WorkflowRequest::new(
+            BuildMode::Clean,
+            ArchiveTool::Archive2,
+            PluginIdentity::parse("MyMod"),
+            true,
+            None,
+            None,
+        );
+        let run = WorkflowRun::prepare(&request, dir.path(), tools).unwrap();
+        let executor = WorkflowOperationExecutor::new_with_capability(
+            NoopAdapters,
+            OperationCapability::new(&[]),
+        );
+
+        let err = run.execute_with(&executor).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::OperationCapabilityMismatch { planned, executor }
+                if planned == vec![1] && executor.is_empty()
+        ));
     }
 }

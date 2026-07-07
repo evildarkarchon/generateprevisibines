@@ -68,6 +68,11 @@ pub enum Error {
     #[error("workflow step {0} is not implemented yet")]
     StepNotImplemented(u8),
 
+    #[error(
+        "workflow operation capability mismatch: run planned for steps {planned:?}, executor supports {executor:?}"
+    )]
+    OperationCapabilityMismatch { planned: Vec<u8>, executor: Vec<u8> },
+
     #[error("{0}")]
     Other(String),
 }
