@@ -3,7 +3,6 @@
 //! External tool automation is intentionally behind wrapper traits so workflow logic
 //! can be unit-tested without Creation Kit / FO4Edit installed.
 
-pub mod checks;
 pub mod cli;
 pub mod config;
 pub mod discovery;

@@ -1,15 +1,87 @@
-//! Precombine / CK output checks shared by Step 1 preamble and post-run validation.
+//! Generate Precombines Operation.
+//!
+//! This module owns Step 1 domain flow: preconditions, CK action selection,
+//! postconditions, and cleanup rules before any external-tool adapter details.
 
 use std::path::{Path, PathBuf};
 
-use crate::config::{BuildMode, ProjectConfig};
+use crate::config::{BuildMode, WorkflowStep};
 use crate::error::{Error, Result};
+use crate::run::WorkflowRun;
+use crate::tools::CkOperation;
+
+use super::OperationAdapters;
 
 const HANDLE_ARRAY_MARKER: &str = "DEFAULT: OUT OF HANDLE ARRAY ENTRIES";
 
-/// CK `-GeneratePrecombined` qualifier string (batch lines 249–253).
-#[must_use]
-pub fn precombine_qualifiers(build_mode: BuildMode) -> &'static str {
+/// Run the Step 1 Generate Precombines Operation for a prepared Workflow Run.
+pub(super) fn run<A: OperationAdapters>(run: &WorkflowRun, adapters: &A) -> Result<()> {
+    let config = run.config();
+    maybe_clear_precombined_on_resume(run, adapters)?;
+
+    run_precomb_preamble(run)?;
+
+    let qualifiers = precombine_qualifiers(config.build_mode);
+    adapters.run_creation_kit(
+        run,
+        CkOperation::GeneratePrecombined,
+        &config.plugin.file_name,
+        qualifiers,
+    )?;
+
+    let combined = config.fo4edit_data_dir().join("CombinedObjects.esp");
+    if !combined.is_file() {
+        return Err(Error::MissingCombinedObjects);
+    }
+
+    let ck_log = run
+        .tool_context()
+        .ck_log_path
+        .clone()
+        .ok_or_else(|| Error::Other("CK log path not configured".into()))?;
+
+    run_post_precomb_checks(run, &ck_log)?;
+
+    Ok(())
+}
+
+fn maybe_clear_precombined_on_resume<A: OperationAdapters>(
+    run: &WorkflowRun,
+    adapters: &A,
+) -> Result<()> {
+    let config = run.config();
+    let resume_step1 = config
+        .resume_from
+        .is_none_or(|s| s == WorkflowStep::GeneratePrecombines);
+
+    if !resume_step1 {
+        return Ok(());
+    }
+
+    let precombined = config.precombined_dir();
+    if !has_precombined_nifs(&precombined) {
+        return Ok(());
+    }
+
+    if config.non_interactive {
+        return Err(Error::PrecombinedMeshesExist);
+    }
+
+    if !adapters.confirm_clear_precombined(&precombined)? {
+        return Err(Error::Other(
+            "precombined meshes not cleared - choose another resume step".into(),
+        ));
+    }
+
+    if precombined.is_dir() {
+        std::fs::remove_dir_all(precombined)?;
+    }
+
+    Ok(())
+}
+
+/// CK `-GeneratePrecombined` qualifier string (batch lines 249-253).
+fn precombine_qualifiers(build_mode: BuildMode) -> &'static str {
     if build_mode == BuildMode::Clean {
         "clean all"
     } else {
@@ -18,8 +90,7 @@ pub fn precombine_qualifiers(build_mode: BuildMode) -> &'static str {
 }
 
 /// Whether any `.nif` exists under `meshes/precombined` (recursive).
-#[must_use]
-pub fn has_precombined_nifs(precombined_dir: &Path) -> bool {
+fn has_precombined_nifs(precombined_dir: &Path) -> bool {
     find_first_precombined_nif(precombined_dir).is_some()
 }
 
@@ -42,8 +113,7 @@ fn find_first_precombined_nif(dir: &Path) -> Option<PathBuf> {
 }
 
 /// Whether any `.uvd` exists in `Data/vis`.
-#[must_use]
-pub fn has_vis_uvd_files(vis_dir: &Path) -> bool {
+fn has_vis_uvd_files(vis_dir: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(vis_dir) else {
         return false;
     };
@@ -56,8 +126,7 @@ pub fn has_vis_uvd_files(vis_dir: &Path) -> bool {
 }
 
 /// Scan CK log for handle-array exhaustion (batch `findstr` on line 258).
-#[must_use]
-pub fn ck_log_has_handle_array_error(log_path: &Path) -> bool {
+fn ck_log_has_handle_array_error(log_path: &Path) -> bool {
     let Ok(contents) = std::fs::read_to_string(log_path) else {
         return false;
     };
@@ -65,7 +134,8 @@ pub fn ck_log_has_handle_array_error(log_path: &Path) -> bool {
 }
 
 /// Preamble checks before launching CK for Step 1 (`:Precomb`).
-pub fn run_precomb_preamble(config: &ProjectConfig) -> Result<()> {
+fn run_precomb_preamble(run: &WorkflowRun) -> Result<()> {
+    let config = run.config();
     let data = config.fo4edit_data_dir();
 
     if config.plugin_archive_path().is_file() {
@@ -94,7 +164,8 @@ pub fn run_precomb_preamble(config: &ProjectConfig) -> Result<()> {
 }
 
 /// Post-CK validation (`:Precomb2`).
-pub fn run_post_precomb_checks(config: &ProjectConfig, ck_log_path: &Path) -> Result<()> {
+fn run_post_precomb_checks(run: &WorkflowRun, ck_log_path: &Path) -> Result<()> {
+    let config = run.config();
     let data = config.fo4edit_data_dir();
 
     if config.build_mode == BuildMode::Clean {
@@ -113,45 +184,4 @@ pub fn run_post_precomb_checks(config: &ProjectConfig, ck_log_path: &Path) -> Re
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use tempfile::tempdir;
-
-    #[test]
-    fn qualifiers_match_build_mode() {
-        assert_eq!(precombine_qualifiers(BuildMode::Clean), "clean all");
-        assert_eq!(precombine_qualifiers(BuildMode::Filtered), "filtered all");
-        assert_eq!(precombine_qualifiers(BuildMode::Xbox), "filtered all");
-    }
-
-    #[test]
-    fn detects_handle_array_marker() {
-        let dir = tempdir().unwrap();
-        let log = dir.path().join("CK.log");
-        fs::write(&log, "ok\n").unwrap();
-        assert!(!ck_log_has_handle_array_error(&log));
-
-        fs::write(&log, format!("line\n{HANDLE_ARRAY_MARKER}\n")).unwrap();
-        assert!(ck_log_has_handle_array_error(&log));
-    }
-
-    #[test]
-    fn finds_nested_precombined_nif() {
-        let dir = tempdir().unwrap();
-        let mesh = dir.path().join("sub").join("test.nif");
-        fs::create_dir_all(mesh.parent().unwrap()).unwrap();
-        fs::write(mesh, b"").unwrap();
-        assert!(has_precombined_nifs(dir.path()));
-    }
-
-    #[test]
-    fn detects_uvd_in_vis() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("cell.uvd"), b"").unwrap();
-        assert!(has_vis_uvd_files(dir.path()));
-    }
 }

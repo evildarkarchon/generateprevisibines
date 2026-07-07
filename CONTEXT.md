@@ -19,3 +19,7 @@ _Avoid_: Step list, runner capability, dry-run steps
 **Workflow Operation**:
 The domain behavior for one planned workflow step: its preconditions, external-tool action, postconditions, warnings, cleanup, and mode-specific rules. It is the step's build meaning before any specific process, filesystem, prompt, or timing adapter is chosen.
 _Avoid_: Tool runner step, step helper, command wrapper
+
+**Generate Precombines Operation**:
+The Workflow Operation for Step 1, where a Workflow Run generates precombined meshes and prepares the precombine artifacts required by later steps.
+_Avoid_: Step 1 checks, precombine helper, CK precombine wrapper

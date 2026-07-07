@@ -77,14 +77,6 @@ impl CreationKitOps {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checks::precombine_qualifiers;
-    use crate::config::BuildMode;
-
-    #[test]
-    fn qualifier_strings_match_batch() {
-        assert_eq!(precombine_qualifiers(BuildMode::Clean), "clean all");
-        assert_eq!(precombine_qualifiers(BuildMode::Filtered), "filtered all");
-    }
 
     #[test]
     fn ck_flag_format() {

@@ -5,13 +5,14 @@
 
 use std::path::Path;
 
-use crate::checks::{self, has_precombined_nifs};
 use crate::config::WorkflowStep;
 use crate::error::{Error, Result};
 use crate::interactive;
 use crate::run::WorkflowRun;
 use crate::tools::{CkOperation, CreationKitOps};
 use crate::workflow::OperationCapability;
+
+mod generate_precombines;
 
 const PRODUCTION_RUNNABLE_STEPS: &[WorkflowStep] = &[WorkflowStep::GeneratePrecombines];
 
@@ -100,71 +101,9 @@ impl<A: OperationAdapters> WorkflowOperationExecutor<A> {
     pub fn run_step(&self, step: WorkflowStep, run: &WorkflowRun) -> Result<()> {
         tracing::info!(step = step.number(), "{}", step.label());
         match step {
-            WorkflowStep::GeneratePrecombines => self.run_generate_precombines(run),
+            WorkflowStep::GeneratePrecombines => generate_precombines::run(run, &self.adapters),
             _ => Err(Error::StepNotImplemented(step.number())),
         }
-    }
-
-    fn run_generate_precombines(&self, run: &WorkflowRun) -> Result<()> {
-        let config = run.config();
-        self.maybe_clear_precombined_on_resume(run)?;
-
-        checks::run_precomb_preamble(config)?;
-
-        let qualifiers = checks::precombine_qualifiers(config.build_mode);
-        self.adapters.run_creation_kit(
-            run,
-            CkOperation::GeneratePrecombined,
-            &config.plugin.file_name,
-            qualifiers,
-        )?;
-
-        let combined = config.fo4edit_data_dir().join("CombinedObjects.esp");
-        if !combined.is_file() {
-            return Err(Error::MissingCombinedObjects);
-        }
-
-        let ck_log = run
-            .tool_context()
-            .ck_log_path
-            .clone()
-            .ok_or_else(|| Error::Other("CK log path not configured".into()))?;
-
-        checks::run_post_precomb_checks(config, &ck_log)?;
-
-        Ok(())
-    }
-
-    fn maybe_clear_precombined_on_resume(&self, run: &WorkflowRun) -> Result<()> {
-        let config = run.config();
-        let resume_step1 = config
-            .resume_from
-            .is_none_or(|s| s == WorkflowStep::GeneratePrecombines);
-
-        if !resume_step1 {
-            return Ok(());
-        }
-
-        let precombined = config.precombined_dir();
-        if !has_precombined_nifs(&precombined) {
-            return Ok(());
-        }
-
-        if config.non_interactive {
-            return Err(Error::PrecombinedMeshesExist);
-        }
-
-        if !self.adapters.confirm_clear_precombined(&precombined)? {
-            return Err(Error::Other(
-                "precombined meshes not cleared - choose another resume step".into(),
-            ));
-        }
-
-        if precombined.is_dir() {
-            std::fs::remove_dir_all(precombined)?;
-        }
-
-        Ok(())
     }
 }
 
@@ -185,6 +124,9 @@ mod tests {
         clear_prompts: Cell<usize>,
         clear_response: bool,
         create_combined: bool,
+        create_precombined_mesh: bool,
+        create_psg: bool,
+        ck_log_contents: &'static [u8],
     }
 
     impl RecordingAdapters {
@@ -194,7 +136,25 @@ mod tests {
                 clear_prompts: Cell::new(0),
                 clear_response: true,
                 create_combined,
+                create_precombined_mesh: true,
+                create_psg: true,
+                ck_log_contents: b"ok\n",
             }
+        }
+
+        fn without_precombined_mesh(mut self) -> Self {
+            self.create_precombined_mesh = false;
+            self
+        }
+
+        fn without_psg(mut self) -> Self {
+            self.create_psg = false;
+            self
+        }
+
+        fn with_ck_log_contents(mut self, contents: &'static [u8]) -> Self {
+            self.ck_log_contents = contents;
+            self
         }
     }
 
@@ -218,11 +178,13 @@ mod tests {
                 fs::write(data.join("CombinedObjects.esp"), b"combined")?;
             }
 
-            let precombined_mesh = run.config().precombined_dir().join("test").join("mesh.nif");
-            fs::create_dir_all(precombined_mesh.parent().unwrap())?;
-            fs::write(precombined_mesh, b"nif")?;
+            if self.create_precombined_mesh {
+                let precombined_mesh = run.config().precombined_dir().join("test").join("mesh.nif");
+                fs::create_dir_all(precombined_mesh.parent().unwrap())?;
+                fs::write(precombined_mesh, b"nif")?;
+            }
 
-            if run.config().build_mode == BuildMode::Clean {
+            if run.config().build_mode == BuildMode::Clean && self.create_psg {
                 fs::write(
                     data.join(format!("{} - Geometry.psg", run.config().plugin.base_name)),
                     b"psg",
@@ -230,7 +192,7 @@ mod tests {
             }
 
             if let Some(ck_log) = &run.tool_context().ck_log_path {
-                fs::write(ck_log, b"ok\n")?;
+                fs::write(ck_log, self.ck_log_contents)?;
             }
 
             Ok(())
@@ -310,6 +272,50 @@ mod tests {
     }
 
     #[test]
+    fn step_one_uses_filtered_qualifiers_for_filtered_mode() {
+        let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
+        let adapters = RecordingAdapters::new(true);
+        let executor = WorkflowOperationExecutor::new(adapters);
+
+        executor
+            .run_step(WorkflowStep::GeneratePrecombines, &run)
+            .unwrap();
+
+        let calls = executor.adapters.ck_calls.borrow();
+        assert_eq!(calls[0].2, "filtered all");
+    }
+
+    #[test]
+    fn step_one_rejects_existing_plugin_archive_before_ck() {
+        let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
+        fs::create_dir_all(run.config().fo4edit_data_dir()).unwrap();
+        fs::write(run.config().plugin_archive_path(), b"ba2").unwrap();
+        let executor = WorkflowOperationExecutor::new(RecordingAdapters::new(true));
+
+        let err = executor
+            .run_step(WorkflowStep::GeneratePrecombines, &run)
+            .unwrap_err();
+
+        assert!(matches!(err, Error::PluginAlreadyHasArchive));
+        assert!(executor.adapters.ck_calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn step_one_rejects_vis_uvd_files_before_ck() {
+        let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
+        fs::create_dir_all(run.config().vis_dir()).unwrap();
+        fs::write(run.config().vis_dir().join("cell.uvd"), b"uvd").unwrap();
+        let executor = WorkflowOperationExecutor::new(RecordingAdapters::new(true));
+
+        let err = executor
+            .run_step(WorkflowStep::GeneratePrecombines, &run)
+            .unwrap_err();
+
+        assert!(matches!(err, Error::VisUvdFilesExist));
+        assert!(executor.adapters.ck_calls.borrow().is_empty());
+    }
+
+    #[test]
     fn step_one_reports_missing_combined_objects_from_operation() {
         let (_dir, run) = prepared_run(BuildMode::Clean, None, true);
         let executor = WorkflowOperationExecutor::new(RecordingAdapters::new(false));
@@ -319,6 +325,46 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, Error::MissingCombinedObjects));
+    }
+
+    #[test]
+    fn step_one_reports_missing_geometry_psg_from_operation() {
+        let (_dir, run) = prepared_run(BuildMode::Clean, None, true);
+        let executor = WorkflowOperationExecutor::new(RecordingAdapters::new(true).without_psg());
+
+        let err = executor
+            .run_step(WorkflowStep::GeneratePrecombines, &run)
+            .unwrap_err();
+
+        assert!(matches!(err, Error::MissingGeometryPsg(name) if name == "MyMod"));
+    }
+
+    #[test]
+    fn step_one_reports_no_precombined_meshes_from_operation() {
+        let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
+        let executor =
+            WorkflowOperationExecutor::new(RecordingAdapters::new(true).without_precombined_mesh());
+
+        let err = executor
+            .run_step(WorkflowStep::GeneratePrecombines, &run)
+            .unwrap_err();
+
+        assert!(matches!(err, Error::NoPrecombinedMeshes));
+    }
+
+    #[test]
+    fn step_one_reports_handle_array_log_error_from_operation() {
+        let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
+        let executor = WorkflowOperationExecutor::new(
+            RecordingAdapters::new(true)
+                .with_ck_log_contents(b"DEFAULT: OUT OF HANDLE ARRAY ENTRIES\n"),
+        );
+
+        let err = executor
+            .run_step(WorkflowStep::GeneratePrecombines, &run)
+            .unwrap_err();
+
+        assert!(matches!(err, Error::HandleArrayLogError));
     }
 
     #[test]
