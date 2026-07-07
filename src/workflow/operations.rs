@@ -142,32 +142,63 @@ mod tests {
         ck_calls: RefCell<Vec<(CkOperation, String, String)>>,
         clear_prompts: Cell<usize>,
         clear_response: bool,
-        create_combined: bool,
-        create_precombined_mesh: bool,
-        create_psg: bool,
+        artifacts: RecordedArtifacts,
         ck_log_contents: &'static [u8],
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct RecordedArtifacts {
+        combined_objects: ArtifactState,
+        precombined_mesh: ArtifactState,
+        geometry_psg: ArtifactState,
+    }
+
+    impl RecordedArtifacts {
+        const fn with_combined_objects(combined_objects: ArtifactState) -> Self {
+            Self {
+                combined_objects,
+                precombined_mesh: ArtifactState::Created,
+                geometry_psg: ArtifactState::Created,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ArtifactState {
+        Created,
+        Missing,
+    }
+
+    impl ArtifactState {
+        const fn should_create(self) -> bool {
+            matches!(self, Self::Created)
+        }
     }
 
     impl RecordingAdapters {
         fn new(create_combined: bool) -> Self {
+            let combined_objects = if create_combined {
+                ArtifactState::Created
+            } else {
+                ArtifactState::Missing
+            };
+
             Self {
                 ck_calls: RefCell::new(Vec::new()),
                 clear_prompts: Cell::new(0),
                 clear_response: true,
-                create_combined,
-                create_precombined_mesh: true,
-                create_psg: true,
+                artifacts: RecordedArtifacts::with_combined_objects(combined_objects),
                 ck_log_contents: b"ok\n",
             }
         }
 
         fn without_precombined_mesh(mut self) -> Self {
-            self.create_precombined_mesh = false;
+            self.artifacts.precombined_mesh = ArtifactState::Missing;
             self
         }
 
         fn without_psg(mut self) -> Self {
-            self.create_psg = false;
+            self.artifacts.geometry_psg = ArtifactState::Missing;
             self
         }
 
@@ -193,17 +224,19 @@ mod tests {
 
             let data = run.config().fo4edit_data_dir();
             fs::create_dir_all(&data)?;
-            if self.create_combined {
+            if self.artifacts.combined_objects.should_create() {
                 fs::write(data.join("CombinedObjects.esp"), b"combined")?;
             }
 
-            if self.create_precombined_mesh {
+            if self.artifacts.precombined_mesh.should_create() {
                 let precombined_mesh = run.config().precombined_dir().join("test").join("mesh.nif");
                 fs::create_dir_all(precombined_mesh.parent().unwrap())?;
                 fs::write(precombined_mesh, b"nif")?;
             }
 
-            if run.config().build_mode == BuildMode::Clean && self.create_psg {
+            if run.config().build_mode == BuildMode::Clean
+                && self.artifacts.geometry_psg.should_create()
+            {
                 fs::write(
                     data.join(format!("{} - Geometry.psg", run.config().plugin.base_name)),
                     b"psg",

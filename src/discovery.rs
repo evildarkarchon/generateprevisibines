@@ -16,7 +16,7 @@ pub struct ToolPaths {
     pub bsarch: Option<PathBuf>,
 }
 
-/// Resolve FO4Edit from the executable directory first, then registry on Windows.
+/// Resolve `FO4Edit` from the executable directory first, then registry on Windows.
 pub fn discover_fo4edit(exe_dir: &Path) -> Result<PathBuf> {
     for name in FO4EDIT_CANDIDATES {
         let candidate = exe_dir.join(name);
@@ -27,10 +27,10 @@ pub fn discover_fo4edit(exe_dir: &Path) -> Result<PathBuf> {
 
     #[cfg(windows)]
     {
-        if let Ok(path) = fo4edit_from_registry() {
-            if path.is_file() {
-                return Ok(path);
-            }
+        if let Ok(path) = fo4edit_from_registry()
+            && path.is_file()
+        {
+            return Ok(path);
         }
     }
 

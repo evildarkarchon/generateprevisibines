@@ -1,4 +1,4 @@
-//! GeneratePrevisibines — Rust port (batch V2.96 reference).
+//! `GeneratePrevisibines` — Rust port (batch V2.96 reference).
 
 use std::path::PathBuf;
 use std::process::ExitCode;

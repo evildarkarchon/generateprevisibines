@@ -2,7 +2,7 @@
 //!
 //! Required behaviors when implemented:
 //! - Archive2: no append — extract, wait 5s, delete archive, re-pack (see workarounds doc)
-//! - BSArch: pack with `-mt -fo4 -z`, optional append path
+//! - `BSArch`: pack with `-mt -fo4 -z`, optional append path
 //! - Xbox mode: `-compression=XBox` for Archive2
 
 use std::path::Path;

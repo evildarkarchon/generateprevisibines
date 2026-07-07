@@ -1,7 +1,7 @@
 //! ENB/ReShade DLL disable/restore around Creation Kit runs (batch `:RunCK` / `:Done`).
 //!
 //! DLLs renamed to `*.dll-PJMdisabled`:
-//! d3d11, d3d10, d3d9, dxgi, enbimgui, d3dcompiler_46e
+//! d3d11, d3d10, d3d9, dxgi, enbimgui, `d3dcompiler_46e`
 
 use std::path::{Path, PathBuf};
 

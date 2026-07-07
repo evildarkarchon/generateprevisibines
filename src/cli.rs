@@ -2,13 +2,13 @@
 
 use std::path::PathBuf;
 
-use clap::Parser;
+use clap::{Args, Parser};
 
 use crate::config::{ArchiveTool, BuildMode, PluginIdentity, ProjectConfig, WorkflowStep};
 use crate::error::{Error, Result};
 use crate::validation;
 
-/// Command-line interface for GeneratePrevisibines.
+/// Command-line interface for `GeneratePrevisibines`.
 ///
 /// Supports legacy batch-style flags (`-clean`, `-FO4:path`) as well as long options.
 #[derive(Debug, Parser, Clone)]
@@ -18,19 +18,11 @@ use crate::validation;
     about = "Automate Fallout 4 precombine and previs generation (Rust port, scaffold)"
 )]
 pub struct Cli {
-    /// Build mode: clean (default), filtered, or xbox.
-    #[arg(long = "clean", conflicts_with_all = ["filtered", "xbox"])]
-    pub clean: bool,
+    #[command(flatten)]
+    build_mode: BuildModeFlags,
 
-    #[arg(short = 'f', long = "filtered", conflicts_with_all = ["clean", "xbox"])]
-    pub filtered: bool,
-
-    #[arg(short = 'x', long = "xbox", conflicts_with_all = ["clean", "filtered"])]
-    pub xbox: bool,
-
-    /// Use BSArch instead of Archive2.
-    #[arg(long = "bsarch")]
-    pub bsarch: bool,
+    #[command(flatten)]
+    archive_tool: ArchiveToolFlags,
 
     /// Fallout 4 install directory (`-FO4:directory` in batch).
     #[arg(long = "FO4", value_name = "DIR")]
@@ -49,6 +41,50 @@ pub struct Cli {
     pub dry_run: bool,
 }
 
+#[derive(Debug, Args, Clone, Copy, Default)]
+struct BuildModeFlags {
+    /// Build mode: clean (default), filtered, or xbox.
+    #[arg(long = "clean", conflicts_with_all = ["filtered", "xbox"])]
+    clean: bool,
+
+    #[arg(short = 'f', long = "filtered", conflicts_with_all = ["clean", "xbox"])]
+    filtered: bool,
+
+    #[arg(short = 'x', long = "xbox", conflicts_with_all = ["clean", "filtered"])]
+    xbox: bool,
+}
+
+impl BuildModeFlags {
+    #[must_use]
+    const fn selected(self) -> BuildMode {
+        if self.filtered {
+            BuildMode::Filtered
+        } else if self.xbox {
+            BuildMode::Xbox
+        } else {
+            BuildMode::Clean
+        }
+    }
+}
+
+#[derive(Debug, Args, Clone, Copy, Default)]
+struct ArchiveToolFlags {
+    /// Use `BSArch` instead of Archive2.
+    #[arg(long = "bsarch")]
+    bsarch: bool,
+}
+
+impl ArchiveToolFlags {
+    #[must_use]
+    const fn selected(self) -> ArchiveTool {
+        if self.bsarch {
+            ArchiveTool::BSArch
+        } else {
+            ArchiveTool::Archive2
+        }
+    }
+}
+
 fn parse_resume_step(s: &str) -> std::result::Result<WorkflowStep, String> {
     let n: u8 = s
         .parse()
@@ -59,22 +95,12 @@ fn parse_resume_step(s: &str) -> std::result::Result<WorkflowStep, String> {
 impl Cli {
     #[must_use]
     pub fn build_mode(&self) -> BuildMode {
-        if self.filtered {
-            BuildMode::Filtered
-        } else if self.xbox {
-            BuildMode::Xbox
-        } else {
-            BuildMode::Clean
-        }
+        self.build_mode.selected()
     }
 
     #[must_use]
     pub fn archive_tool(&self) -> ArchiveTool {
-        if self.bsarch {
-            ArchiveTool::BSArch
-        } else {
-            ArchiveTool::Archive2
-        }
+        self.archive_tool.selected()
     }
 }
 
@@ -210,5 +236,26 @@ mod tests {
     fn clap_build_mode_defaults_clean() {
         let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
         assert_eq!(cli.build_mode(), BuildMode::Clean);
+    }
+
+    #[test]
+    fn clap_build_mode_parses_filtered_and_xbox_flags() {
+        let cli = Cli::try_parse_from(["generateprevisibines", "--filtered"]).unwrap();
+        assert_eq!(cli.build_mode(), BuildMode::Filtered);
+
+        let cli = Cli::try_parse_from(["generateprevisibines", "--xbox"]).unwrap();
+        assert_eq!(cli.build_mode(), BuildMode::Xbox);
+    }
+
+    #[test]
+    fn clap_archive_tool_parses_bsarch_flag() {
+        let cli = Cli::try_parse_from(["generateprevisibines", "--bsarch"]).unwrap();
+        assert_eq!(cli.archive_tool(), ArchiveTool::BSArch);
+    }
+
+    #[test]
+    fn clap_rejects_conflicting_build_modes() {
+        let err = Cli::try_parse_from(["generateprevisibines", "--clean", "--filtered"]);
+        assert!(err.is_err());
     }
 }

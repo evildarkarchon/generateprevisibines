@@ -1,6 +1,6 @@
 //! Wrappers for external tools.
 //!
-//! See `docs/workarounds.md` — do not remove MO2 delays, DLL renaming, FO4Edit
+//! See `docs/workarounds.md` — do not remove MO2 delays, DLL renaming, `FO4Edit`
 //! keystroke automation, or Archive2 extract-repack behavior when implementing these.
 
 mod archive;

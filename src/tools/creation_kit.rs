@@ -44,10 +44,10 @@ impl CreationKitOps {
     ) -> Result<()> {
         let _dll_guard = DllGuard::disable(&ctx.fallout4_dir)?;
 
-        if let Some(ck_log) = &ctx.ck_log_path {
-            if ck_log.is_file() {
-                std::fs::remove_file(ck_log)?;
-            }
+        if let Some(ck_log) = &ctx.ck_log_path
+            && ck_log.is_file()
+        {
+            std::fs::remove_file(ck_log)?;
         }
 
         let arg = format!("-{}:\"{plugin_file}\"", operation.flag());

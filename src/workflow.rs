@@ -63,10 +63,10 @@ impl WorkflowPlan {
         let planned_steps = Self::steps_for(build_mode, resume_from);
         let runnable_steps = capability.filter_steps(&planned_steps);
 
-        if let Some(resume) = resume_from {
-            if !capability.can_run(resume) {
-                return Err(Error::StepNotImplemented(resume.number()));
-            }
+        if let Some(resume) = resume_from
+            && !capability.can_run(resume)
+        {
+            return Err(Error::StepNotImplemented(resume.number()));
         }
 
         if runnable_steps.is_empty() {
