@@ -20,3 +20,4 @@ pub use cli::Cli;
 pub use config::{ArchiveTool, BuildMode, ProjectConfig, WorkflowStep};
 pub use error::{Error, Result};
 pub use run::{RunDiagnostic, WorkflowRequest, WorkflowRun};
+pub use workflow::{RunnerCapability, WorkflowPlan};

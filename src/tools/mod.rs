@@ -16,6 +16,9 @@ pub use fo4edit::Fo4EditOps;
 
 use crate::config::{ProjectConfig, WorkflowStep};
 use crate::error::{Error, Result};
+use crate::workflow::{RunnerCapability, WorkflowPlan};
+
+const PRODUCTION_RUNNABLE_STEPS: &[WorkflowStep] = &[WorkflowStep::GeneratePrecombines];
 
 /// Shared context passed to each tool invocation.
 #[derive(Debug, Clone)]
@@ -95,6 +98,12 @@ impl ProductionRunner {
     pub const fn new() -> Self {
         Self { ck: CreationKitOps }
     }
+
+    /// Runner capability for the production adapter.
+    #[must_use]
+    pub const fn capability() -> RunnerCapability {
+        RunnerCapability::new(PRODUCTION_RUNNABLE_STEPS)
+    }
 }
 
 impl ToolRunner for ProductionRunner {
@@ -116,21 +125,12 @@ impl ToolRunner for ProductionRunner {
 /// Steps this runner can execute (Step 1 only until later slices land).
 #[must_use]
 pub fn filter_runnable_steps(steps: &[WorkflowStep]) -> Vec<WorkflowStep> {
-    steps
-        .iter()
-        .copied()
-        .filter(|s| *s == WorkflowStep::GeneratePrecombines)
-        .collect()
+    ProductionRunner::capability().filter_steps(steps)
 }
 
 /// Error when resume targets a step that is not implemented yet.
 pub fn assert_resume_step_implemented(config: &ProjectConfig) -> Result<()> {
-    if let Some(resume) = config.resume_from {
-        if resume != WorkflowStep::GeneratePrecombines {
-            return Err(Error::StepNotImplemented(resume.number()));
-        }
-    }
-    Ok(())
+    WorkflowPlan::new(config, ProductionRunner::capability()).map(|_| ())
 }
 
 #[cfg(test)]

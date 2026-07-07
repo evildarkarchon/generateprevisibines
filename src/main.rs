@@ -9,10 +9,8 @@ use generateprevisibines::{
     cli::Cli,
     discovery, interactive,
     run::{RunDiagnostic, WorkflowRequest, WorkflowRun},
-    tools::{
-        ProductionRunner, ScaffoldRunner, assert_resume_step_implemented, filter_runnable_steps,
-    },
-    workflow,
+    tools::{ProductionRunner, ScaffoldRunner},
+    workflow::{self, WorkflowPlan},
 };
 use tracing_subscriber::EnvFilter;
 
@@ -140,21 +138,32 @@ fn run_dry_run(cli: &Cli, fallout4_dir: PathBuf) {
     workflow::WorkflowEngine::<ScaffoldRunner>::print_resume_menu(mode);
 
     let config = dry_run_config(cli, fallout4_dir);
-    let steps = workflow::WorkflowEngine::<ScaffoldRunner>::planned_steps(&config);
+    let capability = ProductionRunner::capability();
+    let steps = WorkflowPlan::planned_steps_for_config(&config);
+    let runnable = capability.filter_steps(&steps);
+
     println!("\nPlanned steps:");
     for step in &steps {
         println!("  {} - {}", step.number(), step.label());
     }
 
-    let runnable = filter_runnable_steps(&steps);
     if runnable.len() < steps.len() {
+        let runnable_summary = if runnable.is_empty() {
+            "no planned steps".to_string()
+        } else {
+            runnable
+                .iter()
+                .map(|step| format!("Step {}", step.number()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         println!(
-            "\nNote: only Step 1 is implemented; a full run would execute {} of {} planned steps.",
+            "\nNote: current production capability ({runnable_summary}) would execute {} of {} planned steps.",
             runnable.len(),
             steps.len()
         );
     }
-    if let Err(err) = assert_resume_step_implemented(&config) {
+    if let Err(err) = WorkflowPlan::new(&config, capability) {
         println!("\nNote: {err}");
     }
 

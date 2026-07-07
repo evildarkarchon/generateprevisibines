@@ -9,9 +9,9 @@ use crate::config::{ArchiveTool, BuildMode, PluginIdentity, ProjectConfig, Workf
 use crate::discovery::{self, ToolPaths};
 use crate::error::{Error, Result};
 use crate::logging;
-use crate::tools::{ToolContext, ToolRunner, filter_runnable_steps};
+use crate::tools::{ProductionRunner, ToolContext, ToolRunner};
 use crate::validation;
-use crate::workflow::WorkflowEngine;
+use crate::workflow::{WorkflowEngine, WorkflowPlan};
 
 /// User intent before tool paths, CKPE configuration, logs, or runnable steps are resolved.
 #[derive(Debug, Clone)]
@@ -82,8 +82,7 @@ pub enum RunDiagnostic {
 pub struct WorkflowRun {
     config: ProjectConfig,
     ctx: ToolContext,
-    planned_steps: Vec<WorkflowStep>,
-    runnable_steps: Vec<WorkflowStep>,
+    plan: WorkflowPlan,
     diagnostics: Vec<RunDiagnostic>,
     log_path: PathBuf,
 }
@@ -133,25 +132,12 @@ impl WorkflowRun {
 
         validate_xedit_scripts_when_available(exe_dir, &tools)?;
 
-        let planned_steps =
-            WorkflowEngine::<crate::tools::ProductionRunner>::planned_steps(&config);
-        let runnable_steps = filter_runnable_steps(&planned_steps);
-        if runnable_steps.is_empty() {
-            return Err(Error::StepNotImplemented(
-                planned_steps.first().map_or(1, |step| step.number()),
-            ));
-        }
-        if runnable_steps.len() < planned_steps.len() {
+        let plan = WorkflowPlan::new(&config, ProductionRunner::capability())?;
+        if plan.is_partial_due_to_capability() {
             diagnostics.push(RunDiagnostic::LaterStepsNotImplemented {
-                skipped: planned_steps.len() - runnable_steps.len(),
-                planned: planned_steps.len(),
+                skipped: plan.skipped_unrunnable_count(),
+                planned: plan.planned_steps().len(),
             });
-        }
-
-        if let Some(resume) = config.resume_from {
-            if !runnable_steps.contains(&resume) {
-                return Err(Error::StepNotImplemented(resume.number()));
-            }
         }
 
         let log_path = logging::session_log_path(&config.plugin);
@@ -179,8 +165,7 @@ impl WorkflowRun {
         Ok(Self {
             config,
             ctx,
-            planned_steps,
-            runnable_steps,
+            plan,
             diagnostics,
             log_path,
         })
@@ -189,7 +174,7 @@ impl WorkflowRun {
     /// Execute the runnable subset of the prepared workflow through the supplied adapter.
     pub fn execute<R: ToolRunner>(&self, runner: R) -> Result<()> {
         let engine = WorkflowEngine::new(runner);
-        engine.run_steps(&self.runnable_steps, &self.config, &self.ctx)
+        engine.run_steps(self.plan.runnable_steps(), &self.config, &self.ctx)
     }
 
     /// Diagnostics collected while preparing the run.
@@ -198,16 +183,22 @@ impl WorkflowRun {
         &self.diagnostics
     }
 
+    /// Workflow Plan resolved for this run.
+    #[must_use]
+    pub const fn plan(&self) -> &WorkflowPlan {
+        &self.plan
+    }
+
     /// Full planned workflow, including steps that may not be runnable in the scaffold.
     #[must_use]
     pub fn planned_steps(&self) -> &[WorkflowStep] {
-        &self.planned_steps
+        self.plan.planned_steps()
     }
 
     /// Steps that will be executed by the current runner capability.
     #[must_use]
     pub fn runnable_steps(&self) -> &[WorkflowStep] {
-        &self.runnable_steps
+        self.plan.runnable_steps()
     }
 
     /// Session log path initialized for this run.
@@ -328,6 +319,10 @@ mod tests {
         let run = WorkflowRun::prepare(&request, dir.path(), tools).unwrap();
 
         assert_eq!(run.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
+        assert_eq!(
+            run.plan().runnable_steps(),
+            &[WorkflowStep::GeneratePrecombines]
+        );
         assert!(run.planned_steps().len() > run.runnable_steps().len());
         assert!(run.diagnostics().iter().any(|diagnostic| matches!(
             diagnostic,
