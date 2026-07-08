@@ -20,7 +20,7 @@ pub struct ToolContext {
     pub unattended_log: Option<std::path::PathBuf>,
     pub fallout4_dir: std::path::PathBuf,
     pub creation_kit: std::path::PathBuf,
-    pub ck_log_path: Option<std::path::PathBuf>,
+    pub ck_log_path: std::path::PathBuf,
 }
 
 impl Default for ToolContext {
@@ -30,7 +30,7 @@ impl Default for ToolContext {
             unattended_log: None,
             fallout4_dir: std::path::PathBuf::new(),
             creation_kit: std::path::PathBuf::new(),
-            ck_log_path: None,
+            ck_log_path: std::path::PathBuf::new(),
         }
     }
 }

@@ -44,8 +44,6 @@ impl<'a> PrecombineWorkspace<'a> {
 
     /// Run artifact preconditions and cleanup before launching Creation Kit.
     pub(super) fn prepare_for_generate(&self) -> Result<()> {
-        let data = self.config.fo4edit_data_dir();
-
         if self.config.plugin_archive_path().is_file() {
             return Err(Error::PluginAlreadyHasArchive);
         }
@@ -58,7 +56,7 @@ impl<'a> PrecombineWorkspace<'a> {
             return Err(Error::VisUvdFilesExist);
         }
 
-        let combined = data.join("CombinedObjects.esp");
+        let combined = self.combined_objects_path();
         if combined.is_file() {
             std::fs::remove_file(combined)?;
         }
@@ -105,29 +103,25 @@ impl<'a> PrecombineWorkspace<'a> {
     }
 
     fn has_vis_uvd_files(&self) -> bool {
-        let Ok(entries) = std::fs::read_dir(self.config.vis_dir()) else {
-            return false;
-        };
-        entries.flatten().any(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("uvd"))
-        })
+        find_first_file_with_extension(&self.config.vis_dir(), "uvd").is_some()
     }
 }
 
 fn find_first_precombined_nif(dir: &Path) -> Option<PathBuf> {
+    find_first_file_with_extension(dir, "nif")
+}
+
+fn find_first_file_with_extension(dir: &Path, extension: &str) -> Option<PathBuf> {
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            if let Some(found) = find_first_precombined_nif(&path) {
+            if let Some(found) = find_first_file_with_extension(&path, extension) {
                 return Some(found);
             }
         } else if path
             .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("nif"))
+            .is_some_and(|e| e.eq_ignore_ascii_case(extension))
         {
             return Some(path);
         }
@@ -136,7 +130,7 @@ fn find_first_precombined_nif(dir: &Path) -> Option<PathBuf> {
 }
 
 fn ck_log_has_handle_array_error(log_path: &Path) -> bool {
-    let Ok(contents) = std::fs::read_to_string(log_path) else {
+    let Ok(contents) = crate::text::read_lossy(log_path) else {
         return false;
     };
     contents.contains(HANDLE_ARRAY_MARKER)
@@ -157,12 +151,10 @@ mod tests {
             build_mode: mode,
             archive_tool: ArchiveTool::Archive2,
             fallout4_dir: dir.path().join("Fallout4"),
+            data_dir: dir.path().join("Data"),
             plugin: PluginIdentity::parse("MyMod"),
             non_interactive: true,
             resume_from: None,
-            fo4edit_path: None,
-            xedit_data_dir: Some(dir.path().join("Data")),
-            ck_log_path: None,
         };
 
         (dir, config)
@@ -244,6 +236,32 @@ mod tests {
     }
 
     #[test]
+    fn prepare_rejects_nested_vis_uvd_files() {
+        let (_dir, config) = workspace(BuildMode::Filtered);
+        let workspace = PrecombineWorkspace::new(&config);
+        let uvd = config.vis_dir().join("MyMod").join("cell.UVD");
+        fs::create_dir_all(uvd.parent().unwrap()).unwrap();
+        fs::write(uvd, b"uvd").unwrap();
+
+        let err = workspace.prepare_for_generate().unwrap_err();
+
+        assert!(matches!(err, Error::VisUvdFilesExist));
+    }
+
+    #[test]
+    fn prepare_ignores_nested_non_uvd_files_and_uvd_directories() {
+        let (_dir, config) = workspace(BuildMode::Filtered);
+        let workspace = PrecombineWorkspace::new(&config);
+        let nested = config.vis_dir().join("MyMod").join("cell.txt");
+        let uvd_dir = config.vis_dir().join("LooksLike.uvd");
+        fs::create_dir_all(nested.parent().unwrap()).unwrap();
+        fs::write(nested, b"text").unwrap();
+        fs::create_dir_all(uvd_dir).unwrap();
+
+        workspace.prepare_for_generate().unwrap();
+    }
+
+    #[test]
     fn prepare_removes_stale_combined_objects_and_psg() {
         let (_dir, config) = workspace(BuildMode::Clean);
         let workspace = PrecombineWorkspace::new(&config);
@@ -315,6 +333,19 @@ mod tests {
         create_generated_outputs(&config, false);
         let ck_log = config.fo4edit_data_dir().join("CK.log");
         fs::write(&ck_log, b"DEFAULT: OUT OF HANDLE ARRAY ENTRIES\n").unwrap();
+        let workspace = PrecombineWorkspace::new(&config);
+
+        let err = workspace.validate_generated(&ck_log).unwrap_err();
+
+        assert!(matches!(err, Error::HandleArrayLogError));
+    }
+
+    #[test]
+    fn validate_generated_checks_handle_array_marker_in_lossy_log() {
+        let (_dir, config) = workspace(BuildMode::Filtered);
+        create_generated_outputs(&config, false);
+        let ck_log = config.fo4edit_data_dir().join("CK.log");
+        fs::write(&ck_log, b"\xFFDEFAULT: OUT OF HANDLE ARRAY ENTRIES\n").unwrap();
         let workspace = PrecombineWorkspace::new(&config);
 
         let err = workspace.validate_generated(&ck_log).unwrap_err();

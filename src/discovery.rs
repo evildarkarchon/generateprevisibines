@@ -48,7 +48,24 @@ fn fo4edit_from_registry() -> Result<PathBuf> {
     let hkcr = RegKey::predef(HKEY_CLASSES_ROOT);
     let key = hkcr.open_subkey("FO4Script\\DefaultIcon")?;
     let path: String = key.get_value("")?;
-    Ok(PathBuf::from(path))
+    Ok(PathBuf::from(clean_default_icon_path(&path)))
+}
+
+fn clean_default_icon_path(value: &str) -> String {
+    let trimmed = value.trim();
+    if let Some(rest) = trimmed.strip_prefix('"')
+        && let Some((path, _)) = rest.split_once('"')
+    {
+        return path.to_string();
+    }
+
+    trimmed
+        .split(',')
+        .next()
+        .unwrap_or(trimmed)
+        .trim()
+        .trim_matches('"')
+        .to_string()
 }
 
 #[cfg(not(windows))]
@@ -128,5 +145,21 @@ mod tests {
         fs::write(&exe, b"").unwrap();
         let found = discover_fo4edit(dir.path()).unwrap();
         assert_eq!(found, exe);
+    }
+
+    #[test]
+    fn cleans_default_icon_registry_path() {
+        assert_eq!(
+            clean_default_icon_path(r#""C:\Games\FO4Edit.exe",0"#),
+            r"C:\Games\FO4Edit.exe"
+        );
+        assert_eq!(
+            clean_default_icon_path(r#""C:\Path, With Comma\FO4Edit.exe",1"#),
+            r"C:\Path, With Comma\FO4Edit.exe"
+        );
+        assert_eq!(
+            clean_default_icon_path(r"C:\Games\FO4Edit.exe,0"),
+            r"C:\Games\FO4Edit.exe"
+        );
     }
 }

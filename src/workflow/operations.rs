@@ -9,6 +9,7 @@ use crate::config::WorkflowStep;
 use crate::error::{Error, Result};
 use crate::interactive;
 use crate::run::WorkflowRun;
+use crate::toolchain::ToolchainRequirements;
 use crate::tools::{CkOperation, CreationKitOps};
 use crate::workflow::OperationCapability;
 
@@ -109,6 +110,27 @@ impl<A: OperationAdapters> WorkflowOperationExecutor<A> {
         OperationCapability::new(PRODUCTION_RUNNABLE_STEPS)
     }
 
+    /// Toolchain requirements for a set of runnable Workflow Operations.
+    #[must_use]
+    pub fn toolchain_requirements_for_steps(steps: &[WorkflowStep]) -> ToolchainRequirements {
+        let mut requirements = ToolchainRequirements::none();
+        for step in steps {
+            match step {
+                WorkflowStep::GeneratePrecombines
+                | WorkflowStep::CompressPsg
+                | WorkflowStep::BuildCdx
+                | WorkflowStep::GeneratePrevis => requirements.require_creation_kit(),
+                WorkflowStep::MergePrecombineObjects | WorkflowStep::MergePrevis => {
+                    requirements.require_fo4edit();
+                }
+                WorkflowStep::CreateBa2FromPrecombines | WorkflowStep::AddPrevisToArchive => {
+                    requirements.require_archive();
+                }
+            }
+        }
+        requirements
+    }
+
     /// Execute the runnable subset of a Workflow Plan.
     pub fn run_steps(&self, steps: &[WorkflowStep], run: &WorkflowRun) -> Result<()> {
         for step in steps {
@@ -135,8 +157,8 @@ mod tests {
 
     use super::*;
     use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
-    use crate::discovery::ToolPaths;
     use crate::run::WorkflowRequest;
+    use crate::{discovery::ToolPaths, toolchain::WorkflowToolchainProbe};
 
     #[derive(Debug)]
     struct RecordingAdapters {
@@ -244,9 +266,7 @@ mod tests {
                 )?;
             }
 
-            if let Some(ck_log) = &run.tool_context().ck_log_path {
-                fs::write(ck_log, self.ck_log_contents)?;
-            }
+            fs::write(&run.tool_context().ck_log_path, self.ck_log_contents)?;
 
             Ok(())
         }
@@ -272,11 +292,12 @@ mod tests {
         )
         .unwrap();
 
-        let tools = ToolPaths {
+        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
             fallout4_dir: Some(fallout4_dir.clone()),
             creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
             ..ToolPaths::default()
-        };
+        })
+        .unwrap();
 
         let request = WorkflowRequest::new(
             mode,
@@ -287,7 +308,7 @@ mod tests {
             None,
         );
 
-        let run = WorkflowRun::prepare(&request, dir.path(), tools).unwrap();
+        let run = WorkflowRun::prepare(&request, dir.path(), &probe).unwrap();
         (dir, run)
     }
 

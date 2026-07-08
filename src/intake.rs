@@ -3,14 +3,14 @@
 //! This module owns the pre-run decision flow from parsed command-line choices
 //! to either a prepared Workflow Run or a deliberate user exit.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::cli::Cli;
-use crate::config::{BuildMode, PluginIdentity, ProjectConfig, WorkflowStep};
-use crate::discovery::ToolPaths;
+use crate::config::{BuildMode, PluginIdentity, WorkflowStep};
 use crate::error::{Error, Result};
 use crate::interactive::{self, ExistingPluginAction};
 use crate::run::{WorkflowRequest, WorkflowRun};
+use crate::toolchain::{PluginReadiness, WorkflowToolchainProbe};
 
 /// Result of Workflow Request Intake.
 #[derive(Debug, Clone)]
@@ -27,7 +27,7 @@ pub trait WorkflowIntakePrompts {
     fn prompt_plugin_name(&self, build_mode: BuildMode) -> Result<Option<PluginIdentity>>;
 
     /// Ensure the plugin is ready before full Workflow Run preparation.
-    fn ensure_plugin_ready(&self, config: &ProjectConfig) -> Result<ExistingPluginAction>;
+    fn ensure_plugin_ready(&self, readiness: &PluginReadiness) -> Result<ExistingPluginAction>;
 
     /// Prompt for the Workflow Step to resume from, or return `None` to re-prompt plugin intake.
     fn prompt_resume_step(&self, build_mode: BuildMode) -> Result<Option<WorkflowStep>>;
@@ -42,8 +42,8 @@ impl WorkflowIntakePrompts for InteractiveWorkflowIntakePrompts {
         interactive::prompt_plugin_name(build_mode)
     }
 
-    fn ensure_plugin_ready(&self, config: &ProjectConfig) -> Result<ExistingPluginAction> {
-        interactive::ensure_plugin_ready(config)
+    fn ensure_plugin_ready(&self, readiness: &PluginReadiness) -> Result<ExistingPluginAction> {
+        interactive::ensure_plugin_ready(readiness)
     }
 
     fn prompt_resume_step(&self, build_mode: BuildMode) -> Result<Option<WorkflowStep>> {
@@ -72,31 +72,28 @@ impl<P: WorkflowIntakePrompts> WorkflowRequestIntake<P> {
         Self { prompts }
     }
 
-    /// Resolve parsed choices and discovered tools into a Workflow Run or a deliberate exit.
+    /// Resolve parsed choices and probed toolchain facts into a Workflow Run or a deliberate exit.
     pub fn resolve(
         &self,
         cli: &Cli,
         exe_dir: &Path,
-        tools: ToolPaths,
+        probe: &WorkflowToolchainProbe,
     ) -> Result<WorkflowIntakeOutcome> {
-        let fallout4_dir = WorkflowRun::fallout4_dir(&tools)?;
-        let Some(request) = self.resolve_request(cli, &tools, fallout4_dir)? else {
+        let Some(request) = self.resolve_request(cli, probe)? else {
             return Ok(WorkflowIntakeOutcome::Exited);
         };
 
-        let run = WorkflowRun::prepare(&request, exe_dir, tools)?;
+        let run = WorkflowRun::prepare(&request, exe_dir, probe)?;
         Ok(WorkflowIntakeOutcome::Ready(Box::new(run)))
     }
 
     fn resolve_request(
         &self,
         cli: &Cli,
-        tools: &ToolPaths,
-        fallout4_dir: PathBuf,
+        probe: &WorkflowToolchainProbe,
     ) -> Result<Option<WorkflowRequest>> {
         let build_mode = cli.build_mode();
         let archive_tool = cli.archive_tool();
-        let fo4edit_path = tools.fo4edit.clone();
 
         if let Some(plugin_name) = &cli.plugin {
             let request = WorkflowRequest::new(
@@ -107,9 +104,9 @@ impl<P: WorkflowIntakePrompts> WorkflowRequestIntake<P> {
                 cli.resume_from,
                 cli.fo4_dir.clone(),
             );
-            let config = request.to_project_config(fallout4_dir, fo4edit_path, None)?;
+            let readiness = Self::plugin_readiness(&request, probe)?;
 
-            match self.prompts.ensure_plugin_ready(&config)? {
+            match self.prompts.ensure_plugin_ready(&readiness)? {
                 ExistingPluginAction::Exit => return Ok(None),
                 ExistingPluginAction::ChooseResumeStep => {
                     return Err(Error::Other(
@@ -137,10 +134,9 @@ impl<P: WorkflowIntakePrompts> WorkflowRequestIntake<P> {
                 resume_from,
                 cli.fo4_dir.clone(),
             );
-            let config =
-                request.to_project_config(fallout4_dir.clone(), fo4edit_path.clone(), None)?;
+            let readiness = Self::plugin_readiness(&request, probe)?;
 
-            match self.prompts.ensure_plugin_ready(&config)? {
+            match self.prompts.ensure_plugin_ready(&readiness)? {
                 ExistingPluginAction::Exit => return Ok(None),
                 ExistingPluginAction::ChooseResumeStep => {
                     if let Some(step) = self.prompts.prompt_resume_step(build_mode)? {
@@ -156,11 +152,20 @@ impl<P: WorkflowIntakePrompts> WorkflowRequestIntake<P> {
             return Ok(Some(request));
         }
     }
+
+    fn plugin_readiness(
+        request: &WorkflowRequest,
+        probe: &WorkflowToolchainProbe,
+    ) -> Result<PluginReadiness> {
+        crate::validation::validate_plugin(&request.plugin, request.build_mode)?;
+        Ok(probe.plugin_readiness(&request.plugin, request.non_interactive))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
+    use std::path::PathBuf;
 
     use clap::Parser;
 
@@ -196,7 +201,10 @@ mod tests {
             Ok(self.plugin_names.borrow_mut().remove(0))
         }
 
-        fn ensure_plugin_ready(&self, _config: &ProjectConfig) -> Result<ExistingPluginAction> {
+        fn ensure_plugin_ready(
+            &self,
+            _readiness: &PluginReadiness,
+        ) -> Result<ExistingPluginAction> {
             Ok(self.ready_actions.borrow_mut().remove(0))
         }
 
@@ -211,11 +219,13 @@ mod tests {
         let intake = WorkflowRequestIntake::new(
             RecordingPrompts::default().with_ready_actions(vec![ExistingPluginAction::Continue]),
         );
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(PathBuf::from(r"C:\Fallout4")),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
 
-        let request = intake
-            .resolve_request(&cli, &ToolPaths::default(), PathBuf::from(r"C:\Fallout4"))
-            .unwrap()
-            .unwrap();
+        let request = intake.resolve_request(&cli, &probe).unwrap().unwrap();
 
         assert_eq!(request.build_mode, BuildMode::Filtered);
         assert_eq!(request.archive_tool, ArchiveTool::Archive2);
@@ -230,10 +240,13 @@ mod tests {
             RecordingPrompts::default()
                 .with_ready_actions(vec![ExistingPluginAction::ChooseResumeStep]),
         );
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(PathBuf::from(r"C:\Fallout4")),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
 
-        let err = intake
-            .resolve_request(&cli, &ToolPaths::default(), PathBuf::from(r"C:\Fallout4"))
-            .unwrap_err();
+        let err = intake.resolve_request(&cli, &probe).unwrap_err();
 
         assert!(matches!(err, Error::Other(message) if message.contains("interactive mode")));
     }
@@ -254,11 +267,13 @@ mod tests {
                 ])
                 .with_resume_steps(vec![None]),
         );
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(PathBuf::from(r"C:\Fallout4")),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
 
-        let request = intake
-            .resolve_request(&cli, &ToolPaths::default(), PathBuf::from(r"C:\Fallout4"))
-            .unwrap()
-            .unwrap();
+        let request = intake.resolve_request(&cli, &probe).unwrap().unwrap();
 
         assert_eq!(request.plugin.file_name, "SecondMod.esp");
         assert_eq!(request.resume_from, None);
@@ -274,11 +289,13 @@ mod tests {
                 .with_ready_actions(vec![ExistingPluginAction::ChooseResumeStep])
                 .with_resume_steps(vec![Some(WorkflowStep::GeneratePrevis)]),
         );
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(PathBuf::from(r"C:\Fallout4")),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
 
-        let request = intake
-            .resolve_request(&cli, &ToolPaths::default(), PathBuf::from(r"C:\Fallout4"))
-            .unwrap()
-            .unwrap();
+        let request = intake.resolve_request(&cli, &probe).unwrap().unwrap();
 
         assert_eq!(request.plugin.file_name, "MyMod.esp");
         assert_eq!(request.resume_from, Some(WorkflowStep::GeneratePrevis));

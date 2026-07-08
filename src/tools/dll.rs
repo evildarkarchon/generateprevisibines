@@ -30,7 +30,7 @@ pub struct DllGuard {
 impl DllGuard {
     /// Disable conflicting DLLs before CK launch.
     pub fn disable(fallout4_dir: &Path) -> Result<Self> {
-        let mut pairs = Vec::new();
+        let mut guard = Self { pairs: Vec::new() };
 
         for name in DLL_NAMES {
             let original = fallout4_dir.join(name);
@@ -46,10 +46,10 @@ impl DllGuard {
             }
 
             std::fs::rename(&original, &disabled)?;
-            pairs.push((disabled, original));
+            guard.pairs.push((disabled, original));
         }
 
-        Ok(Self { pairs })
+        Ok(guard)
     }
 
     /// Renames performed by this guard (for tests).
@@ -106,5 +106,27 @@ mod tests {
 
         assert!(dll.is_file());
         assert!(!fo4.join("d3d11.dll-PJMdisabled").is_file());
+    }
+
+    #[test]
+    fn restores_previous_renames_when_disable_fails() {
+        let dir = tempdir().unwrap();
+        let fo4 = dir.path();
+        let first = fo4.join("d3d11.dll");
+        let second = fo4.join("d3d10.dll");
+        let failing = fo4.join("d3d9.dll");
+        fs::write(&first, b"first").unwrap();
+        fs::write(&second, b"second").unwrap();
+        fs::write(&failing, b"third").unwrap();
+        fs::create_dir(fo4.join("d3d9.dll-PJMdisabled")).unwrap();
+
+        let err = DllGuard::disable(fo4).unwrap_err();
+
+        assert!(matches!(err, crate::error::Error::Io(_)));
+        assert!(first.is_file());
+        assert!(second.is_file());
+        assert!(failing.is_file());
+        assert!(!fo4.join("d3d11.dll-PJMdisabled").exists());
+        assert!(!fo4.join("d3d10.dll-PJMdisabled").exists());
     }
 }

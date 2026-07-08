@@ -16,6 +16,10 @@ _Avoid_: main orchestration, config builder, prompt flow
 A prepared build attempt whose tools, CKPE configuration, logs, and executable workflow plan have been resolved and validated for the currently runnable steps.
 _Avoid_: Session, context, engine run
 
+**Workflow Toolchain**:
+The external-tool readiness for a Workflow Run, including discovered tools, CKPE configuration, logs, and capability-specific validation for runnable Workflow Operations. It is readiness before any Workflow Operation chooses its step behavior.
+_Avoid_: ToolPaths, ToolContext, discovery result
+
 **Workflow Plan**:
 The ordered workflow steps for a Workflow Run, including which steps belong to the selected build mode, where resume starts, and which planned steps are currently runnable.
 _Avoid_: Step list, runner capability, dry-run steps

@@ -8,7 +8,8 @@ use generateprevisibines::{
     cli::Cli,
     discovery,
     intake::{WorkflowIntakeOutcome, WorkflowRequestIntake},
-    run::{RunDiagnostic, WorkflowRun},
+    run::RunDiagnostic,
+    toolchain::{ToolchainDiagnostic, WorkflowToolchainProbe},
     workflow::operations::{ProductionOperationAdapters, WorkflowOperationExecutor},
     workflow::{self, WorkflowPlan},
 };
@@ -39,14 +40,13 @@ fn run() -> generateprevisibines::Result<()> {
         .and_then(|p| p.parent().map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let tools = WorkflowRun::discover_tools(&exe_dir, cli.fo4_dir.clone())?;
     if cli.dry_run {
-        emit_run_diagnostics(&WorkflowRun::tool_diagnostics(&tools));
         run_dry_run(&cli);
         return Ok(());
     }
 
-    let workflow_run = match WorkflowRequestIntake::interactive().resolve(&cli, &exe_dir, tools)? {
+    let probe = WorkflowToolchainProbe::discover(&exe_dir, cli.fo4_dir.clone())?;
+    let workflow_run = match WorkflowRequestIntake::interactive().resolve(&cli, &exe_dir, &probe)? {
         WorkflowIntakeOutcome::Ready(run) => run,
         WorkflowIntakeOutcome::Exited => return Ok(()),
     };
@@ -117,17 +117,8 @@ fn print_banner() {
 fn emit_run_diagnostics(diagnostics: &[RunDiagnostic]) {
     for diagnostic in diagnostics {
         match diagnostic {
-            RunDiagnostic::Fo4EditDiscovered(path) => {
-                tracing::info!("{}", discovery::format_version_line("FO4Edit", path, None));
-            }
-            RunDiagnostic::Fallout4Directory(path) => {
-                tracing::info!("Fallout 4 directory: {}", path.display());
-            }
-            RunDiagnostic::CkpeConfig {
-                file_name,
-                log_file,
-            } => {
-                tracing::info!("Using CKPE config: {file_name} (log: {log_file})");
+            RunDiagnostic::Toolchain(toolchain) => {
+                emit_toolchain_diagnostic(toolchain);
             }
             RunDiagnostic::LaterStepsNotImplemented { skipped, .. } => {
                 tracing::warn!(
@@ -135,6 +126,31 @@ fn emit_run_diagnostics(diagnostics: &[RunDiagnostic]) {
                     "Later workflow steps are not implemented yet; running Step 1 only."
                 );
             }
+        }
+    }
+}
+
+fn emit_toolchain_diagnostic(diagnostic: &ToolchainDiagnostic) {
+    match diagnostic {
+        ToolchainDiagnostic::Fo4EditDiscovered(path) => {
+            tracing::info!("{}", discovery::format_version_line("FO4Edit", path, None));
+        }
+        ToolchainDiagnostic::Fallout4Directory(path) => {
+            tracing::info!("Fallout 4 directory: {}", path.display());
+        }
+        ToolchainDiagnostic::CkpeConfig {
+            file_name,
+            log_file,
+        } => {
+            tracing::info!("Using CKPE config: {file_name} (log: {log_file})");
+        }
+        ToolchainDiagnostic::CkpeHandleLimitDisabled {
+            file_name,
+            setting_key,
+        } => {
+            tracing::warn!(
+                "Increased Reference Limit not enabled, Precombine Step may fail. To fix, set {setting_key}=true in {file_name}."
+            );
         }
     }
 }

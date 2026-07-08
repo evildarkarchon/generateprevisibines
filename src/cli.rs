@@ -137,6 +137,11 @@ pub fn parse_batch_style_args(args: &[&str]) -> Result<BatchParsedArgs> {
                 return Err(Error::InvalidParameter(stripped.to_string()));
             }
             _ => {
+                if let Some(existing) = plugin.as_ref() {
+                    return Err(Error::InvalidParameter(format!(
+                        "multiple plugins specified: {existing} and {stripped}"
+                    )));
+                }
                 validation::validate_plugin_name_token(stripped)?;
                 plugin = Some(stripped.to_string());
             }
@@ -184,6 +189,19 @@ mod tests {
     }
 
     #[test]
+    fn batch_style_rejects_multiple_plugins() {
+        let err = parse_batch_style_args(&["FirstMod", "SecondMod"]).unwrap_err();
+        assert!(
+            matches!(err, Error::InvalidParameter(message) if message.contains("multiple plugins"))
+        );
+
+        let err = parse_batch_style_args(&["FirstMod", "-filtered", "SecondMod"]).unwrap_err();
+        assert!(
+            matches!(err, Error::InvalidParameter(message) if message.contains("multiple plugins"))
+        );
+    }
+
+    #[test]
     fn clap_build_mode_defaults_clean() {
         let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
         assert_eq!(cli.build_mode(), BuildMode::Clean);
@@ -207,6 +225,12 @@ mod tests {
     #[test]
     fn clap_rejects_conflicting_build_modes() {
         let err = Cli::try_parse_from(["generateprevisibines", "--clean", "--filtered"]);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn clap_rejects_extra_positional_plugins() {
+        let err = Cli::try_parse_from(["generateprevisibines", "FirstMod", "SecondMod"]);
         assert!(err.is_err());
     }
 }

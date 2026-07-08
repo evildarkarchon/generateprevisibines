@@ -224,26 +224,21 @@ pub struct ProjectConfig {
     pub build_mode: BuildMode,
     pub archive_tool: ArchiveTool,
     pub fallout4_dir: PathBuf,
+    pub data_dir: PathBuf,
     pub plugin: PluginIdentity,
     pub non_interactive: bool,
     pub resume_from: Option<WorkflowStep>,
-    pub fo4edit_path: Option<PathBuf>,
-    pub xedit_data_dir: Option<PathBuf>,
-    /// Resolved CK log path (absolute) from CKPE validation.
-    pub ck_log_path: Option<PathBuf>,
 }
 
 impl ProjectConfig {
     #[must_use]
     pub fn data_dir(&self) -> PathBuf {
-        self.fo4edit_data_dir()
+        self.data_dir.clone()
     }
 
     #[must_use]
     pub fn fo4edit_data_dir(&self) -> PathBuf {
-        self.xedit_data_dir
-            .clone()
-            .unwrap_or_else(|| self.fallout4_data())
+        self.data_dir()
     }
 
     #[must_use]

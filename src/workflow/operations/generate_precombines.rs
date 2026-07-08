@@ -27,13 +27,7 @@ pub(super) fn run<A: OperationAdapters>(run: &WorkflowRun, adapters: &A) -> Resu
         qualifiers,
     )?;
 
-    let ck_log = run
-        .tool_context()
-        .ck_log_path
-        .clone()
-        .ok_or_else(|| Error::Other("CK log path not configured".into()))?;
-
-    workspace.validate_generated(&ck_log)?;
+    workspace.validate_generated(&run.tool_context().ck_log_path)?;
 
     Ok(())
 }

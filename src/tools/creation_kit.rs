@@ -44,23 +44,22 @@ impl CreationKitOps {
     ) -> Result<()> {
         let _dll_guard = DllGuard::disable(&ctx.fallout4_dir)?;
 
-        if let Some(ck_log) = &ctx.ck_log_path
-            && ck_log.is_file()
-        {
-            std::fs::remove_file(ck_log)?;
+        if ctx.ck_log_path.is_file() {
+            std::fs::remove_file(&ctx.ck_log_path)?;
         }
 
-        let arg = format!("-{}:\"{plugin_file}\"", operation.flag());
-        let status = Command::new(&ctx.creation_kit)
-            .current_dir(&ctx.fallout4_dir)
-            .arg(&arg)
-            .arg(qualifiers)
-            .status()?;
+        let arg = operation_arg(operation, plugin_file);
+        let mut command = Command::new(&ctx.creation_kit);
+        command.current_dir(&ctx.fallout4_dir).arg(&arg);
+        for qualifier in qualifier_args(qualifiers) {
+            command.arg(qualifier);
+        }
+        let status = command.status()?;
 
         timing::mo2_sync_delay(MO2_DELAY_AFTER_CK_SECS);
 
-        if let (Some(session), Some(ck_log)) = (&ctx.session_log, &ctx.ck_log_path) {
-            logging::append_ck_log(session, ck_log)?;
+        if let Some(session) = &ctx.session_log {
+            logging::append_ck_log(session, &ctx.ck_log_path)?;
         }
 
         if !status.success() {
@@ -74,6 +73,14 @@ impl CreationKitOps {
     }
 }
 
+fn operation_arg(operation: CkOperation, plugin_file: &str) -> String {
+    format!("-{}:\"{plugin_file}\"", operation.flag())
+}
+
+fn qualifier_args(qualifiers: &str) -> impl Iterator<Item = &str> {
+    qualifiers.split_whitespace()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,6 +90,27 @@ mod tests {
         assert_eq!(
             CkOperation::GeneratePrecombined.flag(),
             "GeneratePrecombined"
+        );
+    }
+
+    #[test]
+    fn qualifier_args_split_batch_words() {
+        assert_eq!(
+            qualifier_args("filtered all").collect::<Vec<_>>(),
+            vec!["filtered", "all"]
+        );
+        assert_eq!(
+            qualifier_args("  clean   all  ").collect::<Vec<_>>(),
+            vec!["clean", "all"]
+        );
+        assert!(qualifier_args("").collect::<Vec<_>>().is_empty());
+    }
+
+    #[test]
+    fn operation_arg_preserves_plugin_name_as_one_argument() {
+        assert_eq!(
+            operation_arg(CkOperation::GeneratePrecombined, "My Mod.esp"),
+            "-GeneratePrecombined:\"My Mod.esp\""
         );
     }
 }

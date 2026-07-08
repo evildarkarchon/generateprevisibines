@@ -47,7 +47,7 @@ pub fn append_ck_log(session_log: &Path, ck_log: &Path) -> Result<()> {
     if !ck_log.is_file() {
         return Ok(());
     }
-    let contents = std::fs::read_to_string(ck_log)?;
+    let contents = crate::text::read_lossy(ck_log)?;
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -77,5 +77,19 @@ mod tests {
         let header = build_session_header("clean", "MyMod.esp");
         assert!(header.contains("V2.95"));
         assert!(header.contains("MyMod.esp"));
+    }
+
+    #[test]
+    fn append_ck_log_tolerates_non_utf8_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_log = dir.path().join("session.log");
+        let ck_log = dir.path().join("CK.log");
+        std::fs::write(&ck_log, b"ok\xFF\n").unwrap();
+
+        append_ck_log(&session_log, &ck_log).unwrap();
+
+        let session = std::fs::read_to_string(session_log).unwrap();
+        assert!(session.contains("Creation Kit log"));
+        assert!(session.contains("ok"));
     }
 }

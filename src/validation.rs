@@ -144,7 +144,7 @@ pub fn validate_xedit_script(
         return Err(Error::MissingXeditScript(script_name.to_string()));
     }
 
-    let contents = std::fs::read_to_string(&path)?;
+    let contents = crate::text::read_lossy(&path)?;
     if !contents.contains(required_version) {
         return Err(Error::XeditScriptVersion {
             script: script_name.to_string(),
@@ -201,5 +201,14 @@ mod tests {
     fn detects_handle_limit_flag() {
         let ini = "bBSPointerHandleExtremly=true\n";
         assert!(ckpe_handle_limit_enabled(ini, "bBSPointerHandleExtremly"));
+    }
+
+    #[test]
+    fn validate_xedit_script_tolerates_non_utf8_comments() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("script.pas");
+        std::fs::write(&script, b"{\xFF}\nV2.3\n").unwrap();
+
+        validate_xedit_script(dir.path(), "script.pas", "V2.3").unwrap();
     }
 }

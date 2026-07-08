@@ -1,12 +1,13 @@
 //! Interactive plugin flow (`:GetPlugin`, `:TryCopySeed`, `:CheckPluginExists`, `:GetStep`).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use dialoguer::{Confirm, Input};
 
-use crate::config::{BuildMode, PluginIdentity, ProjectConfig, WorkflowStep};
+use crate::config::{BuildMode, PluginIdentity, WorkflowStep};
 use crate::error::{Error, Result};
 use crate::timing::{self, MO2_DELAY_AFTER_SEED_COPY_SECS};
+use crate::toolchain::PluginReadiness;
 use crate::validation;
 use crate::workflow;
 
@@ -173,23 +174,23 @@ pub fn confirm_clear_precombined(precombined_dir: &Path) -> Result<bool> {
 }
 
 /// Orchestrate plugin existence, seed copy, archive guard, and resume prompts.
-pub fn ensure_plugin_ready(config: &ProjectConfig) -> Result<ExistingPluginAction> {
-    let plugin_path = config.plugin_path();
-    let data_dir = config.fo4edit_data_dir();
+pub fn ensure_plugin_ready(readiness: &PluginReadiness) -> Result<ExistingPluginAction> {
+    let plugin_path = readiness.plugin_path();
+    let data_dir = readiness.data_dir();
 
-    if config.plugin_archive_path().is_file() {
+    if readiness.plugin_archive_path().is_file() {
         return Err(Error::PluginAlreadyHasArchive);
     }
 
     if !plugin_path.is_file() {
-        if config.non_interactive {
+        if readiness.non_interactive() {
             return Err(Error::Other(format!(
                 "plugin not found: {}",
                 plugin_path.display()
             )));
         }
 
-        if !prompt_seed_copy(&data_dir, &plugin_path)? {
+        if !prompt_seed_copy(data_dir, &plugin_path)? {
             return Ok(ExistingPluginAction::Exit);
         }
 
@@ -203,24 +204,13 @@ pub fn ensure_plugin_ready(config: &ProjectConfig) -> Result<ExistingPluginActio
         return Ok(ExistingPluginAction::Continue);
     }
 
-    if config.non_interactive {
+    if readiness.non_interactive() {
         return Ok(ExistingPluginAction::Continue);
     }
 
-    match prompt_existing_plugin_action(&config.plugin.file_name)? {
+    match prompt_existing_plugin_action(readiness.plugin_file_name())? {
         ExistingPluginAction::Continue => Ok(ExistingPluginAction::Continue),
         other => Ok(other),
-    }
-}
-
-/// Resolve CK log path relative to Fallout 4 install when CKPE stores a relative name.
-#[must_use]
-pub fn resolve_ck_log_path(fallout4_dir: &Path, log_setting: &str) -> PathBuf {
-    let path = Path::new(log_setting);
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        fallout4_dir.join(path)
     }
 }
 
@@ -281,7 +271,7 @@ mod tests {
 
     #[test]
     fn ensure_plugin_ready_rejects_existing_archive() {
-        use crate::config::{ArchiveTool, PluginIdentity};
+        use crate::config::PluginIdentity;
         use std::fs;
         use tempfile::tempdir;
 
@@ -292,26 +282,9 @@ mod tests {
         fs::write(data.join(&plugin.file_name), b"plug").unwrap();
         fs::write(data.join(plugin.archive_name()), b"ba2").unwrap();
 
-        let config = crate::config::ProjectConfig {
-            build_mode: BuildMode::Clean,
-            archive_tool: ArchiveTool::Archive2,
-            fallout4_dir: dir.path().to_path_buf(),
-            plugin,
-            non_interactive: true,
-            resume_from: None,
-            fo4edit_path: None,
-            xedit_data_dir: Some(data.to_path_buf()),
-            ck_log_path: None,
-        };
+        let readiness = PluginReadiness::new(plugin, data.to_path_buf(), true);
 
-        let err = super::ensure_plugin_ready(&config).unwrap_err();
+        let err = super::ensure_plugin_ready(&readiness).unwrap_err();
         assert!(matches!(err, crate::error::Error::PluginAlreadyHasArchive));
-    }
-
-    #[test]
-    fn resolve_ck_log_relative_to_fallout4() {
-        let fo4 = PathBuf::from(r"C:\Fallout4");
-        let log = resolve_ck_log_path(&fo4, "CK.log");
-        assert_eq!(log, fo4.join("CK.log"));
     }
 }

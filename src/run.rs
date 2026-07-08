@@ -6,9 +6,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::config::{ArchiveTool, BuildMode, PluginIdentity, ProjectConfig, WorkflowStep};
-use crate::discovery::{self, ToolPaths};
 use crate::error::{Error, Result};
 use crate::logging;
+use crate::toolchain::{ToolchainDiagnostic, WorkflowToolchainProbe};
 use crate::tools::ToolContext;
 use crate::validation;
 use crate::workflow::operations::{
@@ -48,25 +48,18 @@ impl WorkflowRequest {
         }
     }
 
-    /// Build the resolved project config once environment facts have been prepared.
-    pub fn to_project_config(
-        &self,
-        fallout4_dir: PathBuf,
-        fo4edit_path: Option<PathBuf>,
-        ck_log_path: Option<PathBuf>,
-    ) -> Result<ProjectConfig> {
+    /// Build the resolved project config once data-root facts have been prepared.
+    pub fn to_project_config(&self, probe: &WorkflowToolchainProbe) -> Result<ProjectConfig> {
         validation::validate_plugin(&self.plugin, self.build_mode)?;
 
         Ok(ProjectConfig {
             build_mode: self.build_mode,
             archive_tool: self.archive_tool,
-            fallout4_dir,
+            fallout4_dir: probe.fallout4_dir().to_path_buf(),
+            data_dir: probe.data_dir().to_path_buf(),
             plugin: self.plugin.clone(),
             non_interactive: self.non_interactive,
             resume_from: self.resume_from,
-            fo4edit_path,
-            xedit_data_dir: self.fallout4_override.as_ref().map(|d| d.join("Data")),
-            ck_log_path,
         })
     }
 }
@@ -74,9 +67,7 @@ impl WorkflowRequest {
 /// Structured information discovered while preparing a workflow run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunDiagnostic {
-    Fo4EditDiscovered(PathBuf),
-    Fallout4Directory(PathBuf),
-    CkpeConfig { file_name: String, log_file: String },
+    Toolchain(ToolchainDiagnostic),
     LaterStepsNotImplemented { skipped: usize, planned: usize },
 }
 
@@ -91,37 +82,16 @@ pub struct WorkflowRun {
 }
 
 impl WorkflowRun {
-    /// Discover external tools using the same lookup rules as the batch-compatible entrypoint.
-    pub fn discover_tools(exe_dir: &Path, fallout4_override: Option<PathBuf>) -> Result<ToolPaths> {
-        discovery::discover_tools(exe_dir, fallout4_override)
-    }
-
-    /// Extract the resolved Fallout 4 directory from discovered tool paths.
-    pub fn fallout4_dir(tools: &ToolPaths) -> Result<PathBuf> {
-        tools.fallout4_dir.clone().ok_or_else(|| {
-            Error::Other("Fallout 4 directory could not be determined. Use --FO4 <DIR>.".into())
-        })
-    }
-
-    /// Create diagnostics for tool paths that were already discovered.
-    #[must_use]
-    pub fn tool_diagnostics(tools: &ToolPaths) -> Vec<RunDiagnostic> {
-        let mut diagnostics = Vec::new();
-        if let Some(ref fo4edit) = tools.fo4edit {
-            diagnostics.push(RunDiagnostic::Fo4EditDiscovered(fo4edit.clone()));
-        }
-        if let Some(ref fallout4_dir) = tools.fallout4_dir {
-            diagnostics.push(RunDiagnostic::Fallout4Directory(fallout4_dir.clone()));
-        }
-        diagnostics
-    }
-
     /// Prepare a workflow run by validating environment facts against production capability.
-    pub fn prepare(request: &WorkflowRequest, exe_dir: &Path, tools: ToolPaths) -> Result<Self> {
+    pub fn prepare(
+        request: &WorkflowRequest,
+        exe_dir: &Path,
+        probe: &WorkflowToolchainProbe,
+    ) -> Result<Self> {
         Self::prepare_with_capability(
             request,
             exe_dir,
-            tools,
+            probe,
             WorkflowOperationExecutor::<ProductionOperationAdapters>::production_capability(),
         )
     }
@@ -130,27 +100,23 @@ impl WorkflowRun {
     pub fn prepare_with_capability(
         request: &WorkflowRequest,
         exe_dir: &Path,
-        tools: ToolPaths,
+        probe: &WorkflowToolchainProbe,
         capability: OperationCapability,
     ) -> Result<Self> {
-        let mut diagnostics = Self::tool_diagnostics(&tools);
-        let fallout4_dir = Self::fallout4_dir(&tools)?;
-        let ckpe = load_ckpe_installation(&fallout4_dir)?;
-
-        diagnostics.push(RunDiagnostic::CkpeConfig {
-            file_name: ckpe.file_name,
-            log_file: ckpe.log_file,
-        });
-
-        let config = request.to_project_config(
-            fallout4_dir.clone(),
-            tools.fo4edit.clone(),
-            Some(ckpe.log_path.clone()),
-        )?;
-
-        validate_xedit_scripts_when_available(exe_dir, &tools)?;
+        let config = request.to_project_config(probe)?;
 
         let plan = WorkflowPlan::new(config.build_mode, config.resume_from, capability)?;
+        let requirements =
+            WorkflowOperationExecutor::<ProductionOperationAdapters>::toolchain_requirements_for_steps(
+                plan.runnable_steps(),
+            );
+        let toolchain = probe.prepare(exe_dir, config.archive_tool, requirements)?;
+        let mut diagnostics = toolchain
+            .diagnostics()
+            .iter()
+            .cloned()
+            .map(RunDiagnostic::Toolchain)
+            .collect::<Vec<_>>();
         if plan.is_partial_due_to_capability() {
             diagnostics.push(RunDiagnostic::LaterStepsNotImplemented {
                 skipped: plan.skipped_unrunnable_count(),
@@ -165,19 +131,15 @@ impl WorkflowRun {
             &config.plugin.file_name,
         )?;
 
-        let creation_kit = tools.creation_kit.ok_or_else(|| {
-            Error::Other(format!(
-                "CreationKit.exe not found in {}",
-                config.fallout4_dir.display()
-            ))
-        })?;
-
-        let ctx = ToolContext {
-            session_log: Some(log_path.clone()),
-            unattended_log: Some(logging::unattended_log_path()),
-            fallout4_dir: config.fallout4_dir.clone(),
-            creation_kit,
-            ck_log_path: config.ck_log_path.clone(),
+        let ctx = if requirements.needs_creation_kit() {
+            toolchain.creation_kit_context(log_path.clone())?
+        } else {
+            ToolContext {
+                session_log: Some(log_path.clone()),
+                unattended_log: Some(logging::unattended_log_path()),
+                fallout4_dir: config.fallout4_dir.clone(),
+                ..ToolContext::default()
+            }
         };
 
         Ok(Self {
@@ -259,56 +221,11 @@ fn capability_step_numbers(capability: OperationCapability) -> Vec<u8> {
         .collect()
 }
 
-#[derive(Debug, Clone)]
-struct CkpeInstallation {
-    file_name: String,
-    log_file: String,
-    log_path: PathBuf,
-}
-
-fn load_ckpe_installation(fallout4_dir: &Path) -> Result<CkpeInstallation> {
-    let kind = validation::detect_ckpe_config_kind(fallout4_dir);
-    let file_name = kind.file_name().to_string();
-    let ckpe_path = fallout4_dir.join(&file_name);
-
-    if !ckpe_path.is_file() {
-        return Err(Error::CkpeConfig(format!(
-            "CKPE not configured. File {file_name} missing"
-        )));
-    }
-
-    let contents = std::fs::read_to_string(&ckpe_path)?;
-    let (kind, log_file) = validation::validate_ckpe_config(fallout4_dir, &contents)?;
-
-    Ok(CkpeInstallation {
-        file_name: kind.file_name().to_string(),
-        log_path: resolve_ck_log_path(fallout4_dir, &log_file),
-        log_file,
-    })
-}
-
-fn resolve_ck_log_path(fallout4_dir: &Path, log_setting: &str) -> PathBuf {
-    let path = Path::new(log_setting);
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        fallout4_dir.join(path)
-    }
-}
-
-fn validate_xedit_scripts_when_available(exe_dir: &Path, tools: &ToolPaths) -> Result<()> {
-    if let Some(ref fo4edit) = tools.fo4edit {
-        let scripts_dir = fo4edit.parent().unwrap_or(exe_dir).join("Edit Scripts");
-        validation::validate_required_xedit_scripts(&scripts_dir)?;
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::PluginIdentity;
+    use crate::discovery::ToolPaths;
     use crate::tools::CkOperation;
     use std::fs;
     use tempfile::tempdir;
@@ -333,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn request_to_project_config_uses_fo4_override_for_xedit_data() {
+    fn request_to_project_config_uses_probe_data_dir() {
         let request = WorkflowRequest::new(
             BuildMode::Filtered,
             ArchiveTool::BSArch,
@@ -342,17 +259,17 @@ mod tests {
             None,
             Some(PathBuf::from(r"D:\Games\Fallout4")),
         );
+        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
+            fallout4_dir: Some(PathBuf::from(r"D:\Games\Fallout4")),
+            ..ToolPaths::default()
+        })
+        .unwrap();
 
-        let config = request
-            .to_project_config(PathBuf::from(r"C:\DetectedFallout4"), None, None)
-            .unwrap();
+        let config = request.to_project_config(&probe).unwrap();
 
         assert_eq!(config.build_mode, BuildMode::Filtered);
         assert_eq!(config.archive_tool, ArchiveTool::BSArch);
-        assert_eq!(
-            config.xedit_data_dir.as_deref(),
-            Some(Path::new(r"D:\Games\Fallout4\Data"))
-        );
+        assert_eq!(config.data_dir, PathBuf::from(r"D:\Games\Fallout4\Data"));
     }
 
     #[test]
@@ -367,11 +284,12 @@ mod tests {
         )
         .unwrap();
 
-        let tools = ToolPaths {
+        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
             fallout4_dir: Some(fo4.clone()),
             creation_kit: Some(fo4.join("CreationKit.exe")),
             ..ToolPaths::default()
-        };
+        })
+        .unwrap();
         let request = WorkflowRequest::new(
             BuildMode::Clean,
             ArchiveTool::Archive2,
@@ -381,7 +299,7 @@ mod tests {
             None,
         );
 
-        let run = WorkflowRun::prepare(&request, dir.path(), tools).unwrap();
+        let run = WorkflowRun::prepare(&request, dir.path(), &probe).unwrap();
 
         assert_eq!(run.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
         assert_eq!(
@@ -393,7 +311,7 @@ mod tests {
             diagnostic,
             RunDiagnostic::LaterStepsNotImplemented { .. }
         )));
-        assert_eq!(run.config().ck_log_path, Some(fo4.join("CK.log")));
+        assert_eq!(run.tool_context().ck_log_path, fo4.join("CK.log"));
     }
 
     #[test]
@@ -408,11 +326,12 @@ mod tests {
         )
         .unwrap();
 
-        let tools = ToolPaths {
+        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
             fallout4_dir: Some(fo4),
             creation_kit: Some(dir.path().join("Fallout4").join("CreationKit.exe")),
             ..ToolPaths::default()
-        };
+        })
+        .unwrap();
         let request = WorkflowRequest::new(
             BuildMode::Clean,
             ArchiveTool::Archive2,
@@ -421,7 +340,7 @@ mod tests {
             None,
             None,
         );
-        let run = WorkflowRun::prepare(&request, dir.path(), tools).unwrap();
+        let run = WorkflowRun::prepare(&request, dir.path(), &probe).unwrap();
         let executor = WorkflowOperationExecutor::new_with_capability(
             NoopAdapters,
             OperationCapability::new(&[]),
@@ -434,5 +353,37 @@ mod tests {
             Error::OperationCapabilityMismatch { planned, executor }
                 if planned == vec![1] && executor.is_empty()
         ));
+    }
+
+    #[test]
+    fn prepare_tolerates_non_utf8_ckpe_config_bytes() {
+        let dir = tempdir().unwrap();
+        let fo4 = dir.path().join("Fallout4");
+        fs::create_dir_all(&fo4).unwrap();
+        fs::write(fo4.join("CreationKit.exe"), b"").unwrap();
+        fs::write(
+            fo4.join("fallout4_test.ini"),
+            b"[CreationKit]\nBSHandleRefObjectPatch=true\n[CreationKit_Log]\nOutputFile=CK.log\n;\xFF\n",
+        )
+        .unwrap();
+
+        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
+            fallout4_dir: Some(fo4.clone()),
+            creation_kit: Some(fo4.join("CreationKit.exe")),
+            ..ToolPaths::default()
+        })
+        .unwrap();
+        let request = WorkflowRequest::new(
+            BuildMode::Clean,
+            ArchiveTool::Archive2,
+            PluginIdentity::parse("MyMod"),
+            true,
+            None,
+            None,
+        );
+
+        let run = WorkflowRun::prepare(&request, dir.path(), &probe).unwrap();
+
+        assert_eq!(run.tool_context().ck_log_path, fo4.join("CK.log"));
     }
 }

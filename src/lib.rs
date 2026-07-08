@@ -12,9 +12,12 @@ pub mod interactive;
 pub mod logging;
 pub mod run;
 pub mod timing;
+pub mod toolchain;
 pub mod tools;
 pub mod validation;
 pub mod workflow;
+
+mod text;
 
 pub use cli::Cli;
 pub use config::{ArchiveTool, BuildMode, ProjectConfig, WorkflowStep};
@@ -24,6 +27,10 @@ pub use intake::{
     WorkflowRequestIntake,
 };
 pub use run::{RunDiagnostic, WorkflowRequest, WorkflowRun};
+pub use toolchain::{
+    PluginReadiness, ToolchainDiagnostic, ToolchainRequirements, WorkflowToolchain,
+    WorkflowToolchainProbe,
+};
 pub use workflow::operations::{
     OperationAdapters, ProductionOperationAdapters, WorkflowOperationExecutor,
 };
