@@ -33,3 +33,17 @@ cargo clippy             # Lint with pedantic warnings enabled
 - [docs/behaviors.md](docs/behaviors.md) - Key behaviors and UX expectations to preserve
 - [docs/technical.md](docs/technical.md) - Windows APIs, recommended crates, code style, testing
 - [docs/future-features.md](docs/future-features.md) - Post-scaffold implementation backlog
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in GitHub Issues; external pull requests are not a triage request surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The canonical triage roles use their default same-name GitHub labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses a single-context domain documentation layout. See `docs/agents/domain.md`.
