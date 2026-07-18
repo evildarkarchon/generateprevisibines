@@ -167,8 +167,6 @@ mod tests {
     use std::cell::RefCell;
     use std::path::PathBuf;
 
-    use clap::Parser;
-
     use super::*;
     use crate::config::{ArchiveTool, WorkflowStep};
 
@@ -215,7 +213,14 @@ mod tests {
 
     #[test]
     fn cli_plugin_continue_yields_non_interactive_request() {
-        let cli = Cli::try_parse_from(["generateprevisibines", "--filtered", "MyMod"]).unwrap();
+        let cli = Cli::try_parse_from([
+            "generateprevisibines",
+            "-FiLtErEd",
+            "-BsArCh",
+            r"-fO4:C:\Fallout4",
+            "MyMod",
+        ])
+        .unwrap();
         let intake = WorkflowRequestIntake::new(
             RecordingPrompts::default().with_ready_actions(vec![ExistingPluginAction::Continue]),
         );
@@ -228,8 +233,12 @@ mod tests {
         let request = intake.resolve_request(&cli, &probe).unwrap().unwrap();
 
         assert_eq!(request.build_mode, BuildMode::Filtered);
-        assert_eq!(request.archive_tool, ArchiveTool::Archive2);
+        assert_eq!(request.archive_tool, ArchiveTool::BSArch);
         assert_eq!(request.plugin.file_name, "MyMod.esp");
+        assert_eq!(
+            request.fallout4_override.as_deref(),
+            Some(std::path::Path::new(r"C:\Fallout4"))
+        );
         assert!(request.non_interactive);
     }
 

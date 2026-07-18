@@ -92,11 +92,16 @@ Options:
   -f, --filtered    Build mode: filtered
   -x, --xbox        Build mode: xbox
       --bsarch      Use BSArch instead of Archive2
-      --FO4 <PATH>  Override Fallout 4 directory
-      --dry-run       List planned workflow steps and exit
+      --FO4 <DIR>   Override Fallout 4 directory
       --resume-from N Resume from workflow step 1-8 (non-interactive)
+      --dry-run     List planned workflow steps and exit
   -h, --help        Print help
+  -V, --version     Print version
 ```
+
+Legacy batch spellings are also supported: `-clean`, `-filtered`, `-xbox`,
+`-bsarch`, and attached `-FO4:<dir>`. Legacy option names are
+case-insensitive, and legacy and modern options may be mixed in one invocation.
 
 ### Examples
 
@@ -108,16 +113,19 @@ generateprevisibines.exe MyMod.esp
 **Filtered mode:**
 ```bash
 generateprevisibines.exe -f MyMod.esp
+generateprevisibines.exe -filtered MyMod.esp
 ```
 
 **Xbox mode with BSArch:**
 ```bash
 generateprevisibines.exe -x --bsarch MyMod.esp
+generateprevisibines.exe -xbox -bsarch MyMod.esp
 ```
 
 **Custom Fallout 4 directory:**
 ```bash
 generateprevisibines.exe --FO4 "D:\Games\Fallout4" MyMod.esp
+generateprevisibines.exe "-FO4:D:\Games\Fallout4" MyMod.esp
 ```
 
 ## The 8-Step Workflow
@@ -133,17 +141,17 @@ generateprevisibines.exe --FO4 "D:\Games\Fallout4" MyMod.esp
 
 ## Build Modes
 
-### Clean Mode (`-c` or default)
+### Clean Mode (`-c`, `--clean`, `-clean`, or default)
 - Generates full precombine and previs data
 - Includes PSG compression and CDX building
 - Recommended for final releases
 
-### Filtered Mode (`-f`)
+### Filtered Mode (`-f`, `--filtered`, or `-filtered`)
 - Generates precombines and previs without extra processing
 - Skips PSG compression and CDX building
 - Faster workflow for testing
 
-### Xbox Mode (`-x`)
+### Xbox Mode (`-x`, `--xbox`, or `-xbox`)
 - Same as filtered mode but uses Xbox compression for archives
 - Required for Xbox mods
 
@@ -154,7 +162,7 @@ generateprevisibines.exe --FO4 "D:\Games\Fallout4" MyMod.esp
 - Found in `Fallout 4\Tools\Archive2\Archive2.exe`
 - **No append support** - must extract, modify, re-archive
 
-### BSArch (`--bsarch`)
+### BSArch (`--bsarch` or `-bsarch`)
 - Community tool with better performance
 - Can append to existing archives
 - Searched in order:

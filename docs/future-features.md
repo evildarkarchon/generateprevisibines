@@ -132,7 +132,7 @@ Do **not** implement these in parity work unless explicitly requested:
 src/
   main.rs           # entry, interactive + production run
   lib.rs
-  cli.rs            # Clap + batch-style argv parser
+  cli.rs            # native legacy normalization + private Clap grammar
   config.rs         # BuildMode, ArchiveTool, WorkflowStep, ProjectConfig
   interactive.rs    # plugin prompts, seed copy, resume menu
   checks.rs         # Step 1 preamble/post path checks

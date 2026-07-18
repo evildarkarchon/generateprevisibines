@@ -4,9 +4,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("invalid parameter: {0}")]
-    InvalidParameter(String),
-
     #[error("plugin name {name} has illegal characters")]
     InvalidPluginName { name: String },
 

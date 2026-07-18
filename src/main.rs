@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::Parser;
 use generateprevisibines::{
     cli::Cli,
     discovery,
