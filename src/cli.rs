@@ -3,7 +3,7 @@
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
-use clap::{Args, Parser};
+use clap::{ArgAction, Args, CommandFactory, FromArgMatches, Parser};
 
 use crate::config::{ArchiveTool, BuildMode, WorkflowStep};
 
@@ -40,7 +40,8 @@ struct RawCli {
     archive_tool: ArchiveToolFlags,
 
     /// Fallout 4 install directory (`-FO4:directory` in batch).
-    #[arg(long = "FO4", value_name = "DIR")]
+    // The single-value action deliberately rejects repetitions, even when both paths match.
+    #[arg(long = "FO4", value_name = "DIR", action = ArgAction::Set)]
     fo4_dir: Option<PathBuf>,
 
     /// Plugin name (e.g. `MyMod` or `MyMod.esp`). Non-interactive when provided.
@@ -48,7 +49,13 @@ struct RawCli {
     plugin: Option<String>,
 
     /// Resume workflow from step 1–8 (non-interactive).
-    #[arg(long, value_name = "N", value_parser = parse_resume_step)]
+    // Resume intent must be singular; accepting the last occurrence would hide ambiguous input.
+    #[arg(
+        long,
+        value_name = "N",
+        value_parser = parse_resume_step,
+        action = ArgAction::Set
+    )]
     resume_from: Option<WorkflowStep>,
 
     /// List planned workflow steps and exit (scaffold diagnostic).
@@ -103,7 +110,8 @@ impl BuildModeFlags {
 #[derive(Debug, Args, Clone, Copy, Default)]
 struct ArchiveToolFlags {
     /// Use `BSArch` instead of Archive2.
-    #[arg(long = "bsarch")]
+    // Unlike same-mode aliases, duplicate archive selectors are ambiguous and must remain errors.
+    #[arg(long = "bsarch", action = ArgAction::SetTrue)]
     bsarch: bool,
 }
 
@@ -157,7 +165,7 @@ impl Cli {
         I: IntoIterator<Item = T>,
         T: Into<OsString>,
     {
-        RawCli::parse_from(normalize_compatible_args(args)).into()
+        Self::try_parse_from(args).unwrap_or_else(|error| error.exit())
     }
 
     /// Try to parse a native argument vector after normalizing legacy batch tokens.
@@ -168,7 +176,7 @@ impl Cli {
         I: IntoIterator<Item = T>,
         T: Into<OsString>,
     {
-        RawCli::try_parse_from(normalize_compatible_args(args)).map(Into::into)
+        try_parse_normalized_args(normalize_compatible_args(args)).map(Into::into)
     }
 
     /// Return the selected build mode, defaulting to clean.
@@ -182,6 +190,36 @@ impl Cli {
     pub const fn archive_tool(&self) -> ArchiveTool {
         self.archive_tool
     }
+}
+
+/// Parse normalized arguments while retaining the built command for complete Clap diagnostics.
+fn try_parse_normalized_args(args: Vec<OsString>) -> std::result::Result<RawCli, clap::Error> {
+    let mut command = RawCli::command();
+    let mut matches = match command.try_get_matches_from_mut(args) {
+        Ok(matches) => matches,
+        Err(error) => return Err(with_usage_context(error, &mut command)),
+    };
+
+    RawCli::from_arg_matches_mut(&mut matches).map_err(|error| {
+        let formatted_error = error.format(&mut command);
+        with_usage_context(formatted_error, &mut command)
+    })
+}
+
+/// Add generated usage to a failing Clap diagnostic when its error kind omits that context.
+fn with_usage_context(mut error: clap::Error, command: &mut clap::Command) -> clap::Error {
+    use clap::error::{ContextKind, ContextValue};
+
+    // Clap omits usage for value-validation and empty-value errors. Filling only absent context
+    // keeps its original error kind and message while making every command-line failure actionable.
+    if error.use_stderr() && error.get(ContextKind::Usage).is_none() {
+        error.insert(
+            ContextKind::Usage,
+            ContextValue::StyledStr(command.render_usage()),
+        );
+    }
+
+    error
 }
 
 /// Normalize legacy option spellings before the private Clap grammar sees them.
@@ -264,15 +302,31 @@ mod tests {
 
     use super::*;
 
-    const BUILD_MODE_ALIASES: &[(BuildMode, &[&str])] = &[
-        (BuildMode::Clean, &["--clean", "-c", "-clean"]),
-        (BuildMode::Filtered, &["--filtered", "-f", "-filtered"]),
-        (BuildMode::Xbox, &["--xbox", "-x", "-xbox"]),
+    const BUILD_MODE_ALIASES_AND_LEGACY_CASE_VARIANTS: &[(BuildMode, &[&str])] = &[
+        (BuildMode::Clean, &["--clean", "-c", "-clean", "-ClEaN"]),
+        (
+            BuildMode::Filtered,
+            &["--filtered", "-f", "-filtered", "-FiLtErEd"],
+        ),
+        (BuildMode::Xbox, &["--xbox", "-x", "-xbox", "-XbOx"]),
     ];
 
+    const BSARCH_ALIASES_AND_LEGACY_CASE_VARIANTS: &[&str] = &["--bsarch", "-bsarch", "-BsArCh"];
+
+    /// Return the Clap error for an invalid public-parser invocation and verify usage context.
+    fn clap_error_with_usage(args: &[&str]) -> clap::Error {
+        let error = Cli::try_parse_from(args.iter().copied()).unwrap_err();
+        let diagnostic = error.to_string();
+        assert!(
+            diagnostic.contains("Usage:"),
+            "missing usage context for {args:?}: {diagnostic}"
+        );
+        error
+    }
+
     #[test]
-    fn every_documented_build_mode_alias_parses() {
-        for &(expected, aliases) in BUILD_MODE_ALIASES {
+    fn every_build_mode_alias_and_legacy_case_variant_parses() {
+        for &(expected, aliases) in BUILD_MODE_ALIASES_AND_LEGACY_CASE_VARIANTS {
             for &alias in aliases {
                 let cli = Cli::try_parse_from(["generateprevisibines", alias]).unwrap();
                 assert_eq!(cli.build_mode(), expected, "alias: {alias}");
@@ -282,26 +336,22 @@ mod tests {
 
     #[test]
     fn legacy_choices_are_case_insensitive() {
-        for (flag, expected) in [
-            ("-ClEaN", BuildMode::Clean),
-            ("-FiLtErEd", BuildMode::Filtered),
-            ("-XbOx", BuildMode::Xbox),
-        ] {
-            let cli = Cli::try_parse_from(["generateprevisibines", flag]).unwrap();
-            assert_eq!(cli.build_mode(), expected);
+        for &alias in BSARCH_ALIASES_AND_LEGACY_CASE_VARIANTS {
+            let cli = Cli::try_parse_from(["generateprevisibines", alias]).unwrap();
+            assert_eq!(cli.archive_tool(), ArchiveTool::BSArch, "alias: {alias}");
         }
 
-        let cli = Cli::try_parse_from([
-            "generateprevisibines",
-            "-BsArCh",
-            "-fO4:D:\\Games\\Fallout 4",
-        ])
-        .unwrap();
-        assert_eq!(cli.archive_tool(), ArchiveTool::BSArch);
-        assert_eq!(
-            cli.fo4_dir.as_deref(),
-            Some(std::path::Path::new(r"D:\Games\Fallout 4"))
-        );
+        for args in [
+            ["generateprevisibines", "-FO4:D:\\Games\\Fallout 4"],
+            ["generateprevisibines", "-fO4:D:\\Games\\Fallout 4"],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert_eq!(
+                cli.fo4_dir.as_deref(),
+                Some(std::path::Path::new(r"D:\Games\Fallout 4")),
+                "arguments: {args:?}"
+            );
+        }
     }
 
     #[test]
@@ -366,7 +416,7 @@ mod tests {
 
     #[test]
     fn repeated_aliases_for_the_same_build_mode_are_idempotent() {
-        for &(expected, aliases) in BUILD_MODE_ALIASES {
+        for &(expected, aliases) in BUILD_MODE_ALIASES_AND_LEGACY_CASE_VARIANTS {
             for &first in aliases {
                 for &second in aliases {
                     let cli = Cli::try_parse_from(["generateprevisibines", first, second]).unwrap();
@@ -382,14 +432,18 @@ mod tests {
 
     #[test]
     fn different_build_modes_conflict_in_any_order_or_spelling() {
-        for (left_index, &(_, left_aliases)) in BUILD_MODE_ALIASES.iter().enumerate() {
-            for &(_, right_aliases) in &BUILD_MODE_ALIASES[left_index + 1..] {
+        for (left_index, &(_, left_aliases)) in BUILD_MODE_ALIASES_AND_LEGACY_CASE_VARIANTS
+            .iter()
+            .enumerate()
+        {
+            for &(_, right_aliases) in
+                &BUILD_MODE_ALIASES_AND_LEGACY_CASE_VARIANTS[left_index + 1..]
+            {
                 for &left in left_aliases {
                     for &right in right_aliases {
                         for (first, second) in [(left, right), (right, left)] {
                             let error =
-                                Cli::try_parse_from(["generateprevisibines", first, second])
-                                    .unwrap_err();
+                                clap_error_with_usage(&["generateprevisibines", first, second]);
                             assert_eq!(
                                 error.kind(),
                                 ErrorKind::ArgumentConflict,
@@ -403,33 +457,90 @@ mod tests {
     }
 
     #[test]
-    fn repeated_non_build_choices_are_rejected() {
+    fn repeated_bsarch_aliases_are_rejected() {
+        for &first in BSARCH_ALIASES_AND_LEGACY_CASE_VARIANTS {
+            for &second in BSARCH_ALIASES_AND_LEGACY_CASE_VARIANTS {
+                let error = clap_error_with_usage(&["generateprevisibines", first, second]);
+                assert_eq!(
+                    error.kind(),
+                    ErrorKind::ArgumentConflict,
+                    "repeated BSArch aliases: {first}, {second}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_fallout4_overrides_are_rejected() {
         for args in [
-            vec!["generateprevisibines", "-bsarch", "--bsarch"],
-            vec![
+            &[
                 "generateprevisibines",
                 r"-FO4:D:\Games\Fallout 4",
+                r"-fO4:D:\Games\Fallout 4",
+            ][..],
+            &[
+                "generateprevisibines",
+                r"-FO4:D:\Games\Fallout 4",
+                r"-FO4:E:\Fallout 4",
+            ],
+            &[
+                "generateprevisibines",
+                "--FO4",
+                r"D:\Games\Fallout 4",
                 "--FO4",
                 r"D:\Games\Fallout 4",
             ],
-            vec![
+            &[
                 "generateprevisibines",
-                "--resume-from",
-                "6",
-                "--resume-from",
-                "6",
+                "--FO4",
+                r"D:\Games\Fallout 4",
+                r"-FO4:E:\Fallout 4",
+            ],
+            &[
+                "generateprevisibines",
+                r"-FO4:D:\Games\Fallout 4",
+                "--FO4",
+                r"E:\Fallout 4",
             ],
         ] {
-            let error = Cli::try_parse_from(args).unwrap_err();
+            let error = clap_error_with_usage(args);
             assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
         }
     }
 
     #[test]
-    fn empty_fallout4_overrides_are_rejected() {
-        assert!(Cli::try_parse_from(["generateprevisibines", "-FO4:"]).is_err());
-        assert!(Cli::try_parse_from(["generateprevisibines", "--FO4", ""]).is_err());
-        assert!(Cli::try_parse_from(["generateprevisibines", "--FO4="]).is_err());
+    fn repeated_resume_steps_are_rejected() {
+        for args in [
+            [
+                "generateprevisibines",
+                "--resume-from",
+                "6",
+                "--resume-from",
+                "6",
+            ],
+            [
+                "generateprevisibines",
+                "--resume-from",
+                "3",
+                "--resume-from",
+                "7",
+            ],
+        ] {
+            let error = clap_error_with_usage(&args);
+            assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
+        }
+    }
+
+    #[test]
+    fn empty_fallout4_overrides_are_rejected_with_usage() {
+        for args in [
+            &["generateprevisibines", "-FO4:"][..],
+            &["generateprevisibines", "-fO4:"],
+            &["generateprevisibines", "--FO4", ""],
+            &["generateprevisibines", "--FO4="],
+        ] {
+            clap_error_with_usage(args);
+        }
     }
 
     #[test]
@@ -450,15 +561,28 @@ mod tests {
 
     #[test]
     fn unknown_options_and_multiple_plugins_use_clap_errors() {
-        let unknown = Cli::try_parse_from(["generateprevisibines", "-notreal"]).unwrap_err();
-        assert_eq!(unknown.kind(), ErrorKind::UnknownArgument);
+        for args in [
+            ["generateprevisibines", "-notreal"],
+            ["generateprevisibines", "--not-real"],
+        ] {
+            let unknown = clap_error_with_usage(&args);
+            assert_eq!(unknown.kind(), ErrorKind::UnknownArgument);
+        }
 
         let multiple_plugins =
-            Cli::try_parse_from(["generateprevisibines", "FirstMod", "SecondMod"]).unwrap_err();
+            clap_error_with_usage(&["generateprevisibines", "FirstMod", "--dry-run", "SecondMod"]);
         assert!(matches!(
             multiple_plugins.kind(),
             ErrorKind::UnknownArgument | ErrorKind::TooManyValues
         ));
+    }
+
+    #[test]
+    fn invalid_resume_steps_use_clap_errors_with_usage() {
+        for value in ["0", "9", "not-a-number"] {
+            let error = clap_error_with_usage(&["generateprevisibines", "--resume-from", value]);
+            assert_eq!(error.kind(), ErrorKind::ValueValidation, "value: {value}");
+        }
     }
 
     #[test]

@@ -88,26 +88,45 @@ Arguments:
   [PLUGIN]  Plugin name (e.g., MyMod.esp)
 
 Options:
-  -c, --clean       Build mode: clean (default)
-  -f, --filtered    Build mode: filtered
-  -x, --xbox        Build mode: xbox
-      --bsarch      Use BSArch instead of Archive2
-      --FO4 <DIR>   Override Fallout 4 directory
-      --resume-from N Resume from workflow step 1-8 (non-interactive)
-      --dry-run     List planned workflow steps and exit
-  -h, --help        Print help
-  -V, --version     Print version
+  -c, --clean            Build mode: clean (default)
+  -f, --filtered         Build mode: filtered (skips PSG and CDX)
+  -x, --xbox             Build mode: Xbox compression (also skips PSG and CDX)
+      --bsarch           Use BSArch instead of Archive2
+      --FO4 <DIR>        Override the Fallout 4 installation directory
+      --resume-from <N>  Resume from workflow step 1-8 (non-interactive)
+      --dry-run          List planned workflow steps and exit
+  -h, --help             Print help
+  -V, --version          Print version
 ```
 
 Legacy batch spellings are also supported: `-clean`, `-filtered`, `-xbox`,
 `-bsarch`, and attached `-FO4:<dir>`. Legacy option names are
 case-insensitive, and legacy and modern options may be mixed in one invocation.
 
+### Choice and repetition rules
+
+| Choice | Supported spellings | Repetition rule |
+|--------|---------------------|-----------------|
+| Clean mode | `-c`, `--clean`, `-clean` | Aliases for clean may repeat |
+| Filtered mode | `-f`, `--filtered`, `-filtered` | Aliases for filtered may repeat |
+| Xbox mode | `-x`, `--xbox`, `-xbox` | Aliases for Xbox may repeat |
+| BSArch | `--bsarch`, `-bsarch` | May appear once |
+| Fallout 4 directory | `--FO4 <dir>`, `-FO4:<dir>` | May appear once and must not be empty |
+| Resume step | `--resume-from <N>` | May appear once; `N` must be 1-8 |
+| Plugin | one positional `PLUGIN` | May appear once or be omitted for interactive intake |
+
+Aliases for one build mode can be mixed, such as `-filtered --filtered`.
+Choosing different build modes in one invocation is an error, regardless of
+spelling or order. Unknown options and all other repeated single choices are
+reported by Clap with command usage.
+
 ### Examples
 
 **Clean mode (default):**
 ```bash
 generateprevisibines.exe MyMod.esp
+generateprevisibines.exe -c MyMod.esp
+generateprevisibines.exe -clean MyMod.esp
 ```
 
 **Filtered mode:**
