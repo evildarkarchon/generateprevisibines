@@ -289,6 +289,26 @@ impl ToolchainRequirements {
         }
     }
 
+    /// Create the static readiness requirement for a Creation Kit-backed operation.
+    #[must_use]
+    pub const fn creation_kit() -> Self {
+        Self {
+            creation_kit: true,
+            fo4edit: false,
+            archive: false,
+        }
+    }
+
+    /// Combine readiness categories required by multiple Workflow Operations.
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self {
+            creation_kit: self.creation_kit || other.creation_kit,
+            fo4edit: self.fo4edit || other.fo4edit,
+            archive: self.archive || other.archive,
+        }
+    }
+
     /// Mark Creation Kit and CKPE as required.
     pub const fn require_creation_kit(&mut self) {
         self.creation_kit = true;

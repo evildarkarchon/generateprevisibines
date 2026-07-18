@@ -6,13 +6,20 @@
 use crate::config::{BuildMode, WorkflowStep};
 use crate::error::{Error, Result};
 use crate::run::WorkflowRun;
+use crate::toolchain::ToolchainRequirements;
 use crate::tools::CkOperation;
 
-use super::OperationAdapters;
 use super::precombine_workspace::PrecombineWorkspace;
+use super::{OperationAdapters, WorkflowOperationDefinition};
+
+pub(super) const DEFINITION: WorkflowOperationDefinition = WorkflowOperationDefinition::new(
+    WorkflowStep::GeneratePrecombines,
+    ToolchainRequirements::creation_kit(),
+    run,
+);
 
 /// Run the Step 1 Generate Precombines Operation for a prepared Workflow Run.
-pub(super) fn run<A: OperationAdapters>(run: &WorkflowRun, adapters: &A) -> Result<()> {
+pub(super) fn run(run: &WorkflowRun, adapters: &dyn OperationAdapters) -> Result<()> {
     let config = run.config();
     let workspace = PrecombineWorkspace::new(config);
     maybe_clear_precombined_on_resume(run, adapters, &workspace)?;
@@ -32,9 +39,9 @@ pub(super) fn run<A: OperationAdapters>(run: &WorkflowRun, adapters: &A) -> Resu
     Ok(())
 }
 
-fn maybe_clear_precombined_on_resume<A: OperationAdapters>(
+fn maybe_clear_precombined_on_resume(
     run: &WorkflowRun,
-    adapters: &A,
+    adapters: &dyn OperationAdapters,
     workspace: &PrecombineWorkspace<'_>,
 ) -> Result<()> {
     let config = run.config();

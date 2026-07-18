@@ -16,7 +16,111 @@ use crate::workflow::OperationCapability;
 mod generate_precombines;
 mod precombine_workspace;
 
-const PRODUCTION_RUNNABLE_STEPS: &[WorkflowStep] = &[WorkflowStep::GeneratePrecombines];
+macro_rules! register_production_operations {
+    ($($operation:expr),+ $(,)?) => {
+        const PRODUCTION_OPERATION_SOURCE: ProductionOperationSource =
+            ProductionOperationSource::new(&[$($operation),+]);
+
+        // Ticket #8 removes this compatibility slice; generate it here so registration cannot drift meanwhile.
+        const PRODUCTION_RUNNABLE_STEPS: &[WorkflowStep] = &[$(($operation).step),+];
+    };
+}
+
+register_production_operations!(generate_precombines::DEFINITION);
+
+type OperationExecution = fn(&WorkflowRun, &dyn OperationAdapters) -> Result<()>;
+
+#[derive(Debug, Clone, Copy)]
+struct WorkflowOperationDefinition {
+    step: WorkflowStep,
+    toolchain_requirements: ToolchainRequirements,
+    execute: OperationExecution,
+}
+
+impl WorkflowOperationDefinition {
+    const fn new(
+        step: WorkflowStep,
+        toolchain_requirements: ToolchainRequirements,
+        execute: OperationExecution,
+    ) -> Self {
+        Self {
+            step,
+            toolchain_requirements,
+            execute,
+        }
+    }
+}
+
+/// Immutable view of the Workflow Operations implemented by the production build.
+#[derive(Debug, Clone, Copy)]
+pub struct ProductionOperationSource {
+    operations: &'static [WorkflowOperationDefinition],
+}
+
+impl ProductionOperationSource {
+    const fn new(operations: &'static [WorkflowOperationDefinition]) -> Self {
+        Self { operations }
+    }
+
+    /// Whether the production build has an implementation for a Workflow Step.
+    #[must_use]
+    pub fn contains(self, step: WorkflowStep) -> bool {
+        self.operation_for_step(step).is_some()
+    }
+
+    /// Filter planned steps to registered operations without changing plan order.
+    #[must_use]
+    pub fn filter_steps(self, steps: &[WorkflowStep]) -> Vec<WorkflowStep> {
+        steps
+            .iter()
+            .copied()
+            .filter(|step| self.contains(*step))
+            .collect()
+    }
+
+    /// Aggregate static readiness requirements for registered steps in a Workflow Plan.
+    #[must_use]
+    pub fn toolchain_requirements_for_steps(self, steps: &[WorkflowStep]) -> ToolchainRequirements {
+        steps
+            .iter()
+            .filter_map(|step| self.operation_for_step(*step))
+            .fold(ToolchainRequirements::none(), |requirements, operation| {
+                requirements.union(operation.toolchain_requirements)
+            })
+    }
+
+    /// Dispatch one registered Workflow Operation through the supplied adapters.
+    ///
+    /// Returns [`Error::StepNotImplemented`] when production has no operation for `step`, and
+    /// otherwise propagates errors from the selected operation's domain flow or adapters.
+    pub fn dispatch(
+        self,
+        step: WorkflowStep,
+        run: &WorkflowRun,
+        adapters: &dyn OperationAdapters,
+    ) -> Result<()> {
+        tracing::info!(step = step.number(), "{}", step.label());
+        let operation = self
+            .operation_for_step(step)
+            .ok_or_else(|| Error::StepNotImplemented(step.number()))?;
+        (operation.execute)(run, adapters)
+    }
+
+    fn operation_for_step(
+        self,
+        step: WorkflowStep,
+    ) -> Option<&'static WorkflowOperationDefinition> {
+        self.operations
+            .iter()
+            .find(|operation| operation.step == step)
+    }
+}
+
+/// Return the immutable source of Workflow Operations implemented by production.
+#[must_use]
+pub const fn production_operation_source() -> ProductionOperationSource {
+    PRODUCTION_OPERATION_SOURCE
+}
 
 /// Adapters required by Workflow Operations.
 pub trait OperationAdapters {
@@ -113,22 +217,7 @@ impl<A: OperationAdapters> WorkflowOperationExecutor<A> {
     /// Toolchain requirements for a set of runnable Workflow Operations.
     #[must_use]
     pub fn toolchain_requirements_for_steps(steps: &[WorkflowStep]) -> ToolchainRequirements {
-        let mut requirements = ToolchainRequirements::none();
-        for step in steps {
-            match step {
-                WorkflowStep::GeneratePrecombines
-                | WorkflowStep::CompressPsg
-                | WorkflowStep::BuildCdx
-                | WorkflowStep::GeneratePrevis => requirements.require_creation_kit(),
-                WorkflowStep::MergePrecombineObjects | WorkflowStep::MergePrevis => {
-                    requirements.require_fo4edit();
-                }
-                WorkflowStep::CreateBa2FromPrecombines | WorkflowStep::AddPrevisToArchive => {
-                    requirements.require_archive();
-                }
-            }
-        }
-        requirements
+        production_operation_source().toolchain_requirements_for_steps(steps)
     }
 
     /// Execute the runnable subset of a Workflow Plan.
@@ -141,11 +230,7 @@ impl<A: OperationAdapters> WorkflowOperationExecutor<A> {
 
     /// Execute one Workflow Operation.
     pub fn run_step(&self, step: WorkflowStep, run: &WorkflowRun) -> Result<()> {
-        tracing::info!(step = step.number(), "{}", step.label());
-        match step {
-            WorkflowStep::GeneratePrecombines => generate_precombines::run(run, &self.adapters),
-            _ => Err(Error::StepNotImplemented(step.number())),
-        }
+        production_operation_source().dispatch(step, run, &self.adapters)
     }
 }
 
@@ -159,6 +244,49 @@ mod tests {
     use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
     use crate::run::WorkflowRequest;
     use crate::{discovery::ToolPaths, toolchain::WorkflowToolchainProbe};
+
+    #[test]
+    fn production_source_filters_registered_steps_in_plan_order() {
+        let source = production_operation_source();
+        let planned = WorkflowStep::steps_for_mode(BuildMode::Clean);
+
+        assert!(source.contains(WorkflowStep::GeneratePrecombines));
+        assert!(!source.contains(WorkflowStep::MergePrecombineObjects));
+        assert_eq!(
+            source.filter_steps(planned),
+            vec![WorkflowStep::GeneratePrecombines]
+        );
+    }
+
+    #[test]
+    fn production_source_aggregates_requirements_only_for_registered_steps() {
+        let source = production_operation_source();
+        let requirements =
+            source.toolchain_requirements_for_steps(WorkflowStep::steps_for_mode(BuildMode::Clean));
+
+        assert!(requirements.needs_creation_kit());
+        assert!(!requirements.needs_fo4edit());
+        assert!(!requirements.needs_archive());
+
+        let unregistered_requirements = source.toolchain_requirements_for_steps(&[
+            WorkflowStep::GeneratePrevis,
+            WorkflowStep::MergePrevis,
+            WorkflowStep::AddPrevisToArchive,
+        ]);
+        assert!(!unregistered_requirements.needs_creation_kit());
+        assert!(!unregistered_requirements.needs_fo4edit());
+        assert!(!unregistered_requirements.needs_archive());
+    }
+
+    #[test]
+    fn compatibility_requirements_delegate_to_production_source() {
+        let requirements = WorkflowOperationExecutor::<ProductionOperationAdapters>::
+            toolchain_requirements_for_steps(WorkflowStep::steps_for_mode(BuildMode::Clean));
+
+        assert!(requirements.needs_creation_kit());
+        assert!(!requirements.needs_fo4edit());
+        assert!(!requirements.needs_archive());
+    }
 
     #[derive(Debug)]
     struct RecordingAdapters {
@@ -310,6 +438,22 @@ mod tests {
 
         let run = WorkflowRun::prepare(&request, dir.path(), &probe).unwrap();
         (dir, run)
+    }
+
+    #[test]
+    fn production_source_dispatches_registered_operation_through_recording_adapter() {
+        let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
+        let adapters = RecordingAdapters::new(true);
+
+        production_operation_source()
+            .dispatch(WorkflowStep::GeneratePrecombines, &run, &adapters)
+            .unwrap();
+
+        let calls = adapters.ck_calls.borrow();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, CkOperation::GeneratePrecombined);
+        assert_eq!(calls[0].1, "MyMod.esp");
+        assert_eq!(calls[0].2, "filtered all");
     }
 
     #[test]

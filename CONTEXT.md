@@ -25,7 +25,7 @@ The ordered workflow steps for a Workflow Run, including which steps belong to t
 _Avoid_: Step list, runner capability, dry-run steps
 
 **Workflow Operation**:
-The domain behavior for one planned workflow step: its preconditions, external-tool action, postconditions, warnings, cleanup, and mode-specific rules. It is the step's build meaning before any specific process, filesystem, prompt, or timing adapter is chosen.
+The domain behavior for one planned workflow step: its required toolchain readiness, preconditions, external-tool action, postconditions, warnings, cleanup, and mode-specific rules. It is the step's build meaning before any specific process, filesystem, prompt, or timing adapter is chosen. Step identity, ordering, build-mode inclusion, and resume sequencing belong to the Workflow Plan rather than the Workflow Operation.
 _Avoid_: Tool runner step, step helper, command wrapper
 
 **Generate Precombines Operation**:
