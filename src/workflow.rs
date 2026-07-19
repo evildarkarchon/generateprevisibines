@@ -4,6 +4,9 @@ pub mod operations;
 
 use crate::config::{BuildMode, WorkflowStep};
 use crate::error::{Error, Result};
+use crate::workflow::operations::{
+    ProductionOperationAdapters, WorkflowOperationExecutor, production_operation_source,
+};
 
 /// Plain description of which workflow steps the operation executor can run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,11 +54,34 @@ pub struct WorkflowPlan {
 }
 
 impl WorkflowPlan {
-    /// Build the Workflow Plan for a build mode, optional resume step, and operation capability.
+    /// Build the production Workflow Plan for a build mode and optional resume step.
     ///
     /// Returns [`Error::StepNotImplemented`] when the requested resume step is not
-    /// runnable by the capability, or when none of the planned steps can run.
-    pub fn new(
+    /// registered as a production Workflow Operation, or when none of the planned steps are
+    /// currently runnable.
+    pub fn new(build_mode: BuildMode, resume_from: Option<WorkflowStep>) -> Result<Self> {
+        let planned_steps = Self::steps_for(build_mode, resume_from);
+        let operations = production_operation_source();
+        let runnable_steps = operations.filter_steps(&planned_steps);
+        let capability =
+            WorkflowOperationExecutor::<ProductionOperationAdapters>::production_capability();
+
+        Self::from_filtered_steps(
+            planned_steps,
+            runnable_steps,
+            resume_from,
+            resume_from.is_none_or(|resume| operations.contains(resume)),
+            capability,
+        )
+    }
+
+    /// Build a Workflow Plan with synthetic capability for the temporary Workflow Run migration.
+    ///
+    /// Ticket #8 removes this compatibility constructor after Workflow Run execution no longer
+    /// stores capability separately from the production Workflow Operation source. Returns
+    /// [`Error::StepNotImplemented`] when the requested resume step or entire filtered plan is not
+    /// runnable under `capability`.
+    pub(crate) fn new_with_capability(
         build_mode: BuildMode,
         resume_from: Option<WorkflowStep>,
         capability: OperationCapability,
@@ -63,8 +89,29 @@ impl WorkflowPlan {
         let planned_steps = Self::steps_for(build_mode, resume_from);
         let runnable_steps = capability.filter_steps(&planned_steps);
 
+        Self::from_filtered_steps(
+            planned_steps,
+            runnable_steps,
+            resume_from,
+            resume_from.is_none_or(|resume| capability.can_run(resume)),
+            capability,
+        )
+    }
+
+    /// Validate filtered production or compatibility steps and assemble the immutable plan.
+    ///
+    /// `resume_is_runnable` must report membership in the same operation source or compatibility
+    /// capability that produced `runnable_steps`. Returns [`Error::StepNotImplemented`] for an
+    /// unavailable requested resume step or an empty runnable plan.
+    fn from_filtered_steps(
+        planned_steps: Vec<WorkflowStep>,
+        runnable_steps: Vec<WorkflowStep>,
+        resume_from: Option<WorkflowStep>,
+        resume_is_runnable: bool,
+        capability: OperationCapability,
+    ) -> Result<Self> {
         if let Some(resume) = resume_from
-            && !capability.can_run(resume)
+            && !resume_is_runnable
         {
             return Err(Error::StepNotImplemented(resume.number()));
         }
@@ -138,20 +185,26 @@ pub fn print_resume_menu(build_mode: BuildMode) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn all_steps_capability() -> OperationCapability {
-        OperationCapability::new(WorkflowStep::steps_for_mode(BuildMode::Clean))
-    }
 
     #[test]
     fn clean_mode_includes_eight_steps() {
-        let plan = WorkflowPlan::new(BuildMode::Clean, None, all_steps_capability()).unwrap();
-        assert_eq!(plan.planned_steps().len(), 8);
+        let steps = WorkflowPlan::steps_for(BuildMode::Clean, None);
+
+        assert_eq!(steps.len(), 8);
     }
 
     #[test]
     fn filtered_mode_skips_psg_and_cdx() {
-        let plan = WorkflowPlan::new(BuildMode::Filtered, None, all_steps_capability()).unwrap();
-        let steps = plan.planned_steps();
+        let steps = WorkflowPlan::steps_for(BuildMode::Filtered, None);
+
+        assert_eq!(steps.len(), 6);
+        assert!(!steps.contains(&WorkflowStep::CompressPsg));
+        assert!(!steps.contains(&WorkflowStep::BuildCdx));
+    }
+
+    #[test]
+    fn xbox_mode_skips_psg_and_cdx() {
+        let steps = WorkflowPlan::steps_for(BuildMode::Xbox, None);
 
         assert_eq!(steps.len(), 6);
         assert!(!steps.contains(&WorkflowStep::CompressPsg));
@@ -160,65 +213,9 @@ mod tests {
 
     #[test]
     fn resume_from_step_filters_earlier_steps() {
-        let plan = WorkflowPlan::new(
-            BuildMode::Clean,
-            Some(WorkflowStep::GeneratePrevis),
-            all_steps_capability(),
-        )
-        .unwrap();
-        let steps = plan.planned_steps();
+        let steps = WorkflowPlan::steps_for(BuildMode::Clean, Some(WorkflowStep::GeneratePrevis));
 
         assert_eq!(steps.first(), Some(&WorkflowStep::GeneratePrevis));
         assert!(!steps.contains(&WorkflowStep::GeneratePrecombines));
-    }
-
-    #[test]
-    fn capability_filters_runnable_steps() {
-        let capability = OperationCapability::new(&[WorkflowStep::GeneratePrecombines]);
-        let plan = WorkflowPlan::new(BuildMode::Clean, None, capability).unwrap();
-
-        assert_eq!(plan.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
-        assert_eq!(plan.capability(), capability);
-        assert_eq!(plan.skipped_unrunnable_count(), 7);
-        assert!(plan.is_partial_due_to_capability());
-    }
-
-    #[test]
-    fn resume_to_unrunnable_step_keeps_current_error() {
-        let capability = OperationCapability::new(&[WorkflowStep::GeneratePrecombines]);
-        let err = WorkflowPlan::new(
-            BuildMode::Clean,
-            Some(WorkflowStep::GeneratePrevis),
-            capability,
-        )
-        .unwrap_err();
-
-        assert!(matches!(err, Error::StepNotImplemented(6)));
-    }
-
-    #[test]
-    fn resume_to_mode_skipped_step_reports_requested_step() {
-        let capability = OperationCapability::new(&[WorkflowStep::GeneratePrecombines]);
-        let err = WorkflowPlan::new(
-            BuildMode::Filtered,
-            Some(WorkflowStep::CompressPsg),
-            capability,
-        )
-        .unwrap_err();
-
-        assert!(matches!(err, Error::StepNotImplemented(4)));
-    }
-
-    #[test]
-    fn no_runnable_steps_errors_on_first_planned_step() {
-        let capability = OperationCapability::new(&[]);
-        let err = WorkflowPlan::new(
-            BuildMode::Clean,
-            Some(WorkflowStep::GeneratePrevis),
-            capability,
-        )
-        .unwrap_err();
-
-        assert!(matches!(err, Error::StepNotImplemented(6)));
     }
 }

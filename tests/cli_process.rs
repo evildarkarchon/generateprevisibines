@@ -25,11 +25,30 @@ fn legacy_and_modern_arguments_share_the_production_dry_run_path() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
     assert!(stdout.contains("Build mode: filtered"), "stdout: {stdout}");
     assert!(stdout.contains("Archiver: BSArch"), "stdout: {stdout}");
     assert!(
+        stdout.contains(
+            "Planned steps:\n  1 - Generate Precombines Via CK\n  2 - Merge PrecombineObjects.esp Via xEdit\n  3 - Create BA2 Archive from Precombines\n  6 - Generate Previs Via CK\n  7 - Merge Previs.esp Via xEdit\n  8 - Add Previs files to BA2 Archive"
+        ),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "Note: current production capability (Step 1) would execute 1 of 6 planned steps."
+        ),
+        "stdout: {stdout}"
+    );
+    assert!(
         stdout.contains("Dry run — external tools are not invoked."),
         "stdout: {stdout}"
+    );
+    assert_eq!(
+        std::fs::read_dir(isolated_working_directory.path())
+            .unwrap()
+            .count(),
+        0,
+        "dry-run must not create logs or workflow artifacts"
     );
 }

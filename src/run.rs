@@ -82,21 +82,24 @@ pub struct WorkflowRun {
 }
 
 impl WorkflowRun {
-    /// Prepare a workflow run by validating environment facts against production capability.
+    /// Prepare a workflow run from the production-backed Workflow Plan.
+    ///
+    /// Returns the fully validated run, or propagates request validation, unimplemented resume,
+    /// toolchain readiness, log initialization, and Creation Kit context errors.
     pub fn prepare(
         request: &WorkflowRequest,
         exe_dir: &Path,
         probe: &WorkflowToolchainProbe,
     ) -> Result<Self> {
-        Self::prepare_with_capability(
-            request,
-            exe_dir,
-            probe,
-            WorkflowOperationExecutor::<ProductionOperationAdapters>::production_capability(),
-        )
+        let config = request.to_project_config(probe)?;
+        let plan = WorkflowPlan::new(config.build_mode, config.resume_from)?;
+        Self::prepare_with_plan(config, exe_dir, probe, plan)
     }
 
-    /// Prepare a workflow run by validating environment facts and building executable state.
+    /// Prepare a workflow run against synthetic capability during the ticket #8 migration.
+    ///
+    /// Returns the fully validated run, or propagates request validation, capability planning,
+    /// toolchain readiness, log initialization, and Creation Kit context errors.
     pub fn prepare_with_capability(
         request: &WorkflowRequest,
         exe_dir: &Path,
@@ -104,8 +107,21 @@ impl WorkflowRun {
         capability: OperationCapability,
     ) -> Result<Self> {
         let config = request.to_project_config(probe)?;
+        let plan =
+            WorkflowPlan::new_with_capability(config.build_mode, config.resume_from, capability)?;
+        Self::prepare_with_plan(config, exe_dir, probe, plan)
+    }
 
-        let plan = WorkflowPlan::new(config.build_mode, config.resume_from, capability)?;
+    /// Complete preparation from a validated config and its already-resolved Workflow Plan.
+    ///
+    /// Returns the ready-to-execute run, or propagates toolchain readiness, log initialization,
+    /// and Creation Kit context errors. Request and plan validation must happen before this helper.
+    fn prepare_with_plan(
+        config: ProjectConfig,
+        exe_dir: &Path,
+        probe: &WorkflowToolchainProbe,
+        plan: WorkflowPlan,
+    ) -> Result<Self> {
         let requirements =
             WorkflowOperationExecutor::<ProductionOperationAdapters>::toolchain_requirements_for_steps(
                 plan.runnable_steps(),

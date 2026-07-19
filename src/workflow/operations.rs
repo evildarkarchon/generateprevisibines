@@ -243,7 +243,34 @@ mod tests {
     use super::*;
     use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
     use crate::run::WorkflowRequest;
-    use crate::{discovery::ToolPaths, toolchain::WorkflowToolchainProbe};
+    use crate::{discovery::ToolPaths, toolchain::WorkflowToolchainProbe, workflow::WorkflowPlan};
+
+    #[test]
+    fn production_workflow_plan_filters_registered_operations() {
+        let plan = WorkflowPlan::new(BuildMode::Clean, None).unwrap();
+
+        assert_eq!(plan.planned_steps().len(), 8);
+        assert_eq!(plan.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
+        assert_eq!(plan.skipped_unrunnable_count(), 7);
+        assert!(plan.is_partial_due_to_capability());
+    }
+
+    #[test]
+    fn production_workflow_plan_rejects_unregistered_resume_step() {
+        let cases = [
+            (BuildMode::Clean, WorkflowStep::GeneratePrevis, 6),
+            (BuildMode::Filtered, WorkflowStep::CompressPsg, 4),
+        ];
+
+        for (mode, resume, expected_step) in cases {
+            let error = WorkflowPlan::new(mode, Some(resume)).unwrap_err();
+
+            assert!(
+                matches!(error, Error::StepNotImplemented(step) if step == expected_step),
+                "mode: {mode:?}, resume: {resume:?}, error: {error:?}"
+            );
+        }
+    }
 
     #[test]
     fn production_source_filters_registered_steps_in_plan_order() {
@@ -255,6 +282,31 @@ mod tests {
         assert_eq!(
             source.filter_steps(planned),
             vec![WorkflowStep::GeneratePrecombines]
+        );
+    }
+
+    #[test]
+    fn source_registration_order_does_not_change_plan_order() {
+        fn unused_execution(_run: &WorkflowRun, _adapters: &dyn OperationAdapters) -> Result<()> {
+            unreachable!("filtering registered steps must not execute operations")
+        }
+
+        const MERGE_PRECOMBINE_OBJECTS: WorkflowOperationDefinition =
+            WorkflowOperationDefinition::new(
+                WorkflowStep::MergePrecombineObjects,
+                ToolchainRequirements::none(),
+                unused_execution,
+            );
+        const REVERSED_OPERATIONS: &[WorkflowOperationDefinition] =
+            &[MERGE_PRECOMBINE_OBJECTS, generate_precombines::DEFINITION];
+        let source = ProductionOperationSource::new(REVERSED_OPERATIONS);
+
+        assert_eq!(
+            source.filter_steps(WorkflowStep::steps_for_mode(BuildMode::Clean)),
+            vec![
+                WorkflowStep::GeneratePrecombines,
+                WorkflowStep::MergePrecombineObjects,
+            ]
         );
     }
 
