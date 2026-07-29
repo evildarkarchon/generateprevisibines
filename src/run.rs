@@ -244,7 +244,7 @@ mod tests {
     use crate::discovery::ToolPaths;
     use crate::tools::CkOperation;
     use std::fs;
-    use tempfile::tempdir;
+    use tempfile::{TempDir, tempdir};
 
     #[derive(Debug)]
     struct NoopAdapters;
@@ -262,6 +262,48 @@ mod tests {
 
         fn confirm_clear_precombined(&self, _precombined_dir: &Path) -> Result<bool> {
             unreachable!("capability mismatch should stop before execution")
+        }
+    }
+
+    struct ReadyWorkflowFixture {
+        directory: TempDir,
+        fallout4_directory: PathBuf,
+        probe: WorkflowToolchainProbe,
+        request: WorkflowRequest,
+    }
+
+    /// Build a real filesystem fixture with the production Step 1 toolchain ready.
+    fn ready_workflow_fixture() -> ReadyWorkflowFixture {
+        let directory = tempdir().unwrap();
+        let fallout4_directory = directory.path().join("Fallout4");
+        fs::create_dir_all(&fallout4_directory).unwrap();
+        fs::write(fallout4_directory.join("CreationKit.exe"), b"").unwrap();
+        fs::write(
+            fallout4_directory.join("fallout4_test.ini"),
+            "[CreationKit]\nBSHandleRefObjectPatch=true\n[CreationKit_Log]\nOutputFile=CK.log\n",
+        )
+        .unwrap();
+
+        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
+            fallout4_dir: Some(fallout4_directory.clone()),
+            creation_kit: Some(fallout4_directory.join("CreationKit.exe")),
+            ..ToolPaths::default()
+        })
+        .unwrap();
+        let request = WorkflowRequest::new(
+            BuildMode::Clean,
+            ArchiveTool::Archive2,
+            PluginIdentity::parse("MyMod"),
+            true,
+            None,
+            None,
+        );
+
+        ReadyWorkflowFixture {
+            directory,
+            fallout4_directory,
+            probe,
+            request,
         }
     }
 
@@ -290,32 +332,10 @@ mod tests {
 
     #[test]
     fn prepare_creates_runnable_step_one_run() {
-        let dir = tempdir().unwrap();
-        let fo4 = dir.path().join("Fallout4");
-        fs::create_dir_all(&fo4).unwrap();
-        fs::write(fo4.join("CreationKit.exe"), b"").unwrap();
-        fs::write(
-            fo4.join("fallout4_test.ini"),
-            "[CreationKit]\nBSHandleRefObjectPatch=true\n[CreationKit_Log]\nOutputFile=CK.log\n",
-        )
-        .unwrap();
+        let fixture = ready_workflow_fixture();
 
-        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
-            fallout4_dir: Some(fo4.clone()),
-            creation_kit: Some(fo4.join("CreationKit.exe")),
-            ..ToolPaths::default()
-        })
-        .unwrap();
-        let request = WorkflowRequest::new(
-            BuildMode::Clean,
-            ArchiveTool::Archive2,
-            PluginIdentity::parse("MyMod"),
-            true,
-            None,
-            None,
-        );
-
-        let run = WorkflowRun::prepare(&request, dir.path(), &probe).unwrap();
+        let run = WorkflowRun::prepare(&fixture.request, fixture.directory.path(), &fixture.probe)
+            .unwrap();
 
         assert_eq!(run.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
         assert_eq!(
@@ -327,36 +347,36 @@ mod tests {
             diagnostic,
             RunDiagnostic::LaterStepsNotImplemented { .. }
         )));
-        assert_eq!(run.tool_context().ck_log_path, fo4.join("CK.log"));
+        assert_eq!(
+            run.tool_context().ck_log_path,
+            fixture.fallout4_directory.join("CK.log")
+        );
+    }
+
+    #[test]
+    fn prepare_with_capability_stops_at_first_unavailable_operation() {
+        let fixture = ready_workflow_fixture();
+        let capability = OperationCapability::new(&[
+            WorkflowStep::GeneratePrecombines,
+            WorkflowStep::CreateBa2FromPrecombines,
+        ]);
+
+        let run = WorkflowRun::prepare_with_capability(
+            &fixture.request,
+            fixture.directory.path(),
+            &fixture.probe,
+            capability,
+        )
+        .unwrap();
+
+        assert_eq!(run.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
     }
 
     #[test]
     fn execute_with_rejects_executor_capability_mismatch() {
-        let dir = tempdir().unwrap();
-        let fo4 = dir.path().join("Fallout4");
-        fs::create_dir_all(&fo4).unwrap();
-        fs::write(fo4.join("CreationKit.exe"), b"").unwrap();
-        fs::write(
-            fo4.join("fallout4_test.ini"),
-            "[CreationKit]\nBSHandleRefObjectPatch=true\n[CreationKit_Log]\nOutputFile=CK.log\n",
-        )
-        .unwrap();
-
-        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
-            fallout4_dir: Some(fo4),
-            creation_kit: Some(dir.path().join("Fallout4").join("CreationKit.exe")),
-            ..ToolPaths::default()
-        })
-        .unwrap();
-        let request = WorkflowRequest::new(
-            BuildMode::Clean,
-            ArchiveTool::Archive2,
-            PluginIdentity::parse("MyMod"),
-            true,
-            None,
-            None,
-        );
-        let run = WorkflowRun::prepare(&request, dir.path(), &probe).unwrap();
+        let fixture = ready_workflow_fixture();
+        let run = WorkflowRun::prepare(&fixture.request, fixture.directory.path(), &fixture.probe)
+            .unwrap();
         let executor = WorkflowOperationExecutor::new_with_capability(
             NoopAdapters,
             OperationCapability::new(&[]),

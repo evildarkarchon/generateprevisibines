@@ -1,11 +1,11 @@
 # Graph Report - generateprevisibines  (2026-07-28)
 
 ## Corpus Check
-- 48 files · ~33,935 words
+- 48 files · ~33,683 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 599 nodes · 1424 edges · 21 communities
+- 596 nodes · 1416 edges · 21 communities
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 19 edges (avg confidence: 0.89)
 - Token cost: 0 input · 0 output
 
@@ -21,7 +21,7 @@
 - cli.rs
 - WorkflowRun
 - Graphify Pipeline
-- BuildMode
+- interactive.rs
 - PluginIdentity
 - precombine_workspace.rs
 - WorkflowStep
@@ -34,7 +34,7 @@
 - .run_script
 - read_lossy
 - Q: $improve-codebase-architecture
-- ProjectConfig
+- BuildMode
 - Q: How are the Workflow Plan and dry-run preview built from registered Workflow Operations, including ordering, resume behavior, StepNotImplemented, and production operation availability?
 
 ## God Nodes (most connected - your core abstractions)
@@ -63,8 +63,8 @@
 
 ## Import Cycles
 - 1-file cycle: `src/error.rs -> src/error.rs`
-- 2-file cycle: `src/workflow.rs -> src/workflow/operations.rs -> src/workflow.rs`
 - 2-file cycle: `src/run.rs -> src/workflow/operations.rs -> src/run.rs`
+- 2-file cycle: `src/workflow.rs -> src/workflow/operations.rs -> src/workflow.rs`
 - 2-file cycle: `src/tools/creation_kit.rs -> src/tools/mod.rs -> src/tools/creation_kit.rs`
 - 3-file cycle: `src/interactive.rs -> src/workflow.rs -> src/workflow/operations.rs -> src/interactive.rs`
 - 3-file cycle: `src/run.rs -> src/workflow.rs -> src/workflow/operations.rs -> src/run.rs`
@@ -78,7 +78,7 @@
 
 ### Community 0 - "operations.rs"
 Cohesion: 0.07
-Nodes (45): Cell, OperationExecution, ArtifactState, compatibility_requirements_delegate_to_production_source(), prepared_run(), production_capability_starts_with_step_one_only(), production_operation_source(), production_source_aggregates_requirements_only_for_registered_steps() (+37 more)
+Nodes (44): Cell, OperationExecution, CreationKitOps, ArtifactState, compatibility_requirements_delegate_to_production_source(), OperationAdapters, prepared_run(), production_capability_starts_with_step_one_only() (+36 more)
 
 ### Community 1 - "GeneratePrevisibines"
 Cohesion: 0.06
@@ -93,16 +93,16 @@ Cohesion: 0.07
 Nodes (43): From, I, OsStr, OsString, ArchiveToolFlags, attached_legacy_fo4_accepts_a_dash_prefixed_path(), attached_legacy_fo4_preserves_native_unix_path_bytes(), attached_legacy_fo4_preserves_native_windows_path_units() (+35 more)
 
 ### Community 4 - "WorkflowRun"
-Cohesion: 0.12
-Nodes (27): capability_step_numbers(), execute_with_rejects_executor_capability_mismatch(), NoopAdapters, prepare_creates_runnable_step_one_run(), prepare_tolerates_non_utf8_ckpe_config_bytes(), prepare_with_capability_stops_at_first_unavailable_operation(), ready_workflow_fixture(), ReadyWorkflowFixture (+19 more)
+Cohesion: 0.15
+Nodes (21): capability_step_numbers(), execute_with_rejects_executor_capability_mismatch(), NoopAdapters, prepare_creates_runnable_step_one_run(), prepare_tolerates_non_utf8_ckpe_config_bytes(), prepare_with_capability_stops_at_first_unavailable_operation(), ready_workflow_fixture(), ReadyWorkflowFixture (+13 more)
 
 ### Community 5 - "Graphify Pipeline"
 Cohesion: 0.07
 Nodes (44): Folder Watch, URL Ingestion, URL Ingestion and Folder Watch Reference, Extra Exports and Benchmark Reference, Neo4j and FalkorDB Exports, Graphify MCP Server, Token Reduction Benchmark, Wiki Export (+36 more)
 
-### Community 6 - "BuildMode"
-Cohesion: 0.14
-Nodes (20): Err, FromStr, BuildMode, Result, confirm_clear_precombined(), copy_seed_plugin(), ensure_plugin_ready(), ensure_plugin_ready_rejects_existing_archive() (+12 more)
+### Community 6 - "interactive.rs"
+Cohesion: 0.20
+Nodes (16): confirm_clear_precombined(), copy_seed_plugin(), ensure_plugin_ready(), ensure_plugin_ready_rejects_existing_archive(), ExistingPluginAction, parse_existing_plugin_choice(), parse_resume_step_choice(), prompt_existing_plugin_action() (+8 more)
 
 ### Community 7 - "PluginIdentity"
 Cohesion: 0.14
@@ -114,11 +114,11 @@ Nodes (25): ck_log_has_handle_array_error(), clear_precombined_meshes_removes_di
 
 ### Community 9 - "WorkflowStep"
 Cohesion: 0.17
-Nodes (12): WorkflowStep, clean_mode_preserves_all_steps_in_canonical_order(), filtered_mode_preserves_its_canonical_membership_and_order(), OperationCapability, print_resume_menu(), resume_preserves_the_canonical_suffix(), Option, Result (+4 more)
+Nodes (12): WorkflowStep, clean_mode_includes_eight_steps(), filtered_mode_skips_psg_and_cdx(), OperationCapability, print_resume_menu(), resume_from_step_filters_earlier_steps(), Option, Result (+4 more)
 
 ### Community 10 - "creation_kit.rs"
 Cohesion: 0.10
-Nodes (14): Command, Default, Item, Iterator, CkOperation, CreationKitOps, operation_arg(), qualifier_args() (+6 more)
+Nodes (13): Command, Default, Item, Iterator, CkOperation, operation_arg(), qualifier_args(), Result (+5 more)
 
 ### Community 11 - "validation.rs"
 Cohesion: 0.16
@@ -152,9 +152,9 @@ Nodes (4): read_lossy(), Path, Result, String
 Cohesion: 0.40
 Nodes (4): Answer, Outcome, Q: $improve-codebase-architecture, Source Nodes
 
-### Community 19 - "ProjectConfig"
-Cohesion: 0.17
-Nodes (7): ProjectConfig, Option, PathBuf, Self, ArchiveOps, Path, Result
+### Community 19 - "BuildMode"
+Cohesion: 0.10
+Nodes (16): Err, FromStr, BuildMode, ProjectConfig, Option, PathBuf, Result, Self (+8 more)
 
 ### Community 20 - "Q: How are the Workflow Plan and dry-run preview built from registered Workflow Operations, including ordering, resume behavior, StepNotImplemented, and production operation availability?"
 Cohesion: 0.40
@@ -173,15 +173,15 @@ _Questions this graph is uniquely positioned to answer:_
 
 - **What is the exact relationship between `Rust Scaffold` and `Workflow Vertical Slices`?**
   _Edge tagged AMBIGUOUS (relation: conceptually_related_to) - confidence is low._
-- **Why does `WorkflowStep` connect `WorkflowStep` to `operations.rs`, `cli.rs`, `WorkflowRun`, `BuildMode`, `PluginIdentity`, `ProjectConfig`?**
+- **Why does `WorkflowStep` connect `WorkflowStep` to `operations.rs`, `cli.rs`, `WorkflowRun`, `interactive.rs`, `PluginIdentity`, `BuildMode`?**
   _High betweenness centrality (0.081) - this node is a cross-community bridge._
-- **Why does `Error` connect `cli.rs` to `operations.rs`, `toolchain.rs`, `WorkflowRun`, `BuildMode`, `PluginIdentity`, `precombine_workspace.rs`, `WorkflowStep`, `validation.rs`, `discovery.rs`?**
+- **Why does `Error` connect `cli.rs` to `operations.rs`, `toolchain.rs`, `WorkflowRun`, `interactive.rs`, `PluginIdentity`, `precombine_workspace.rs`, `WorkflowStep`, `validation.rs`, `discovery.rs`, `BuildMode`?**
   _High betweenness centrality (0.072) - this node is a cross-community bridge._
-- **Why does `BuildMode` connect `BuildMode` to `operations.rs`, `cli.rs`, `WorkflowRun`, `PluginIdentity`, `precombine_workspace.rs`, `WorkflowStep`, `validation.rs`, `ProjectConfig`?**
-  _High betweenness centrality (0.055) - this node is a cross-community bridge._
+- **Why does `BuildMode` connect `BuildMode` to `operations.rs`, `cli.rs`, `WorkflowRun`, `interactive.rs`, `PluginIdentity`, `precombine_workspace.rs`, `WorkflowStep`, `validation.rs`?**
+  _High betweenness centrality (0.056) - this node is a cross-community bridge._
 - **What connects `WorkflowRequestIntake<InteractiveWorkflowIntakePrompts>`, `WorkflowOperationExecutor<ProductionOperationAdapters>`, `Answer` to the rest of the system?**
   _20 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `operations.rs` be split into smaller, more focused modules?**
-  _Cohesion score 0.06572769953051644 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06790890269151138 - nodes in this community are weakly interconnected._
 - **Should `GeneratePrevisibines` be split into smaller, more focused modules?**
   _Cohesion score 0.060496067755595885 - nodes in this community are weakly interconnected._

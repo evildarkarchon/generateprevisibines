@@ -21,7 +21,7 @@ The external-tool readiness for a Workflow Run, including discovered tools, CKPE
 _Avoid_: ToolPaths, ToolContext, discovery result
 
 **Workflow Plan**:
-The ordered workflow steps for a Workflow Run, including which steps belong to the selected build mode, where resume starts, and which planned steps are currently runnable.
+The ordered workflow steps for a Workflow Run, including which steps belong to the selected build mode, where resume starts, and which planned steps are currently runnable. Runnability begins at the requested resume step and stops at the first unavailable Workflow Operation; it never skips an unavailable step to run a later one.
 _Avoid_: Step list, runner capability, dry-run steps
 
 **Workflow Operation**:

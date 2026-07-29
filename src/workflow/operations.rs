@@ -58,7 +58,24 @@ pub struct ProductionOperationSource {
 }
 
 impl ProductionOperationSource {
+    /// Build an immutable operation source with one definition per Workflow Step.
+    ///
+    /// Panics immediately when `operations` contains duplicate step definitions.
     const fn new(operations: &'static [WorkflowOperationDefinition]) -> Self {
+        let mut operation_index = 0;
+        while operation_index < operations.len() {
+            let mut comparison_index = operation_index + 1;
+            while comparison_index < operations.len() {
+                assert!(
+                    operations[operation_index].step.number()
+                        != operations[comparison_index].step.number(),
+                    "duplicate Workflow Operation registration"
+                );
+                comparison_index += 1;
+            }
+            operation_index += 1;
+        }
+
         Self { operations }
     }
 
@@ -68,22 +85,28 @@ impl ProductionOperationSource {
         self.operation_for_step(step).is_some()
     }
 
-    /// Filter planned steps to registered operations without changing plan order.
+    /// Return the runnable prefix of planned steps without changing plan order.
+    ///
+    /// Runnability stops at the first step without a registered Workflow Operation so a later
+    /// operation can never execute across an unavailable dependency.
     #[must_use]
     pub fn filter_steps(self, steps: &[WorkflowStep]) -> Vec<WorkflowStep> {
         steps
             .iter()
             .copied()
-            .filter(|step| self.contains(*step))
+            .take_while(|step| self.contains(*step))
             .collect()
     }
 
-    /// Aggregate static readiness requirements for registered steps in a Workflow Plan.
+    /// Aggregate static readiness requirements for the runnable prefix of a Workflow Plan.
+    ///
+    /// Requirement collection stops at the first unregistered step, matching the same dependency
+    /// boundary used to derive runnable steps.
     #[must_use]
     pub fn toolchain_requirements_for_steps(self, steps: &[WorkflowStep]) -> ToolchainRequirements {
         steps
             .iter()
-            .filter_map(|step| self.operation_for_step(*step))
+            .map_while(|step| self.operation_for_step(*step))
             .fold(ToolchainRequirements::none(), |requirements, operation| {
                 requirements.union(operation.toolchain_requirements)
             })
@@ -245,6 +268,11 @@ mod tests {
     use crate::run::WorkflowRequest;
     use crate::{discovery::ToolPaths, toolchain::WorkflowToolchainProbe, workflow::WorkflowPlan};
 
+    /// Provide an execution entry for registration-only tests that must never dispatch.
+    fn unused_execution(_run: &WorkflowRun, _adapters: &dyn OperationAdapters) -> Result<()> {
+        unreachable!("filtering registered steps must not execute operations")
+    }
+
     #[test]
     fn production_workflow_plan_filters_registered_operations() {
         let plan = WorkflowPlan::new(BuildMode::Clean, None).unwrap();
@@ -287,10 +315,6 @@ mod tests {
 
     #[test]
     fn source_registration_order_does_not_change_plan_order() {
-        fn unused_execution(_run: &WorkflowRun, _adapters: &dyn OperationAdapters) -> Result<()> {
-            unreachable!("filtering registered steps must not execute operations")
-        }
-
         const MERGE_PRECOMBINE_OBJECTS: WorkflowOperationDefinition =
             WorkflowOperationDefinition::new(
                 WorkflowStep::MergePrecombineObjects,
@@ -307,6 +331,60 @@ mod tests {
                 WorkflowStep::GeneratePrecombines,
                 WorkflowStep::MergePrecombineObjects,
             ]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate Workflow Operation registration")]
+    fn source_rejects_duplicate_step_registration() {
+        const DUPLICATE_OPERATIONS: &[WorkflowOperationDefinition] = &[
+            generate_precombines::DEFINITION,
+            generate_precombines::DEFINITION,
+        ];
+
+        let _source = ProductionOperationSource::new(DUPLICATE_OPERATIONS);
+    }
+
+    #[test]
+    fn source_stops_before_first_unregistered_planned_step() {
+        const CREATE_BA2_FROM_PRECOMBINES: WorkflowOperationDefinition =
+            WorkflowOperationDefinition::new(
+                WorkflowStep::CreateBa2FromPrecombines,
+                ToolchainRequirements::none(),
+                unused_execution,
+            );
+        const GAPPED_OPERATIONS: &[WorkflowOperationDefinition] = &[
+            CREATE_BA2_FROM_PRECOMBINES,
+            generate_precombines::DEFINITION,
+        ];
+        let source = ProductionOperationSource::new(GAPPED_OPERATIONS);
+
+        assert_eq!(
+            source.filter_steps(WorkflowStep::steps_for_mode(BuildMode::Clean)),
+            vec![WorkflowStep::GeneratePrecombines]
+        );
+    }
+
+    #[test]
+    fn source_allows_explicit_resume_at_registered_later_step() {
+        const GENERATE_PREVIS: WorkflowOperationDefinition = WorkflowOperationDefinition::new(
+            WorkflowStep::GeneratePrevis,
+            ToolchainRequirements::none(),
+            unused_execution,
+        );
+        const MERGE_PREVIS: WorkflowOperationDefinition = WorkflowOperationDefinition::new(
+            WorkflowStep::MergePrevis,
+            ToolchainRequirements::none(),
+            unused_execution,
+        );
+        const LATER_OPERATIONS: &[WorkflowOperationDefinition] = &[MERGE_PREVIS, GENERATE_PREVIS];
+        let source = ProductionOperationSource::new(LATER_OPERATIONS);
+        let resumed_steps =
+            WorkflowPlan::steps_for(BuildMode::Clean, Some(WorkflowStep::GeneratePrevis));
+
+        assert_eq!(
+            source.filter_steps(&resumed_steps),
+            vec![WorkflowStep::GeneratePrevis, WorkflowStep::MergePrevis]
         );
     }
 
@@ -328,6 +406,44 @@ mod tests {
         assert!(!unregistered_requirements.needs_creation_kit());
         assert!(!unregistered_requirements.needs_fo4edit());
         assert!(!unregistered_requirements.needs_archive());
+    }
+
+    #[test]
+    fn source_aggregates_requirements_only_for_contiguous_prefix() {
+        const FO4EDIT_REQUIREMENTS: ToolchainRequirements = {
+            let mut requirements = ToolchainRequirements::none();
+            requirements.require_fo4edit();
+            requirements
+        };
+        const ARCHIVE_REQUIREMENTS: ToolchainRequirements = {
+            let mut requirements = ToolchainRequirements::none();
+            requirements.require_archive();
+            requirements
+        };
+        const MERGE_PRECOMBINE_OBJECTS: WorkflowOperationDefinition =
+            WorkflowOperationDefinition::new(
+                WorkflowStep::MergePrecombineObjects,
+                FO4EDIT_REQUIREMENTS,
+                unused_execution,
+            );
+        const COMPRESS_PSG: WorkflowOperationDefinition = WorkflowOperationDefinition::new(
+            WorkflowStep::CompressPsg,
+            ARCHIVE_REQUIREMENTS,
+            unused_execution,
+        );
+        const GAPPED_OPERATIONS: &[WorkflowOperationDefinition] = &[
+            COMPRESS_PSG,
+            MERGE_PRECOMBINE_OBJECTS,
+            generate_precombines::DEFINITION,
+        ];
+        let source = ProductionOperationSource::new(GAPPED_OPERATIONS);
+
+        let requirements =
+            source.toolchain_requirements_for_steps(WorkflowStep::steps_for_mode(BuildMode::Clean));
+
+        assert!(requirements.needs_creation_kit());
+        assert!(requirements.needs_fo4edit());
+        assert!(!requirements.needs_archive());
     }
 
     #[test]
@@ -656,14 +772,16 @@ mod tests {
     }
 
     #[test]
-    fn unimplemented_operation_fails_fast() {
+    fn unregistered_source_dispatch_fails_before_adapters() {
         let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
-        let executor = WorkflowOperationExecutor::new(RecordingAdapters::new(true));
+        let adapters = RecordingAdapters::new(true);
 
-        let err = executor
-            .run_step(WorkflowStep::MergePrecombineObjects, &run)
+        let err = production_operation_source()
+            .dispatch(WorkflowStep::MergePrecombineObjects, &run, &adapters)
             .unwrap_err();
 
         assert!(matches!(err, Error::StepNotImplemented(2)));
+        assert!(adapters.ck_calls.borrow().is_empty());
+        assert_eq!(adapters.clear_prompts.get(), 0);
     }
 }

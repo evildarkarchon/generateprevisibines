@@ -1,0 +1,86 @@
+{
+  "generated_at": "2026-07-28T23:40:50.896369+00:00",
+  "nodes": {
+    "src_intake_workflowrequestintake": {
+      "code_fingerprint": "0b433a670b6f3c9cf75e568bf424dad657eae4a01de177ebb846473f7d4e5a75",
+      "label": "WorkflowRequestIntake",
+      "last": "2026-07-28T12:12:05.023995+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-28T12:12:05.023995+00:00",
+          "outcome": "useful",
+          "q": "$improve-codebase-architecture"
+        }
+      ],
+      "score": 0.989009563,
+      "source_file": "src/intake.rs",
+      "status": "tentative",
+      "uses": 1
+    },
+    "src_toolchain_workflowtoolchain": {
+      "code_fingerprint": "96d1e497e2ed16dc95fe2d632a5b9ae4b01e13859e5b9b6500f2e829038447d6",
+      "label": "WorkflowToolchain",
+      "last": "2026-07-28T12:12:05.023995+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-28T12:12:05.023995+00:00",
+          "outcome": "useful",
+          "q": "$improve-codebase-architecture"
+        }
+      ],
+      "score": 0.989009563,
+      "source_file": "src/toolchain.rs",
+      "status": "tentative",
+      "uses": 1
+    },
+    "src_tools_creation_kit_creationkitops": {
+      "code_fingerprint": "70895ce7b22abd4a9e27af9bb2c19056ac335c85d2a27ec3e076667a79242905",
+      "label": "CreationKitOps",
+      "last": "2026-07-28T12:12:05.023995+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-28T12:12:05.023995+00:00",
+          "outcome": "useful",
+          "q": "$improve-codebase-architecture"
+        }
+      ],
+      "score": 0.989009563,
+      "source_file": "src/tools/creation_kit.rs",
+      "status": "tentative",
+      "uses": 1
+    },
+    "src_workflow_operations_operationadapters": {
+      "code_fingerprint": "76b0a1be7c0895f8bb2fbcc80aff001665da5420601e0f74d7c016f5edd20154",
+      "label": "OperationAdapters",
+      "last": "2026-07-28T12:12:05.023995+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-28T12:12:05.023995+00:00",
+          "outcome": "useful",
+          "q": "$improve-codebase-architecture"
+        }
+      ],
+      "score": 0.989009563,
+      "source_file": "src/workflow/operations.rs",
+      "status": "tentative",
+      "uses": 1
+    },
+    "src_workflow_operations_workflowoperationexecutor_productionoperationadapters": {
+      "code_fingerprint": "76b0a1be7c0895f8bb2fbcc80aff001665da5420601e0f74d7c016f5edd20154",
+      "label": "WorkflowOperationExecutor<ProductionOperationAdapters>",
+      "last": "2026-07-28T12:12:05.023995+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-28T12:12:05.023995+00:00",
+          "outcome": "useful",
+          "q": "$improve-codebase-architecture"
+        }
+      ],
+      "score": 0.989009563,
+      "source_file": "src/workflow/operations.rs",
+      "status": "tentative",
+      "uses": 1
+    }
+  },
+  "version": 1
+}

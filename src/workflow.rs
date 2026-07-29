@@ -30,13 +30,16 @@ impl OperationCapability {
         self.runnable_steps
     }
 
-    /// Return the subset of planned steps this capability can execute.
+    /// Return the runnable prefix of planned steps this capability can execute.
+    ///
+    /// Runnability stops at the first unavailable operation so compatibility planning preserves
+    /// the same dependency ordering as the production Workflow Operation source.
     #[must_use]
     fn filter_steps(self, steps: &[WorkflowStep]) -> Vec<WorkflowStep> {
         steps
             .iter()
             .copied()
-            .filter(|step| self.can_run(*step))
+            .take_while(|step| self.can_run(*step))
             .collect()
     }
 
@@ -187,35 +190,69 @@ mod tests {
     use super::*;
 
     #[test]
-    fn clean_mode_includes_eight_steps() {
+    fn clean_mode_preserves_all_steps_in_canonical_order() {
         let steps = WorkflowPlan::steps_for(BuildMode::Clean, None);
 
-        assert_eq!(steps.len(), 8);
+        assert_eq!(
+            steps,
+            [
+                WorkflowStep::GeneratePrecombines,
+                WorkflowStep::MergePrecombineObjects,
+                WorkflowStep::CreateBa2FromPrecombines,
+                WorkflowStep::CompressPsg,
+                WorkflowStep::BuildCdx,
+                WorkflowStep::GeneratePrevis,
+                WorkflowStep::MergePrevis,
+                WorkflowStep::AddPrevisToArchive,
+            ]
+        );
     }
 
     #[test]
-    fn filtered_mode_skips_psg_and_cdx() {
+    fn filtered_mode_preserves_its_canonical_membership_and_order() {
         let steps = WorkflowPlan::steps_for(BuildMode::Filtered, None);
 
-        assert_eq!(steps.len(), 6);
-        assert!(!steps.contains(&WorkflowStep::CompressPsg));
-        assert!(!steps.contains(&WorkflowStep::BuildCdx));
+        assert_eq!(
+            steps,
+            [
+                WorkflowStep::GeneratePrecombines,
+                WorkflowStep::MergePrecombineObjects,
+                WorkflowStep::CreateBa2FromPrecombines,
+                WorkflowStep::GeneratePrevis,
+                WorkflowStep::MergePrevis,
+                WorkflowStep::AddPrevisToArchive,
+            ]
+        );
     }
 
     #[test]
-    fn xbox_mode_skips_psg_and_cdx() {
+    fn xbox_mode_preserves_its_canonical_membership_and_order() {
         let steps = WorkflowPlan::steps_for(BuildMode::Xbox, None);
 
-        assert_eq!(steps.len(), 6);
-        assert!(!steps.contains(&WorkflowStep::CompressPsg));
-        assert!(!steps.contains(&WorkflowStep::BuildCdx));
+        assert_eq!(
+            steps,
+            [
+                WorkflowStep::GeneratePrecombines,
+                WorkflowStep::MergePrecombineObjects,
+                WorkflowStep::CreateBa2FromPrecombines,
+                WorkflowStep::GeneratePrevis,
+                WorkflowStep::MergePrevis,
+                WorkflowStep::AddPrevisToArchive,
+            ]
+        );
     }
 
     #[test]
-    fn resume_from_step_filters_earlier_steps() {
+    fn resume_preserves_the_canonical_suffix() {
         let steps = WorkflowPlan::steps_for(BuildMode::Clean, Some(WorkflowStep::GeneratePrevis));
 
-        assert_eq!(steps.first(), Some(&WorkflowStep::GeneratePrevis));
-        assert!(!steps.contains(&WorkflowStep::GeneratePrecombines));
+        assert_eq!(
+            steps,
+            [
+                WorkflowStep::GeneratePrevis,
+                WorkflowStep::MergePrevis,
+                WorkflowStep::AddPrevisToArchive,
+            ]
+        );
     }
 }
