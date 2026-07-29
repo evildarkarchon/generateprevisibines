@@ -6,15 +6,16 @@
 use std::path::{Path, PathBuf};
 
 use crate::config::{ArchiveTool, BuildMode, PluginIdentity, ProjectConfig, WorkflowStep};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::logging;
 use crate::toolchain::{ToolchainDiagnostic, WorkflowToolchainProbe};
 use crate::tools::ToolContext;
 use crate::validation;
+use crate::workflow::WorkflowPlan;
 use crate::workflow::operations::{
-    OperationAdapters, ProductionOperationAdapters, WorkflowOperationExecutor,
+    OperationAdapters, ProductionOperationAdapters, ProductionWorkflowPreparation,
+    execute_registered_workflow, prepare_production_workflow,
 };
-use crate::workflow::{OperationCapability, WorkflowPlan};
 
 /// User intent before tool paths, CKPE configuration, logs, or runnable steps are resolved.
 #[derive(Debug, Clone)]
@@ -92,40 +93,22 @@ impl WorkflowRun {
         probe: &WorkflowToolchainProbe,
     ) -> Result<Self> {
         let config = request.to_project_config(probe)?;
-        let plan = WorkflowPlan::new(config.build_mode, config.resume_from)?;
-        Self::prepare_with_plan(config, exe_dir, probe, plan)
+        let preparation = prepare_production_workflow(config.build_mode, config.resume_from)?;
+        Self::prepare_with_registration(config, exe_dir, probe, preparation)
     }
 
-    /// Prepare a workflow run against synthetic capability during the ticket #8 migration.
-    ///
-    /// Returns the fully validated run, or propagates request validation, capability planning,
-    /// toolchain readiness, log initialization, and Creation Kit context errors.
-    pub fn prepare_with_capability(
-        request: &WorkflowRequest,
-        exe_dir: &Path,
-        probe: &WorkflowToolchainProbe,
-        capability: OperationCapability,
-    ) -> Result<Self> {
-        let config = request.to_project_config(probe)?;
-        let plan =
-            WorkflowPlan::new_with_capability(config.build_mode, config.resume_from, capability)?;
-        Self::prepare_with_plan(config, exe_dir, probe, plan)
-    }
-
-    /// Complete preparation from a validated config and its already-resolved Workflow Plan.
+    /// Complete preparation from a validated config and registration-resolved workflow state.
     ///
     /// Returns the ready-to-execute run, or propagates toolchain readiness, log initialization,
-    /// and Creation Kit context errors. Request and plan validation must happen before this helper.
-    fn prepare_with_plan(
+    /// and Creation Kit context errors. The plan and requirements must come from the same
+    /// Workflow Operation registration before this helper is called.
+    fn prepare_with_registration(
         config: ProjectConfig,
         exe_dir: &Path,
         probe: &WorkflowToolchainProbe,
-        plan: WorkflowPlan,
+        preparation: ProductionWorkflowPreparation,
     ) -> Result<Self> {
-        let requirements =
-            WorkflowOperationExecutor::<ProductionOperationAdapters>::toolchain_requirements_for_steps(
-                plan.runnable_steps(),
-            );
+        let (plan, requirements) = preparation.into_parts();
         let toolchain = probe.prepare(exe_dir, config.archive_tool, requirements)?;
         let mut diagnostics = toolchain
             .diagnostics()
@@ -133,7 +116,7 @@ impl WorkflowRun {
             .cloned()
             .map(RunDiagnostic::Toolchain)
             .collect::<Vec<_>>();
-        if plan.is_partial_due_to_capability() {
+        if plan.skipped_unrunnable_count() > 0 {
             diagnostics.push(RunDiagnostic::LaterStepsNotImplemented {
                 skipped: plan.skipped_unrunnable_count(),
                 planned: plan.planned_steps().len(),
@@ -169,22 +152,15 @@ impl WorkflowRun {
 
     /// Execute the runnable subset of the prepared workflow through production operations.
     pub fn execute(&self) -> Result<()> {
-        self.execute_with(&WorkflowOperationExecutor::production())
+        self.execute_with_adapters(&ProductionOperationAdapters::new())
     }
 
-    /// Execute the runnable subset of the prepared workflow through supplied operations.
-    pub fn execute_with<A: OperationAdapters>(
-        &self,
-        executor: &WorkflowOperationExecutor<A>,
-    ) -> Result<()> {
-        if executor.capability() != self.plan.capability() {
-            return Err(Error::OperationCapabilityMismatch {
-                planned: capability_step_numbers(self.plan.capability()),
-                executor: capability_step_numbers(executor.capability()),
-            });
-        }
-
-        executor.run_steps(self.plan.runnable_steps(), self)
+    /// Execute this prepared run through production registration with crate-private adapters.
+    ///
+    /// The supplied adapters replace only external programs and prompts; the prepared Workflow
+    /// Plan and registered Workflow Operations continue to own sequencing and domain behavior.
+    pub(crate) fn execute_with_adapters(&self, adapters: &dyn OperationAdapters) -> Result<()> {
+        execute_registered_workflow(self, adapters)
     }
 
     /// Diagnostics collected while preparing the run.
@@ -205,7 +181,7 @@ impl WorkflowRun {
         self.plan.planned_steps()
     }
 
-    /// Steps that will be executed by the current operation capability.
+    /// Steps that will be executed by registered Workflow Operations.
     #[must_use]
     pub fn runnable_steps(&self) -> &[WorkflowStep] {
         self.plan.runnable_steps()
@@ -229,39 +205,59 @@ impl WorkflowRun {
     }
 }
 
-fn capability_step_numbers(capability: OperationCapability) -> Vec<u8> {
-    capability
-        .runnable_steps()
-        .iter()
-        .map(|step| step.number())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::PluginIdentity;
     use crate::discovery::ToolPaths;
+    use crate::error::Error;
     use crate::tools::CkOperation;
+    use std::cell::RefCell;
     use std::fs;
     use tempfile::{TempDir, tempdir};
 
-    #[derive(Debug)]
-    struct NoopAdapters;
+    #[derive(Debug, Default)]
+    struct RecordingOperationAdapters {
+        creation_kit_calls: RefCell<Vec<(CkOperation, String, String)>>,
+    }
 
-    impl OperationAdapters for NoopAdapters {
+    impl OperationAdapters for RecordingOperationAdapters {
         fn run_creation_kit(
             &self,
-            _run: &WorkflowRun,
-            _operation: CkOperation,
-            _plugin_file: &str,
-            _qualifiers: &str,
+            run: &WorkflowRun,
+            operation: CkOperation,
+            plugin_file: &str,
+            qualifiers: &str,
         ) -> Result<()> {
-            unreachable!("capability mismatch should stop before execution")
+            self.creation_kit_calls.borrow_mut().push((
+                operation,
+                plugin_file.to_owned(),
+                qualifiers.to_owned(),
+            ));
+
+            // The adapter supplies CK's external outputs while the real operation owns validation.
+            let data_directory = run.config().fo4edit_data_dir();
+            fs::create_dir_all(&data_directory)?;
+            fs::write(data_directory.join("CombinedObjects.esp"), b"combined")?;
+            fs::write(
+                data_directory.join(format!("{} - Geometry.psg", run.config().plugin.base_name)),
+                b"geometry",
+            )?;
+
+            let precombined_mesh = run
+                .config()
+                .precombined_dir()
+                .join("production-shaped")
+                .join("mesh.nif");
+            fs::create_dir_all(precombined_mesh.parent().unwrap())?;
+            fs::write(precombined_mesh, b"mesh")?;
+            fs::write(&run.tool_context().ck_log_path, b"CK completed\n")?;
+
+            Ok(())
         }
 
         fn confirm_clear_precombined(&self, _precombined_dir: &Path) -> Result<bool> {
-            unreachable!("capability mismatch should stop before execution")
+            unreachable!("a fresh production-shaped fixture must not prompt for cleanup")
         }
     }
 
@@ -343,10 +339,13 @@ mod tests {
             &[WorkflowStep::GeneratePrecombines]
         );
         assert!(run.planned_steps().len() > run.runnable_steps().len());
-        assert!(run.diagnostics().iter().any(|diagnostic| matches!(
-            diagnostic,
-            RunDiagnostic::LaterStepsNotImplemented { .. }
-        )));
+        assert!(
+            run.diagnostics()
+                .contains(&RunDiagnostic::LaterStepsNotImplemented {
+                    skipped: 7,
+                    planned: 8,
+                })
+        );
         assert_eq!(
             run.tool_context().ck_log_path,
             fixture.fallout4_directory.join("CK.log")
@@ -354,41 +353,111 @@ mod tests {
     }
 
     #[test]
-    fn prepare_with_capability_stops_at_first_unavailable_operation() {
-        let fixture = ready_workflow_fixture();
-        let capability = OperationCapability::new(&[
-            WorkflowStep::GeneratePrecombines,
-            WorkflowStep::CreateBa2FromPrecombines,
-        ]);
-
-        let run = WorkflowRun::prepare_with_capability(
-            &fixture.request,
-            fixture.directory.path(),
-            &fixture.probe,
-            capability,
-        )
-        .unwrap();
-
-        assert_eq!(run.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
-    }
-
-    #[test]
-    fn execute_with_rejects_executor_capability_mismatch() {
+    fn prepared_run_executes_registered_plan_and_produces_precombine_artifacts() {
         let fixture = ready_workflow_fixture();
         let run = WorkflowRun::prepare(&fixture.request, fixture.directory.path(), &fixture.probe)
             .unwrap();
-        let executor = WorkflowOperationExecutor::new_with_capability(
-            NoopAdapters,
-            OperationCapability::new(&[]),
+        let adapters = RecordingOperationAdapters::default();
+
+        assert_eq!(run.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
+        run.execute_with_adapters(&adapters).unwrap();
+
+        assert_eq!(
+            adapters.creation_kit_calls.into_inner(),
+            vec![(
+                CkOperation::GeneratePrecombined,
+                "MyMod.esp".to_owned(),
+                "clean all".to_owned(),
+            )]
+        );
+        assert!(
+            run.config()
+                .fo4edit_data_dir()
+                .join("CombinedObjects.esp")
+                .is_file()
+        );
+        assert!(
+            run.config()
+                .fo4edit_data_dir()
+                .join("MyMod - Geometry.psg")
+                .is_file()
+        );
+        assert!(
+            run.config()
+                .precombined_dir()
+                .join("production-shaped")
+                .join("mesh.nif")
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn prepare_requires_creation_kit_for_registered_generate_precombines() {
+        let directory = tempdir().unwrap();
+        let fallout4_directory = directory.path().join("Fallout4");
+        fs::create_dir_all(&fallout4_directory).unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
+            fallout4_dir: Some(fallout4_directory.clone()),
+            ..ToolPaths::default()
+        })
+        .unwrap();
+        let request = WorkflowRequest::new(
+            BuildMode::Clean,
+            ArchiveTool::Archive2,
+            PluginIdentity::parse("MyMod"),
+            true,
+            None,
+            None,
         );
 
-        let err = run.execute_with(&executor).unwrap_err();
+        let error = WorkflowRun::prepare(&request, directory.path(), &probe).unwrap_err();
 
         assert!(matches!(
-            err,
-            Error::OperationCapabilityMismatch { planned, executor }
-                if planned == vec![1] && executor.is_empty()
+            error,
+            Error::Other(message)
+                if message
+                    == format!(
+                        "CreationKit.exe not found in {}",
+                        fallout4_directory.display()
+                    )
         ));
+    }
+
+    #[test]
+    fn prepare_preserves_filtered_and_xbox_partial_diagnostic_counts() {
+        let cases = [(BuildMode::Filtered, 5, 6), (BuildMode::Xbox, 5, 6)];
+
+        for (build_mode, skipped, planned) in cases {
+            let fixture = ready_workflow_fixture();
+            let mut request = fixture.request;
+            request.build_mode = build_mode;
+
+            let run =
+                WorkflowRun::prepare(&request, fixture.directory.path(), &fixture.probe).unwrap();
+
+            assert!(
+                run.diagnostics()
+                    .contains(&RunDiagnostic::LaterStepsNotImplemented { skipped, planned }),
+                "build mode: {build_mode:?}, diagnostics: {:?}",
+                run.diagnostics()
+            );
+        }
+    }
+
+    #[test]
+    fn prepare_rejects_unavailable_explicit_resume_before_toolchain_readiness() {
+        let fixture = ready_workflow_fixture();
+        let mut request = fixture.request.clone();
+        request.resume_from = Some(WorkflowStep::MergePrecombineObjects);
+        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
+            fallout4_dir: Some(fixture.fallout4_directory),
+            ..ToolPaths::default()
+        })
+        .unwrap();
+
+        let error = WorkflowRun::prepare(&request, fixture.directory.path(), &probe).unwrap_err();
+
+        assert!(matches!(error, Error::StepNotImplemented(2)));
     }
 
     #[test]

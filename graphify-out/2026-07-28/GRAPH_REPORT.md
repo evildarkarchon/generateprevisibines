@@ -1,16 +1,16 @@
 # Graph Report - generateprevisibines  (2026-07-28)
 
 ## Corpus Check
-- 48 files · ~33,683 words
+- 48 files · ~33,537 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 596 nodes · 1416 edges · 21 communities
-- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 19 edges (avg confidence: 0.89)
+- 585 nodes · 1373 edges · 21 communities
+- Extraction: 98% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 20 edges (avg confidence: 0.89)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `01f761dc`
+- Built from commit: `c9603df9`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -22,9 +22,9 @@
 - WorkflowRun
 - Graphify Pipeline
 - interactive.rs
-- PluginIdentity
+- BuildMode
 - precombine_workspace.rs
-- WorkflowStep
+- .steps_for
 - creation_kit.rs
 - validation.rs
 - discovery.rs
@@ -34,19 +34,19 @@
 - .run_script
 - read_lossy
 - Q: $improve-codebase-architecture
-- BuildMode
+- ProjectConfig
 - Q: How are the Workflow Plan and dry-run preview built from registered Workflow Operations, including ordering, resume behavior, StepNotImplemented, and production operation availability?
 
 ## God Nodes (most connected - your core abstractions)
-1. `WorkflowStep` - 43 edges
-2. `WorkflowRun` - 32 edges
-3. `BuildMode` - 29 edges
+1. `WorkflowStep` - 36 edges
+2. `BuildMode` - 31 edges
+3. `WorkflowRun` - 30 edges
 4. `ProjectConfig` - 22 edges
-5. `WorkflowToolchainProbe` - 21 edges
-6. `PluginIdentity` - 20 edges
+5. `PluginIdentity` - 20 edges
+6. `WorkflowToolchainProbe` - 20 edges
 7. `Cli` - 19 edges
 8. `prepared_run()` - 18 edges
-9. `OperationCapability` - 17 edges
+9. `ToolchainRequirements` - 17 edges
 10. `workspace()` - 17 edges
 
 ## Surprising Connections (you probably didn't know these)
@@ -64,10 +64,7 @@
 ## Import Cycles
 - 1-file cycle: `src/error.rs -> src/error.rs`
 - 2-file cycle: `src/run.rs -> src/workflow/operations.rs -> src/run.rs`
-- 2-file cycle: `src/workflow.rs -> src/workflow/operations.rs -> src/workflow.rs`
 - 2-file cycle: `src/tools/creation_kit.rs -> src/tools/mod.rs -> src/tools/creation_kit.rs`
-- 3-file cycle: `src/interactive.rs -> src/workflow.rs -> src/workflow/operations.rs -> src/interactive.rs`
-- 3-file cycle: `src/run.rs -> src/workflow.rs -> src/workflow/operations.rs -> src/run.rs`
 
 ## Hyperedges (group relationships)
 - **Graphify Extraction Pipeline** — _codex_skills_graphify_skill_structural_ast_extraction, _codex_skills_graphify_skill_semantic_extraction, _codex_skills_graphify_skill_graph_build_and_analysis [EXTRACTED 1.00]
@@ -78,23 +75,23 @@
 
 ### Community 0 - "operations.rs"
 Cohesion: 0.07
-Nodes (44): Cell, OperationExecution, CreationKitOps, ArtifactState, compatibility_requirements_delegate_to_production_source(), OperationAdapters, prepared_run(), production_capability_starts_with_step_one_only() (+36 more)
+Nodes (48): Cell, OperationExecution, WorkflowStep, ArtifactState, prepare_production_workflow(), prepared_run(), production_operation_source(), production_preparation_unions_requirements_for_the_runnable_plan() (+40 more)
 
 ### Community 1 - "GeneratePrevisibines"
 Cohesion: 0.06
 Nodes (58): External Tool Workaround Constraint, GeneratePrevisibines Agent Guidance, GeneratePrevisibines Domain Language, Generate Precombines Operation, Precombine Workspace, Workflow Operation, Workflow Plan, Workflow Request (+50 more)
 
 ### Community 2 - "toolchain.rs"
-Cohesion: 0.09
-Nodes (25): CkpeInstallation, CreationKitToolchain, load_ckpe_installation(), parse_ckpe_log_file(), PluginReadiness, prepare_loads_ckpe_and_log_path_for_creation_kit(), prepare_requires_creation_kit_when_requested(), prepare_surfaces_ckpe_handle_limit_warning_as_diagnostic() (+17 more)
+Cohesion: 0.08
+Nodes (28): ArchiveTool, PluginIdentity, String, CkpeInstallation, CreationKitToolchain, load_ckpe_installation(), parse_ckpe_log_file(), PluginReadiness (+20 more)
 
 ### Community 3 - "cli.rs"
-Cohesion: 0.07
-Nodes (43): From, I, OsStr, OsString, ArchiveToolFlags, attached_legacy_fo4_accepts_a_dash_prefixed_path(), attached_legacy_fo4_preserves_native_unix_path_bytes(), attached_legacy_fo4_preserves_native_windows_path_units() (+35 more)
+Cohesion: 0.08
+Nodes (41): From, I, OsStr, OsString, ArchiveToolFlags, attached_legacy_fo4_accepts_a_dash_prefixed_path(), attached_legacy_fo4_preserves_native_unix_path_bytes(), attached_legacy_fo4_preserves_native_windows_path_units() (+33 more)
 
 ### Community 4 - "WorkflowRun"
-Cohesion: 0.15
-Nodes (21): capability_step_numbers(), execute_with_rejects_executor_capability_mismatch(), NoopAdapters, prepare_creates_runnable_step_one_run(), prepare_tolerates_non_utf8_ckpe_config_bytes(), prepare_with_capability_stops_at_first_unavailable_operation(), ready_workflow_fixture(), ReadyWorkflowFixture (+13 more)
+Cohesion: 0.12
+Nodes (27): prepare_creates_runnable_step_one_run(), prepare_preserves_filtered_and_xbox_partial_diagnostic_counts(), prepare_rejects_unavailable_explicit_resume_before_toolchain_readiness(), prepare_requires_creation_kit_for_registered_generate_precombines(), prepare_tolerates_non_utf8_ckpe_config_bytes(), ready_workflow_fixture(), ReadyWorkflowFixture, request_to_project_config_uses_probe_data_dir() (+19 more)
 
 ### Community 5 - "Graphify Pipeline"
 Cohesion: 0.07
@@ -104,21 +101,21 @@ Nodes (44): Folder Watch, URL Ingestion, URL Ingestion and Folder Watch Referenc
 Cohesion: 0.20
 Nodes (16): confirm_clear_precombined(), copy_seed_plugin(), ensure_plugin_ready(), ensure_plugin_ready_rejects_existing_archive(), ExistingPluginAction, parse_existing_plugin_choice(), parse_resume_step_choice(), prompt_existing_plugin_action() (+8 more)
 
-### Community 7 - "PluginIdentity"
-Cohesion: 0.14
-Nodes (21): Box, P, PluginIdentity, String, cli_plugin_continue_yields_non_interactive_request(), interactive_resume_choice_updates_request(), interactive_resume_reprompt_clears_initial_resume_choice(), InteractiveWorkflowIntakePrompts (+13 more)
+### Community 7 - "BuildMode"
+Cohesion: 0.11
+Nodes (23): Box, Err, FromStr, P, BuildMode, Result, cli_plugin_continue_yields_non_interactive_request(), interactive_resume_choice_updates_request() (+15 more)
 
 ### Community 8 - "precombine_workspace.rs"
 Cohesion: 0.17
 Nodes (25): ck_log_has_handle_array_error(), clear_precombined_meshes_removes_directory_when_present(), create_generated_outputs(), detects_precombined_meshes_recursively(), find_first_file_with_extension(), find_first_precombined_nif(), PrecombineWorkspace<'a>, prepare_ignores_nested_non_uvd_files_and_uvd_directories() (+17 more)
 
-### Community 9 - "WorkflowStep"
-Cohesion: 0.17
-Nodes (12): WorkflowStep, clean_mode_includes_eight_steps(), filtered_mode_skips_psg_and_cdx(), OperationCapability, print_resume_menu(), resume_from_step_filters_earlier_steps(), Option, Result (+4 more)
+### Community 9 - ".steps_for"
+Cohesion: 0.21
+Nodes (10): Fn, clean_mode_preserves_all_steps_in_canonical_order(), filtered_mode_preserves_its_canonical_membership_and_order(), print_resume_menu(), resume_preserves_the_canonical_suffix(), Option, Result, Self (+2 more)
 
 ### Community 10 - "creation_kit.rs"
 Cohesion: 0.10
-Nodes (13): Command, Default, Item, Iterator, CkOperation, operation_arg(), qualifier_args(), Result (+5 more)
+Nodes (14): Command, Default, Item, Iterator, CkOperation, CreationKitOps, operation_arg(), qualifier_args() (+6 more)
 
 ### Community 11 - "validation.rs"
 Cohesion: 0.16
@@ -152,9 +149,9 @@ Nodes (4): read_lossy(), Path, Result, String
 Cohesion: 0.40
 Nodes (4): Answer, Outcome, Q: $improve-codebase-architecture, Source Nodes
 
-### Community 19 - "BuildMode"
-Cohesion: 0.10
-Nodes (16): Err, FromStr, BuildMode, ProjectConfig, Option, PathBuf, Result, Self (+8 more)
+### Community 19 - "ProjectConfig"
+Cohesion: 0.17
+Nodes (7): ProjectConfig, Option, PathBuf, Self, ArchiveOps, Path, Result
 
 ### Community 20 - "Q: How are the Workflow Plan and dry-run preview built from registered Workflow Operations, including ordering, resume behavior, StepNotImplemented, and production operation availability?"
 Cohesion: 0.40
@@ -173,15 +170,15 @@ _Questions this graph is uniquely positioned to answer:_
 
 - **What is the exact relationship between `Rust Scaffold` and `Workflow Vertical Slices`?**
   _Edge tagged AMBIGUOUS (relation: conceptually_related_to) - confidence is low._
-- **Why does `WorkflowStep` connect `WorkflowStep` to `operations.rs`, `cli.rs`, `WorkflowRun`, `interactive.rs`, `PluginIdentity`, `BuildMode`?**
-  _High betweenness centrality (0.081) - this node is a cross-community bridge._
-- **Why does `Error` connect `cli.rs` to `operations.rs`, `toolchain.rs`, `WorkflowRun`, `interactive.rs`, `PluginIdentity`, `precombine_workspace.rs`, `WorkflowStep`, `validation.rs`, `discovery.rs`, `BuildMode`?**
-  _High betweenness centrality (0.072) - this node is a cross-community bridge._
-- **Why does `BuildMode` connect `BuildMode` to `operations.rs`, `cli.rs`, `WorkflowRun`, `interactive.rs`, `PluginIdentity`, `precombine_workspace.rs`, `WorkflowStep`, `validation.rs`?**
-  _High betweenness centrality (0.056) - this node is a cross-community bridge._
+- **Why does `Error` connect `cli.rs` to `operations.rs`, `toolchain.rs`, `WorkflowRun`, `interactive.rs`, `BuildMode`, `precombine_workspace.rs`, `.steps_for`, `validation.rs`, `discovery.rs`?**
+  _High betweenness centrality (0.073) - this node is a cross-community bridge._
+- **Why does `BuildMode` connect `BuildMode` to `operations.rs`, `cli.rs`, `WorkflowRun`, `interactive.rs`, `precombine_workspace.rs`, `.steps_for`, `validation.rs`, `ProjectConfig`?**
+  _High betweenness centrality (0.062) - this node is a cross-community bridge._
+- **Why does `WorkflowStep` connect `operations.rs` to `cli.rs`, `WorkflowRun`, `interactive.rs`, `BuildMode`, `.steps_for`, `ProjectConfig`?**
+  _High betweenness centrality (0.059) - this node is a cross-community bridge._
 - **What connects `WorkflowRequestIntake<InteractiveWorkflowIntakePrompts>`, `WorkflowOperationExecutor<ProductionOperationAdapters>`, `Answer` to the rest of the system?**
   _20 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `operations.rs` be split into smaller, more focused modules?**
-  _Cohesion score 0.06790890269151138 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06660006660006661 - nodes in this community are weakly interconnected._
 - **Should `GeneratePrevisibines` be split into smaller, more focused modules?**
   _Cohesion score 0.060496067755595885 - nodes in this community are weakly interconnected._

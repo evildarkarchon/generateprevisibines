@@ -5,13 +5,13 @@
 
 use std::path::Path;
 
-use crate::config::WorkflowStep;
+use crate::config::{BuildMode, WorkflowStep};
 use crate::error::{Error, Result};
 use crate::interactive;
 use crate::run::WorkflowRun;
 use crate::toolchain::ToolchainRequirements;
 use crate::tools::{CkOperation, CreationKitOps};
-use crate::workflow::OperationCapability;
+use crate::workflow::WorkflowPlan;
 
 mod generate_precombines;
 mod precombine_workspace;
@@ -20,9 +20,6 @@ macro_rules! register_production_operations {
     ($($operation:expr),+ $(,)?) => {
         const PRODUCTION_OPERATION_SOURCE: ProductionOperationSource =
             ProductionOperationSource::new(&[$($operation),+]);
-
-        // Ticket #8 removes this compatibility slice; generate it here so registration cannot drift meanwhile.
-        const PRODUCTION_RUNNABLE_STEPS: &[WorkflowStep] = &[$(($operation).step),+];
     };
 }
 
@@ -53,7 +50,7 @@ impl WorkflowOperationDefinition {
 
 /// Immutable view of the Workflow Operations implemented by the production build.
 #[derive(Debug, Clone, Copy)]
-pub struct ProductionOperationSource {
+struct ProductionOperationSource {
     operations: &'static [WorkflowOperationDefinition],
 }
 
@@ -81,21 +78,20 @@ impl ProductionOperationSource {
 
     /// Whether the production build has an implementation for a Workflow Step.
     #[must_use]
-    pub fn contains(self, step: WorkflowStep) -> bool {
+    fn contains(self, step: WorkflowStep) -> bool {
         self.operation_for_step(step).is_some()
     }
 
-    /// Return the runnable prefix of planned steps without changing plan order.
+    /// Supply this source's operation availability to Workflow Plan resolution.
     ///
-    /// Runnability stops at the first step without a registered Workflow Operation so a later
-    /// operation can never execute across an unavailable dependency.
-    #[must_use]
-    pub fn filter_steps(self, steps: &[WorkflowStep]) -> Vec<WorkflowStep> {
-        steps
-            .iter()
-            .copied()
-            .take_while(|step| self.contains(*step))
-            .collect()
+    /// Returns [`Error::StepNotImplemented`] when the requested resume step is not registered or
+    /// when no planned Workflow Operation is available.
+    fn workflow_plan(
+        self,
+        build_mode: BuildMode,
+        resume_from: Option<WorkflowStep>,
+    ) -> Result<WorkflowPlan> {
+        WorkflowPlan::resolve(build_mode, resume_from, |step| self.contains(step))
     }
 
     /// Aggregate static readiness requirements for the runnable prefix of a Workflow Plan.
@@ -103,7 +99,7 @@ impl ProductionOperationSource {
     /// Requirement collection stops at the first unregistered step, matching the same dependency
     /// boundary used to derive runnable steps.
     #[must_use]
-    pub fn toolchain_requirements_for_steps(self, steps: &[WorkflowStep]) -> ToolchainRequirements {
+    fn toolchain_requirements_for_steps(self, steps: &[WorkflowStep]) -> ToolchainRequirements {
         steps
             .iter()
             .map_while(|step| self.operation_for_step(*step))
@@ -116,7 +112,7 @@ impl ProductionOperationSource {
     ///
     /// Returns [`Error::StepNotImplemented`] when production has no operation for `step`, and
     /// otherwise propagates errors from the selected operation's domain flow or adapters.
-    pub fn dispatch(
+    fn dispatch(
         self,
         step: WorkflowStep,
         run: &WorkflowRun,
@@ -141,12 +137,65 @@ impl ProductionOperationSource {
 
 /// Return the immutable source of Workflow Operations implemented by production.
 #[must_use]
-pub const fn production_operation_source() -> ProductionOperationSource {
+const fn production_operation_source() -> ProductionOperationSource {
     PRODUCTION_OPERATION_SOURCE
 }
 
+/// Build the Workflow Plan supplied by the immutable production operation registration.
+///
+/// Returns [`Error::StepNotImplemented`] when the selected resume point has no registered
+/// Workflow Operation or when production cannot run the first planned step.
+pub fn production_workflow_plan(
+    build_mode: BuildMode,
+    resume_from: Option<WorkflowStep>,
+) -> Result<WorkflowPlan> {
+    production_operation_source().workflow_plan(build_mode, resume_from)
+}
+
+/// A Workflow Plan paired with the requirements from the registration that resolved it.
+pub(crate) struct ProductionWorkflowPreparation {
+    plan: WorkflowPlan,
+    requirements: ToolchainRequirements,
+}
+
+impl ProductionWorkflowPreparation {
+    /// Consume the registration-resolved preparation inputs for Workflow Run validation.
+    pub(crate) fn into_parts(self) -> (WorkflowPlan, ToolchainRequirements) {
+        (self.plan, self.requirements)
+    }
+}
+
+/// Prepare the production Workflow Plan and its complete runnable-operation requirement union.
+///
+/// Both values come from the immutable production registration so Workflow Run planning and
+/// toolchain readiness cannot observe different operation availability.
+pub(crate) fn prepare_production_workflow(
+    build_mode: BuildMode,
+    resume_from: Option<WorkflowStep>,
+) -> Result<ProductionWorkflowPreparation> {
+    let operations = production_operation_source();
+    let plan = operations.workflow_plan(build_mode, resume_from)?;
+    let requirements = operations.toolchain_requirements_for_steps(plan.runnable_steps());
+    Ok(ProductionWorkflowPreparation { plan, requirements })
+}
+
+/// Execute exactly a prepared Workflow Run's runnable sequence through production registration.
+///
+/// Workflow Plan order remains authoritative; direct dispatch still returns
+/// [`Error::StepNotImplemented`] defensively if a prepared step has no registered operation.
+pub(crate) fn execute_registered_workflow(
+    run: &WorkflowRun,
+    adapters: &dyn OperationAdapters,
+) -> Result<()> {
+    let operations = production_operation_source();
+    for step in run.runnable_steps() {
+        operations.dispatch(*step, run, adapters)?;
+    }
+    Ok(())
+}
+
 /// Adapters required by Workflow Operations.
-pub trait OperationAdapters {
+pub(crate) trait OperationAdapters {
     /// Run a Creation Kit command-line operation for a Workflow Run.
     fn run_creation_kit(
         &self,
@@ -162,14 +211,14 @@ pub trait OperationAdapters {
 
 /// Production adapters for external tools and interactive prompts.
 #[derive(Debug, Default)]
-pub struct ProductionOperationAdapters {
+pub(crate) struct ProductionOperationAdapters {
     ck: CreationKitOps,
 }
 
 impl ProductionOperationAdapters {
     /// Create production operation adapters.
     #[must_use]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self { ck: CreationKitOps }
     }
 }
@@ -191,72 +240,6 @@ impl OperationAdapters for ProductionOperationAdapters {
     }
 }
 
-/// Executes Workflow Operations through a supplied adapter bundle.
-#[derive(Debug)]
-pub struct WorkflowOperationExecutor<A> {
-    adapters: A,
-    capability: OperationCapability,
-}
-
-impl WorkflowOperationExecutor<ProductionOperationAdapters> {
-    /// Create an executor backed by production adapters.
-    #[must_use]
-    pub const fn production() -> Self {
-        Self::new(ProductionOperationAdapters::new())
-    }
-}
-
-impl<A: OperationAdapters> WorkflowOperationExecutor<A> {
-    /// Create an executor backed by the provided adapters.
-    #[must_use]
-    pub const fn new(adapters: A) -> Self {
-        Self::new_with_capability(
-            adapters,
-            OperationCapability::new(PRODUCTION_RUNNABLE_STEPS),
-        )
-    }
-
-    /// Create an executor backed by the provided adapters and explicit operation capability.
-    #[must_use]
-    pub const fn new_with_capability(adapters: A, capability: OperationCapability) -> Self {
-        Self {
-            adapters,
-            capability,
-        }
-    }
-
-    /// Steps this operation executor can run.
-    #[must_use]
-    pub const fn capability(&self) -> OperationCapability {
-        self.capability
-    }
-
-    /// Steps implemented by the production operation executor.
-    #[must_use]
-    pub const fn production_capability() -> OperationCapability {
-        OperationCapability::new(PRODUCTION_RUNNABLE_STEPS)
-    }
-
-    /// Toolchain requirements for a set of runnable Workflow Operations.
-    #[must_use]
-    pub fn toolchain_requirements_for_steps(steps: &[WorkflowStep]) -> ToolchainRequirements {
-        production_operation_source().toolchain_requirements_for_steps(steps)
-    }
-
-    /// Execute the runnable subset of a Workflow Plan.
-    pub fn run_steps(&self, steps: &[WorkflowStep], run: &WorkflowRun) -> Result<()> {
-        for step in steps {
-            self.run_step(*step, run)?;
-        }
-        Ok(())
-    }
-
-    /// Execute one Workflow Operation.
-    pub fn run_step(&self, step: WorkflowStep, run: &WorkflowRun) -> Result<()> {
-        production_operation_source().dispatch(step, run, &self.adapters)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
@@ -266,7 +249,7 @@ mod tests {
     use super::*;
     use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
     use crate::run::WorkflowRequest;
-    use crate::{discovery::ToolPaths, toolchain::WorkflowToolchainProbe, workflow::WorkflowPlan};
+    use crate::{discovery::ToolPaths, toolchain::WorkflowToolchainProbe};
 
     /// Provide an execution entry for registration-only tests that must never dispatch.
     fn unused_execution(_run: &WorkflowRun, _adapters: &dyn OperationAdapters) -> Result<()> {
@@ -275,12 +258,11 @@ mod tests {
 
     #[test]
     fn production_workflow_plan_filters_registered_operations() {
-        let plan = WorkflowPlan::new(BuildMode::Clean, None).unwrap();
+        let plan = production_workflow_plan(BuildMode::Clean, None).unwrap();
 
         assert_eq!(plan.planned_steps().len(), 8);
         assert_eq!(plan.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
         assert_eq!(plan.skipped_unrunnable_count(), 7);
-        assert!(plan.is_partial_due_to_capability());
     }
 
     #[test]
@@ -291,7 +273,7 @@ mod tests {
         ];
 
         for (mode, resume, expected_step) in cases {
-            let error = WorkflowPlan::new(mode, Some(resume)).unwrap_err();
+            let error = production_workflow_plan(mode, Some(resume)).unwrap_err();
 
             assert!(
                 matches!(error, Error::StepNotImplemented(step) if step == expected_step),
@@ -301,16 +283,25 @@ mod tests {
     }
 
     #[test]
+    fn production_preparation_unions_requirements_for_the_runnable_plan() {
+        let (plan, requirements) = prepare_production_workflow(BuildMode::Clean, None)
+            .unwrap()
+            .into_parts();
+
+        assert_eq!(plan.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
+        assert!(requirements.needs_creation_kit());
+        assert!(!requirements.needs_fo4edit());
+        assert!(!requirements.needs_archive());
+    }
+
+    #[test]
     fn production_source_filters_registered_steps_in_plan_order() {
         let source = production_operation_source();
-        let planned = WorkflowStep::steps_for_mode(BuildMode::Clean);
+        let plan = source.workflow_plan(BuildMode::Clean, None).unwrap();
 
         assert!(source.contains(WorkflowStep::GeneratePrecombines));
         assert!(!source.contains(WorkflowStep::MergePrecombineObjects));
-        assert_eq!(
-            source.filter_steps(planned),
-            vec![WorkflowStep::GeneratePrecombines]
-        );
+        assert_eq!(plan.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
     }
 
     #[test]
@@ -324,10 +315,11 @@ mod tests {
         const REVERSED_OPERATIONS: &[WorkflowOperationDefinition] =
             &[MERGE_PRECOMBINE_OBJECTS, generate_precombines::DEFINITION];
         let source = ProductionOperationSource::new(REVERSED_OPERATIONS);
+        let plan = source.workflow_plan(BuildMode::Clean, None).unwrap();
 
         assert_eq!(
-            source.filter_steps(WorkflowStep::steps_for_mode(BuildMode::Clean)),
-            vec![
+            plan.runnable_steps(),
+            &[
                 WorkflowStep::GeneratePrecombines,
                 WorkflowStep::MergePrecombineObjects,
             ]
@@ -358,11 +350,9 @@ mod tests {
             generate_precombines::DEFINITION,
         ];
         let source = ProductionOperationSource::new(GAPPED_OPERATIONS);
+        let plan = source.workflow_plan(BuildMode::Clean, None).unwrap();
 
-        assert_eq!(
-            source.filter_steps(WorkflowStep::steps_for_mode(BuildMode::Clean)),
-            vec![WorkflowStep::GeneratePrecombines]
-        );
+        assert_eq!(plan.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
     }
 
     #[test]
@@ -379,12 +369,13 @@ mod tests {
         );
         const LATER_OPERATIONS: &[WorkflowOperationDefinition] = &[MERGE_PREVIS, GENERATE_PREVIS];
         let source = ProductionOperationSource::new(LATER_OPERATIONS);
-        let resumed_steps =
-            WorkflowPlan::steps_for(BuildMode::Clean, Some(WorkflowStep::GeneratePrevis));
+        let plan = source
+            .workflow_plan(BuildMode::Clean, Some(WorkflowStep::GeneratePrevis))
+            .unwrap();
 
         assert_eq!(
-            source.filter_steps(&resumed_steps),
-            vec![WorkflowStep::GeneratePrevis, WorkflowStep::MergePrevis]
+            plan.runnable_steps(),
+            &[WorkflowStep::GeneratePrevis, WorkflowStep::MergePrevis]
         );
     }
 
@@ -443,16 +434,6 @@ mod tests {
 
         assert!(requirements.needs_creation_kit());
         assert!(requirements.needs_fo4edit());
-        assert!(!requirements.needs_archive());
-    }
-
-    #[test]
-    fn compatibility_requirements_delegate_to_production_source() {
-        let requirements = WorkflowOperationExecutor::<ProductionOperationAdapters>::
-            toolchain_requirements_for_steps(WorkflowStep::steps_for_mode(BuildMode::Clean));
-
-        assert!(requirements.needs_creation_kit());
-        assert!(!requirements.needs_fo4edit());
         assert!(!requirements.needs_archive());
     }
 
@@ -609,66 +590,13 @@ mod tests {
     }
 
     #[test]
-    fn production_source_dispatches_registered_operation_through_recording_adapter() {
-        let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
-        let adapters = RecordingAdapters::new(true);
-
-        production_operation_source()
-            .dispatch(WorkflowStep::GeneratePrecombines, &run, &adapters)
-            .unwrap();
-
-        let calls = adapters.ck_calls.borrow();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0, CkOperation::GeneratePrecombined);
-        assert_eq!(calls[0].1, "MyMod.esp");
-        assert_eq!(calls[0].2, "filtered all");
-    }
-
-    #[test]
-    fn production_capability_starts_with_step_one_only() {
-        let capability =
-            WorkflowOperationExecutor::<ProductionOperationAdapters>::production_capability();
-        assert_eq!(
-            capability.runnable_steps(),
-            &[WorkflowStep::GeneratePrecombines]
-        );
-    }
-
-    #[test]
-    fn step_one_runs_through_operation_executor() {
-        let (_dir, run) = prepared_run(BuildMode::Clean, None, true);
-        let adapters = RecordingAdapters::new(true);
-        let executor = WorkflowOperationExecutor::new(adapters);
-
-        executor
-            .run_step(WorkflowStep::GeneratePrecombines, &run)
-            .unwrap();
-
-        let calls = executor.adapters.ck_calls.borrow();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0, CkOperation::GeneratePrecombined);
-        assert_eq!(calls[0].1, "MyMod.esp");
-        assert_eq!(calls[0].2, "clean all");
-        assert!(
-            run.config()
-                .precombined_dir()
-                .join("test")
-                .join("mesh.nif")
-                .is_file()
-        );
-    }
-
-    #[test]
     fn step_one_uses_filtered_qualifiers_for_filtered_mode() {
         let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
         let adapters = RecordingAdapters::new(true);
-        let executor = WorkflowOperationExecutor::new(adapters);
 
-        executor
-            .run_step(WorkflowStep::GeneratePrecombines, &run)
-            .unwrap();
+        generate_precombines::run(&run, &adapters).unwrap();
 
-        let calls = executor.adapters.ck_calls.borrow();
+        let calls = adapters.ck_calls.borrow();
         assert_eq!(calls[0].2, "filtered all");
     }
 
@@ -677,14 +605,12 @@ mod tests {
         let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
         fs::create_dir_all(run.config().fo4edit_data_dir()).unwrap();
         fs::write(run.config().plugin_archive_path(), b"ba2").unwrap();
-        let executor = WorkflowOperationExecutor::new(RecordingAdapters::new(true));
+        let adapters = RecordingAdapters::new(true);
 
-        let err = executor
-            .run_step(WorkflowStep::GeneratePrecombines, &run)
-            .unwrap_err();
+        let err = generate_precombines::run(&run, &adapters).unwrap_err();
 
         assert!(matches!(err, Error::PluginAlreadyHasArchive));
-        assert!(executor.adapters.ck_calls.borrow().is_empty());
+        assert!(adapters.ck_calls.borrow().is_empty());
     }
 
     #[test]
@@ -692,24 +618,20 @@ mod tests {
         let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
         fs::create_dir_all(run.config().vis_dir()).unwrap();
         fs::write(run.config().vis_dir().join("cell.uvd"), b"uvd").unwrap();
-        let executor = WorkflowOperationExecutor::new(RecordingAdapters::new(true));
+        let adapters = RecordingAdapters::new(true);
 
-        let err = executor
-            .run_step(WorkflowStep::GeneratePrecombines, &run)
-            .unwrap_err();
+        let err = generate_precombines::run(&run, &adapters).unwrap_err();
 
         assert!(matches!(err, Error::VisUvdFilesExist));
-        assert!(executor.adapters.ck_calls.borrow().is_empty());
+        assert!(adapters.ck_calls.borrow().is_empty());
     }
 
     #[test]
     fn step_one_reports_missing_combined_objects_from_operation() {
         let (_dir, run) = prepared_run(BuildMode::Clean, None, true);
-        let executor = WorkflowOperationExecutor::new(RecordingAdapters::new(false));
+        let adapters = RecordingAdapters::new(false);
 
-        let err = executor
-            .run_step(WorkflowStep::GeneratePrecombines, &run)
-            .unwrap_err();
+        let err = generate_precombines::run(&run, &adapters).unwrap_err();
 
         assert!(matches!(err, Error::MissingCombinedObjects));
     }
@@ -717,11 +639,9 @@ mod tests {
     #[test]
     fn step_one_reports_missing_geometry_psg_from_operation() {
         let (_dir, run) = prepared_run(BuildMode::Clean, None, true);
-        let executor = WorkflowOperationExecutor::new(RecordingAdapters::new(true).without_psg());
+        let adapters = RecordingAdapters::new(true).without_psg();
 
-        let err = executor
-            .run_step(WorkflowStep::GeneratePrecombines, &run)
-            .unwrap_err();
+        let err = generate_precombines::run(&run, &adapters).unwrap_err();
 
         assert!(matches!(err, Error::MissingGeometryPsg(name) if name == "MyMod"));
     }
@@ -729,12 +649,9 @@ mod tests {
     #[test]
     fn step_one_reports_no_precombined_meshes_from_operation() {
         let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
-        let executor =
-            WorkflowOperationExecutor::new(RecordingAdapters::new(true).without_precombined_mesh());
+        let adapters = RecordingAdapters::new(true).without_precombined_mesh();
 
-        let err = executor
-            .run_step(WorkflowStep::GeneratePrecombines, &run)
-            .unwrap_err();
+        let err = generate_precombines::run(&run, &adapters).unwrap_err();
 
         assert!(matches!(err, Error::NoPrecombinedMeshes));
     }
@@ -742,14 +659,10 @@ mod tests {
     #[test]
     fn step_one_reports_handle_array_log_error_from_operation() {
         let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
-        let executor = WorkflowOperationExecutor::new(
-            RecordingAdapters::new(true)
-                .with_ck_log_contents(b"DEFAULT: OUT OF HANDLE ARRAY ENTRIES\n"),
-        );
+        let adapters = RecordingAdapters::new(true)
+            .with_ck_log_contents(b"DEFAULT: OUT OF HANDLE ARRAY ENTRIES\n");
 
-        let err = executor
-            .run_step(WorkflowStep::GeneratePrecombines, &run)
-            .unwrap_err();
+        let err = generate_precombines::run(&run, &adapters).unwrap_err();
 
         assert!(matches!(err, Error::HandleArrayLogError));
     }
@@ -761,13 +674,11 @@ mod tests {
         fs::create_dir_all(existing_mesh.parent().unwrap()).unwrap();
         fs::write(&existing_mesh, b"old").unwrap();
 
-        let executor = WorkflowOperationExecutor::new(RecordingAdapters::new(true));
+        let adapters = RecordingAdapters::new(true);
 
-        executor
-            .run_step(WorkflowStep::GeneratePrecombines, &run)
-            .unwrap();
+        generate_precombines::run(&run, &adapters).unwrap();
 
-        assert_eq!(executor.adapters.clear_prompts.get(), 1);
+        assert_eq!(adapters.clear_prompts.get(), 1);
         assert!(!existing_mesh.is_file());
     }
 

@@ -1,9 +1,4 @@
 {
-  ".codex/hooks.json": {
-    "mtime": 1785218308.2532032,
-    "ast_hash": "611d48e08353296f515ceb648a64bc8a",
-    "semantic_hash": "611d48e08353296f515ceb648a64bc8a"
-  },
   "src/cli.rs": {
     "mtime": 1784371327.9687686,
     "ast_hash": "bb6a132dcf40b2e6750f4191ce7be669",
@@ -20,9 +15,9 @@
     "semantic_hash": "ce51ee14f415dd697f263098c99fb499"
   },
   "src/error.rs": {
-    "mtime": 1784369978.83063,
-    "ast_hash": "595914bf0a725cf6e73f1d861516bb1b",
-    "semantic_hash": "595914bf0a725cf6e73f1d861516bb1b"
+    "mtime": 1785286797.8837366,
+    "ast_hash": "3a208f2e62fad7ad919c7da5737db943",
+    "semantic_hash": ""
   },
   "src/intake.rs": {
     "mtime": 1784370100.1370413,
@@ -35,9 +30,9 @@
     "semantic_hash": "56d0b2498e31ea69c8769a8c1298f927"
   },
   "src/lib.rs": {
-    "mtime": 1783470657.8107724,
-    "ast_hash": "c9bec08de5402c3ccecbd951b052fd27",
-    "semantic_hash": "c9bec08de5402c3ccecbd951b052fd27"
+    "mtime": 1785288502.932306,
+    "ast_hash": "cea9f6bef92e0de1fc05de2175588972",
+    "semantic_hash": ""
   },
   "src/logging.rs": {
     "mtime": 1783469708.2263682,
@@ -45,13 +40,13 @@
     "semantic_hash": "7e901135a8a6da2b8a800ac670b5d92f"
   },
   "src/main.rs": {
-    "mtime": 1784449920.4234207,
-    "ast_hash": "e277eb2d551f97c7bac1f92b777a7a3c",
-    "semantic_hash": "e277eb2d551f97c7bac1f92b777a7a3c"
+    "mtime": 1785286800.5437927,
+    "ast_hash": "cd0aa23165955dc107b2d79551ca26ef",
+    "semantic_hash": ""
   },
   "src/run.rs": {
-    "mtime": 1785282611.3349445,
-    "ast_hash": "6ab8207038995390e34c43b61fbe006f",
+    "mtime": 1785288516.3623843,
+    "ast_hash": "d6d7861c36dd32a0bc5271aedbb9df6d",
     "semantic_hash": ""
   },
   "src/text.rs": {
@@ -100,13 +95,13 @@
     "semantic_hash": "77e41e0f7636089e8d39c8246a74131b"
   },
   "src/workflow.rs": {
-    "mtime": 1785283540.3979354,
-    "ast_hash": "1fc2eeb0b1a1156b3526b6d48b1bd591",
+    "mtime": 1785287455.5862017,
+    "ast_hash": "0e327af2d8630f4efb3093ceb01a187f",
     "semantic_hash": ""
   },
   "src/workflow/operations.rs": {
-    "mtime": 1785283619.35579,
-    "ast_hash": "e38c5a782b7c2844d4c65d718a12e50a",
+    "mtime": 1785288505.8580132,
+    "ast_hash": "0ef9a0053c260f40d06163932f6ec9b2",
     "semantic_hash": ""
   },
   "src/workflow/operations/generate_precombines.rs": {
@@ -215,9 +210,9 @@
     "semantic_hash": "4e7c8e7e59514c105e6962610aebe0f0"
   },
   "docs/future-features.md": {
-    "mtime": 1784370100.1395507,
-    "ast_hash": "8961cb3cf66f7f163fdb1d9d72d12e7a",
-    "semantic_hash": "8961cb3cf66f7f163fdb1d9d72d12e7a"
+    "mtime": 1785288527.9588196,
+    "ast_hash": "2b31627d7f0ff232feb14f13e2b73b84",
+    "semantic_hash": ""
   },
   "docs/technical.md": {
     "mtime": 1780014416.6528683,

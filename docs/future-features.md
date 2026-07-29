@@ -35,7 +35,7 @@ These are required before claiming the Rust binary replaces the batch script.
 Ordered slices recommended for parity work:
 
 1. ~~**Interactive plugin flow**~~ — implemented in `interactive` (`dialoguer` prompts, seed copy + 5s MO2 delay, Y/N/C, `:GetStep` resume).
-2. ~~**Step 1 — Generate precombines**~~ — implemented through the Workflow Operation seam with `tools/creation_kit` and `checks` (preamble/post, CK run + 10s delay). Steps 2–8 still fail fast through operation capability.
+2. ~~**Step 1 — Generate precombines**~~ — implemented through the Workflow Operation seam with `tools/creation_kit` and `checks` (preamble/post, CK run + 10s delay). Steps 2–8 stop the runnable sequence at the first missing registered operation.
 3. **Step 2 — Merge CombinedObjects** — FO4Edit `Batch_FO4MergeCombinedObjectsAndCheck.pas`, warning on `Error:` in unattended log.
 4. **Step 3 — Archive precombines** — create `{plugin} - Main.ba2`, delete precombined folder when using Archive2.
 5. **Steps 4–5 — PSG / CDX** (clean only) — `CompressPSG`, `BuildCDX`, delete intermediate `.psg`.
@@ -141,7 +141,7 @@ src/
   validation.rs     # plugin + CKPE + xEdit scripts
   workflow.rs       # step planning + engine
   logging.rs        # session log + CK log append
-  workflow/         # Workflow Operation executor and operation tests
+  workflow/         # Workflow Operation registration, dispatch, and operation tests
   tools/            # CK adapter, DLL guard, FO4Edit/archive stubs
   error.rs
 ```

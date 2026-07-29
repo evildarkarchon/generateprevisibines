@@ -9,7 +9,7 @@ use generateprevisibines::{
     intake::{WorkflowIntakeOutcome, WorkflowRequestIntake},
     run::RunDiagnostic,
     toolchain::{ToolchainDiagnostic, WorkflowToolchainProbe},
-    workflow::{self, WorkflowPlan},
+    workflow::{self, WorkflowPlan, operations::production_workflow_plan},
 };
 use tracing_subscriber::EnvFilter;
 
@@ -64,7 +64,7 @@ fn run_dry_run(cli: &Cli) {
     println!("Archiver: {}", cli.archive_tool().program_name());
     workflow::print_resume_menu(mode);
 
-    let plan = WorkflowPlan::new(mode, cli.resume_from);
+    let plan = production_workflow_plan(mode, cli.resume_from);
     let steps = plan.as_ref().map_or_else(
         |_| WorkflowPlan::steps_for(mode, cli.resume_from),
         |plan| plan.planned_steps().to_vec(),

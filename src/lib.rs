@@ -31,7 +31,4 @@ pub use toolchain::{
     PluginReadiness, ToolchainDiagnostic, ToolchainRequirements, WorkflowToolchain,
     WorkflowToolchainProbe,
 };
-pub use workflow::operations::{
-    OperationAdapters, ProductionOperationAdapters, WorkflowOperationExecutor,
-};
-pub use workflow::{OperationCapability, WorkflowPlan};
+pub use workflow::WorkflowPlan;

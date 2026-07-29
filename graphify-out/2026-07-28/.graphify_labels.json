@@ -6,9 +6,9 @@
   "4": "WorkflowRun",
   "5": "Graphify Pipeline",
   "6": "interactive.rs",
-  "7": "PluginIdentity",
+  "7": "BuildMode",
   "8": "precombine_workspace.rs",
-  "9": "WorkflowStep",
+  "9": ".steps_for",
   "10": "creation_kit.rs",
   "11": "validation.rs",
   "12": "discovery.rs",
@@ -18,6 +18,6 @@
   "16": ".run_script",
   "17": "read_lossy",
   "18": "Q: $improve-codebase-architecture",
-  "19": "BuildMode",
+  "19": "ProjectConfig",
   "20": "Q: How are the Workflow Plan and dry-run preview built from registered Workflow Operations, including ordering, resume behavior, StepNotImplemented, and production operation availability?"
 }

@@ -4,117 +4,35 @@ pub mod operations;
 
 use crate::config::{BuildMode, WorkflowStep};
 use crate::error::{Error, Result};
-use crate::workflow::operations::{
-    ProductionOperationAdapters, WorkflowOperationExecutor, production_operation_source,
-};
 
-/// Plain description of which workflow steps the operation executor can run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OperationCapability {
-    runnable_steps: &'static [WorkflowStep],
-}
-
-impl OperationCapability {
-    /// Create an operation capability from the fixed steps supported by the executor.
-    ///
-    /// The slice is static because operation capability is implementation-level behavior, not
-    /// per-run state. Use [`WorkflowPlan`] to filter a specific Workflow Run.
-    #[must_use]
-    pub const fn new(runnable_steps: &'static [WorkflowStep]) -> Self {
-        Self { runnable_steps }
-    }
-
-    /// Steps the operation executor can execute.
-    #[must_use]
-    pub const fn runnable_steps(self) -> &'static [WorkflowStep] {
-        self.runnable_steps
-    }
-
-    /// Return the runnable prefix of planned steps this capability can execute.
-    ///
-    /// Runnability stops at the first unavailable operation so compatibility planning preserves
-    /// the same dependency ordering as the production Workflow Operation source.
-    #[must_use]
-    fn filter_steps(self, steps: &[WorkflowStep]) -> Vec<WorkflowStep> {
-        steps
-            .iter()
-            .copied()
-            .take_while(|step| self.can_run(*step))
-            .collect()
-    }
-
-    fn can_run(self, step: WorkflowStep) -> bool {
-        self.runnable_steps.contains(&step)
-    }
-}
-
-/// Ordered steps for a Workflow Run after build mode, resume, and capability are applied.
+/// Ordered planned and runnable steps for a Workflow Run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkflowPlan {
     planned_steps: Vec<WorkflowStep>,
     runnable_steps: Vec<WorkflowStep>,
-    capability: OperationCapability,
 }
 
 impl WorkflowPlan {
-    /// Build the production Workflow Plan for a build mode and optional resume step.
+    /// Resolve a Workflow Plan against operation availability supplied by the caller.
     ///
-    /// Returns [`Error::StepNotImplemented`] when the requested resume step is not
-    /// registered as a production Workflow Operation, or when none of the planned steps are
-    /// currently runnable.
-    pub fn new(build_mode: BuildMode, resume_from: Option<WorkflowStep>) -> Result<Self> {
-        let planned_steps = Self::steps_for(build_mode, resume_from);
-        let operations = production_operation_source();
-        let runnable_steps = operations.filter_steps(&planned_steps);
-        let capability =
-            WorkflowOperationExecutor::<ProductionOperationAdapters>::production_capability();
-
-        Self::from_filtered_steps(
-            planned_steps,
-            runnable_steps,
-            resume_from,
-            resume_from.is_none_or(|resume| operations.contains(resume)),
-            capability,
-        )
-    }
-
-    /// Build a Workflow Plan with synthetic capability for the temporary Workflow Run migration.
-    ///
-    /// Ticket #8 removes this compatibility constructor after Workflow Run execution no longer
-    /// stores capability separately from the production Workflow Operation source. Returns
-    /// [`Error::StepNotImplemented`] when the requested resume step or entire filtered plan is not
-    /// runnable under `capability`.
-    pub(crate) fn new_with_capability(
+    /// Workflow Plan retains build-mode inclusion, resume sequencing, canonical ordering, and
+    /// contiguous runnability without depending on any production registration type. Returns
+    /// [`Error::StepNotImplemented`] for an unavailable requested resume step or empty runnable
+    /// plan.
+    fn resolve(
         build_mode: BuildMode,
         resume_from: Option<WorkflowStep>,
-        capability: OperationCapability,
+        operation_is_available: impl Fn(WorkflowStep) -> bool,
     ) -> Result<Self> {
         let planned_steps = Self::steps_for(build_mode, resume_from);
-        let runnable_steps = capability.filter_steps(&planned_steps);
+        let runnable_steps: Vec<_> = planned_steps
+            .iter()
+            .copied()
+            .take_while(|step| operation_is_available(*step))
+            .collect();
 
-        Self::from_filtered_steps(
-            planned_steps,
-            runnable_steps,
-            resume_from,
-            resume_from.is_none_or(|resume| capability.can_run(resume)),
-            capability,
-        )
-    }
-
-    /// Validate filtered production or compatibility steps and assemble the immutable plan.
-    ///
-    /// `resume_is_runnable` must report membership in the same operation source or compatibility
-    /// capability that produced `runnable_steps`. Returns [`Error::StepNotImplemented`] for an
-    /// unavailable requested resume step or an empty runnable plan.
-    fn from_filtered_steps(
-        planned_steps: Vec<WorkflowStep>,
-        runnable_steps: Vec<WorkflowStep>,
-        resume_from: Option<WorkflowStep>,
-        resume_is_runnable: bool,
-        capability: OperationCapability,
-    ) -> Result<Self> {
         if let Some(resume) = resume_from
-            && !resume_is_runnable
+            && !operation_is_available(resume)
         {
             return Err(Error::StepNotImplemented(resume.number()));
         }
@@ -128,7 +46,6 @@ impl WorkflowPlan {
         Ok(Self {
             planned_steps,
             runnable_steps,
-            capability,
         })
     }
 
@@ -152,28 +69,16 @@ impl WorkflowPlan {
         &self.planned_steps
     }
 
-    /// Steps this Workflow Run can execute with the selected operation capability.
+    /// Steps this Workflow Run can execute with registered Workflow Operations.
     #[must_use]
     pub fn runnable_steps(&self) -> &[WorkflowStep] {
         &self.runnable_steps
     }
 
-    /// Operation capability used to derive this Workflow Plan's runnable steps.
-    #[must_use]
-    pub const fn capability(&self) -> OperationCapability {
-        self.capability
-    }
-
-    /// Number of planned steps skipped because the operation executor cannot run them yet.
+    /// Number of planned steps skipped because their Workflow Operations are unavailable.
     #[must_use]
     pub fn skipped_unrunnable_count(&self) -> usize {
         self.planned_steps.len() - self.runnable_steps.len()
-    }
-
-    /// Whether this plan is partial because the operation executor lacks later-step capability.
-    #[must_use]
-    pub fn is_partial_due_to_capability(&self) -> bool {
-        self.skipped_unrunnable_count() > 0
     }
 }
 
