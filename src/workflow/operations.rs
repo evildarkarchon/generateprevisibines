@@ -17,6 +17,10 @@ use crate::workflow::WorkflowPlan;
 mod generate_precombines;
 mod precombine_workspace;
 
+/// The shared recording adapters, crate-visible so the Workflow Run tests reach them too.
+#[cfg(test)]
+pub(crate) mod recording_adapters;
+
 macro_rules! register_production_operations {
     ($($operation:expr),+ $(,)?) => {
         const PRODUCTION_OPERATION_SOURCE: ProductionOperationSource =
@@ -256,10 +260,10 @@ impl OperationAdapters for ProductionOperationAdapters {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::{Cell, RefCell};
     use std::fs;
     use tempfile::{TempDir, tempdir};
 
+    use super::recording_adapters::RecordingOperationAdapters;
     use super::*;
     use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
     use crate::run::WorkflowRequest;
@@ -451,130 +455,6 @@ mod tests {
         assert!(!requirements.needs_archive());
     }
 
-    #[derive(Debug)]
-    struct RecordingAdapters {
-        ck_calls: RefCell<Vec<(CkOperation, String, String)>>,
-        clear_prompts: Cell<usize>,
-        clear_response: bool,
-        artifacts: RecordedArtifacts,
-        ck_log_contents: &'static [u8],
-        /// This fake still fabricates real files, so it stays on the real filesystem adapter.
-        files: SystemFileSpace,
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    struct RecordedArtifacts {
-        combined_objects: ArtifactState,
-        precombined_mesh: ArtifactState,
-        geometry_psg: ArtifactState,
-    }
-
-    impl RecordedArtifacts {
-        const fn with_combined_objects(combined_objects: ArtifactState) -> Self {
-            Self {
-                combined_objects,
-                precombined_mesh: ArtifactState::Created,
-                geometry_psg: ArtifactState::Created,
-            }
-        }
-    }
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum ArtifactState {
-        Created,
-        Missing,
-    }
-
-    impl ArtifactState {
-        const fn should_create(self) -> bool {
-            matches!(self, Self::Created)
-        }
-    }
-
-    impl RecordingAdapters {
-        fn new(create_combined: bool) -> Self {
-            let combined_objects = if create_combined {
-                ArtifactState::Created
-            } else {
-                ArtifactState::Missing
-            };
-
-            Self {
-                ck_calls: RefCell::new(Vec::new()),
-                clear_prompts: Cell::new(0),
-                clear_response: true,
-                artifacts: RecordedArtifacts::with_combined_objects(combined_objects),
-                ck_log_contents: b"ok\n",
-                files: SystemFileSpace,
-            }
-        }
-
-        fn without_precombined_mesh(mut self) -> Self {
-            self.artifacts.precombined_mesh = ArtifactState::Missing;
-            self
-        }
-
-        fn without_psg(mut self) -> Self {
-            self.artifacts.geometry_psg = ArtifactState::Missing;
-            self
-        }
-
-        fn with_ck_log_contents(mut self, contents: &'static [u8]) -> Self {
-            self.ck_log_contents = contents;
-            self
-        }
-    }
-
-    impl OperationAdapters for RecordingAdapters {
-        fn files(&self) -> &dyn FileSpace {
-            &self.files
-        }
-
-        fn run_creation_kit(
-            &self,
-            run: &WorkflowRun,
-            operation: CkOperation,
-            plugin_file: &str,
-            qualifiers: &str,
-        ) -> Result<()> {
-            self.ck_calls.borrow_mut().push((
-                operation,
-                plugin_file.to_string(),
-                qualifiers.to_string(),
-            ));
-
-            let data = run.config().fo4edit_data_dir();
-            fs::create_dir_all(&data)?;
-            if self.artifacts.combined_objects.should_create() {
-                fs::write(data.join("CombinedObjects.esp"), b"combined")?;
-            }
-
-            if self.artifacts.precombined_mesh.should_create() {
-                let precombined_mesh = run.config().precombined_dir().join("test").join("mesh.nif");
-                fs::create_dir_all(precombined_mesh.parent().unwrap())?;
-                fs::write(precombined_mesh, b"nif")?;
-            }
-
-            if run.config().build_mode == BuildMode::Clean
-                && self.artifacts.geometry_psg.should_create()
-            {
-                fs::write(
-                    data.join(format!("{} - Geometry.psg", run.config().plugin.base_name)),
-                    b"psg",
-                )?;
-            }
-
-            fs::write(&run.tool_context().ck_log_path, self.ck_log_contents)?;
-
-            Ok(())
-        }
-
-        fn confirm_clear_precombined(&self, _precombined_dir: &Path) -> Result<bool> {
-            self.clear_prompts.set(self.clear_prompts.get() + 1);
-            Ok(self.clear_response)
-        }
-    }
-
     fn prepared_run(
         mode: BuildMode,
         resume_from: Option<WorkflowStep>,
@@ -611,46 +491,57 @@ mod tests {
     }
 
     #[test]
-    fn step_one_uses_filtered_qualifiers_for_filtered_mode() {
-        let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
-        let adapters = RecordingAdapters::new(true);
+    fn step_one_selects_creation_kit_qualifiers_from_the_build_mode() {
+        let cases = [
+            (BuildMode::Clean, "clean all"),
+            (BuildMode::Filtered, "filtered all"),
+            (BuildMode::Xbox, "filtered all"),
+        ];
 
-        generate_precombines::run(&run, &adapters).unwrap();
+        for (mode, expected_qualifiers) in cases {
+            let (_dir, run) = prepared_run(mode, None, true);
+            let adapters = RecordingOperationAdapters::new();
 
-        let calls = adapters.ck_calls.borrow();
-        assert_eq!(calls[0].2, "filtered all");
+            generate_precombines::run(&run, &adapters).unwrap();
+
+            let calls = adapters.creation_kit_calls();
+            assert_eq!(calls.len(), 1, "mode: {mode:?}");
+            assert_eq!(calls[0].operation, CkOperation::GeneratePrecombined);
+            assert_eq!(calls[0].plugin_file, "MyMod.esp");
+            assert_eq!(calls[0].qualifiers, expected_qualifiers, "mode: {mode:?}");
+        }
     }
 
     #[test]
     fn step_one_rejects_existing_plugin_archive_before_ck() {
         let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
-        fs::create_dir_all(run.config().fo4edit_data_dir()).unwrap();
-        fs::write(run.config().plugin_archive_path(), b"ba2").unwrap();
-        let adapters = RecordingAdapters::new(true);
+        let adapters = RecordingOperationAdapters::new();
+        adapters.file_space().add_file(run.config().plugin_archive_path());
 
         let err = generate_precombines::run(&run, &adapters).unwrap_err();
 
         assert!(matches!(err, Error::PluginAlreadyHasArchive));
-        assert!(adapters.ck_calls.borrow().is_empty());
+        assert!(adapters.creation_kit_calls().is_empty());
     }
 
     #[test]
     fn step_one_rejects_vis_uvd_files_before_ck() {
         let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
-        fs::create_dir_all(run.config().vis_dir()).unwrap();
-        fs::write(run.config().vis_dir().join("cell.uvd"), b"uvd").unwrap();
-        let adapters = RecordingAdapters::new(true);
+        let adapters = RecordingOperationAdapters::new();
+        adapters
+            .file_space()
+            .add_file(run.config().vis_dir().join("cell.uvd"));
 
         let err = generate_precombines::run(&run, &adapters).unwrap_err();
 
         assert!(matches!(err, Error::VisUvdFilesExist));
-        assert!(adapters.ck_calls.borrow().is_empty());
+        assert!(adapters.creation_kit_calls().is_empty());
     }
 
     #[test]
     fn step_one_reports_missing_combined_objects_from_operation() {
         let (_dir, run) = prepared_run(BuildMode::Clean, None, true);
-        let adapters = RecordingAdapters::new(false);
+        let adapters = RecordingOperationAdapters::new().without_combined_objects();
 
         let err = generate_precombines::run(&run, &adapters).unwrap_err();
 
@@ -660,7 +551,7 @@ mod tests {
     #[test]
     fn step_one_reports_missing_geometry_psg_from_operation() {
         let (_dir, run) = prepared_run(BuildMode::Clean, None, true);
-        let adapters = RecordingAdapters::new(true).without_psg();
+        let adapters = RecordingOperationAdapters::new().without_geometry_psg();
 
         let err = generate_precombines::run(&run, &adapters).unwrap_err();
 
@@ -670,7 +561,7 @@ mod tests {
     #[test]
     fn step_one_reports_no_precombined_meshes_from_operation() {
         let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
-        let adapters = RecordingAdapters::new(true).without_precombined_mesh();
+        let adapters = RecordingOperationAdapters::new().without_precombined_meshes();
 
         let err = generate_precombines::run(&run, &adapters).unwrap_err();
 
@@ -680,8 +571,8 @@ mod tests {
     #[test]
     fn step_one_reports_handle_array_log_error_from_operation() {
         let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
-        let adapters = RecordingAdapters::new(true)
-            .with_ck_log_contents(b"DEFAULT: OUT OF HANDLE ARRAY ENTRIES\n");
+        let adapters = RecordingOperationAdapters::new()
+            .with_ck_log_contents("DEFAULT: OUT OF HANDLE ARRAY ENTRIES\n");
 
         let err = generate_precombines::run(&run, &adapters).unwrap_err();
 
@@ -691,29 +582,61 @@ mod tests {
     #[test]
     fn step_one_prompt_clears_precombined_meshes_when_interactive() {
         let (_dir, run) = prepared_run(BuildMode::Filtered, None, false);
+        let adapters = RecordingOperationAdapters::new();
         let existing_mesh = run.config().precombined_dir().join("old").join("mesh.nif");
-        fs::create_dir_all(existing_mesh.parent().unwrap()).unwrap();
-        fs::write(&existing_mesh, b"old").unwrap();
-
-        let adapters = RecordingAdapters::new(true);
+        adapters.file_space().add_file(&existing_mesh);
 
         generate_precombines::run(&run, &adapters).unwrap();
 
-        assert_eq!(adapters.clear_prompts.get(), 1);
-        assert!(!existing_mesh.is_file());
+        assert_eq!(adapters.clear_prompt_count(), 1);
+        assert!(!adapters.file_space().is_file(&existing_mesh));
+    }
+
+    #[test]
+    fn step_one_stops_when_the_clear_precombined_prompt_is_refused() {
+        let (_dir, run) = prepared_run(BuildMode::Filtered, None, false);
+        let adapters = RecordingOperationAdapters::new().refusing_clear_precombined();
+        let existing_mesh = run.config().precombined_dir().join("old").join("mesh.nif");
+        adapters.file_space().add_file(&existing_mesh);
+
+        let err = generate_precombines::run(&run, &adapters).unwrap_err();
+
+        assert!(
+            matches!(err, Error::Other(message) if message
+                == "precombined meshes not cleared - choose another resume step")
+        );
+        assert_eq!(adapters.clear_prompt_count(), 1);
+        assert!(adapters.creation_kit_calls().is_empty());
+        // A refusal leaves the meshes alone; the run stops rather than clearing anyway.
+        assert!(adapters.file_space().is_file(&existing_mesh));
+    }
+
+    #[test]
+    fn step_one_rejects_existing_precombined_meshes_without_prompting_when_non_interactive() {
+        let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
+        let adapters = RecordingOperationAdapters::new();
+        adapters
+            .file_space()
+            .add_file(run.config().precombined_dir().join("old").join("mesh.nif"));
+
+        let err = generate_precombines::run(&run, &adapters).unwrap_err();
+
+        assert!(matches!(err, Error::PrecombinedMeshesExist));
+        assert_eq!(adapters.clear_prompt_count(), 0);
+        assert!(adapters.creation_kit_calls().is_empty());
     }
 
     #[test]
     fn unregistered_source_dispatch_fails_before_adapters() {
         let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
-        let adapters = RecordingAdapters::new(true);
+        let adapters = RecordingOperationAdapters::new();
 
         let err = production_operation_source()
             .dispatch(WorkflowStep::MergePrecombineObjects, &run, &adapters)
             .unwrap_err();
 
         assert!(matches!(err, Error::StepNotImplemented(2)));
-        assert!(adapters.ck_calls.borrow().is_empty());
-        assert_eq!(adapters.clear_prompts.get(), 0);
+        assert!(adapters.creation_kit_calls().is_empty());
+        assert_eq!(adapters.clear_prompt_count(), 0);
     }
 }

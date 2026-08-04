@@ -211,62 +211,12 @@ mod tests {
     use crate::config::PluginIdentity;
     use crate::discovery::ToolPaths;
     use crate::error::Error;
-    use crate::files::{FileSpace, SystemFileSpace};
     use crate::tools::CkOperation;
-    use std::cell::RefCell;
+    use crate::workflow::operations::recording_adapters::{
+        RecordedCreationKitCall, RecordingOperationAdapters,
+    };
     use std::fs;
     use tempfile::{TempDir, tempdir};
-
-    #[derive(Debug, Default)]
-    struct RecordingOperationAdapters {
-        creation_kit_calls: RefCell<Vec<(CkOperation, String, String)>>,
-        /// This fake still fabricates real files, so it stays on the real filesystem adapter.
-        files: SystemFileSpace,
-    }
-
-    impl OperationAdapters for RecordingOperationAdapters {
-        fn files(&self) -> &dyn FileSpace {
-            &self.files
-        }
-
-        fn run_creation_kit(
-            &self,
-            run: &WorkflowRun,
-            operation: CkOperation,
-            plugin_file: &str,
-            qualifiers: &str,
-        ) -> Result<()> {
-            self.creation_kit_calls.borrow_mut().push((
-                operation,
-                plugin_file.to_owned(),
-                qualifiers.to_owned(),
-            ));
-
-            // The adapter supplies CK's external outputs while the real operation owns validation.
-            let data_directory = run.config().fo4edit_data_dir();
-            fs::create_dir_all(&data_directory)?;
-            fs::write(data_directory.join("CombinedObjects.esp"), b"combined")?;
-            fs::write(
-                data_directory.join(format!("{} - Geometry.psg", run.config().plugin.base_name)),
-                b"geometry",
-            )?;
-
-            let precombined_mesh = run
-                .config()
-                .precombined_dir()
-                .join("production-shaped")
-                .join("mesh.nif");
-            fs::create_dir_all(precombined_mesh.parent().unwrap())?;
-            fs::write(precombined_mesh, b"mesh")?;
-            fs::write(&run.tool_context().ck_log_path, b"CK completed\n")?;
-
-            Ok(())
-        }
-
-        fn confirm_clear_precombined(&self, _precombined_dir: &Path) -> Result<bool> {
-            unreachable!("a fresh production-shaped fixture must not prompt for cleanup")
-        }
-    }
 
     struct ReadyWorkflowFixture {
         directory: TempDir,
@@ -359,43 +309,34 @@ mod tests {
         );
     }
 
+    /// The prepared run dispatches Step 1 and hands Creation Kit the Clean-mode qualifiers.
+    ///
+    /// Artifact assertions belong to the Workflow Operation and Precombine Workspace tests.
+    /// The subject here is the Workflow Run's own dispatch, so checking for files the fake
+    /// wrote moments earlier — through the same accessors the assertions used — would only
+    /// report confidence this test has not earned.
     #[test]
-    fn prepared_run_executes_registered_plan_and_produces_precombine_artifacts() {
+    fn prepared_run_dispatches_step_one_with_clean_mode_creation_kit_qualifiers() {
         let fixture = ready_workflow_fixture();
         let run = WorkflowRun::prepare(&fixture.request, fixture.directory.path(), &fixture.probe)
             .unwrap();
-        let adapters = RecordingOperationAdapters::default();
+        let adapters = RecordingOperationAdapters::new();
 
         assert_eq!(run.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
         run.execute_with_adapters(&adapters).unwrap();
 
         assert_eq!(
-            adapters.creation_kit_calls.into_inner(),
-            vec![(
-                CkOperation::GeneratePrecombined,
-                "MyMod.esp".to_owned(),
-                "clean all".to_owned(),
-            )]
+            adapters.creation_kit_calls(),
+            vec![RecordedCreationKitCall {
+                operation: CkOperation::GeneratePrecombined,
+                plugin_file: "MyMod.esp".to_owned(),
+                qualifiers: "clean all".to_owned(),
+            }]
         );
-        assert!(
-            run.config()
-                .fo4edit_data_dir()
-                .join("CombinedObjects.esp")
-                .is_file()
-        );
-        assert!(
-            run.config()
-                .fo4edit_data_dir()
-                .join("MyMod - Geometry.psg")
-                .is_file()
-        );
-        assert!(
-            run.config()
-                .precombined_dir()
-                .join("production-shaped")
-                .join("mesh.nif")
-                .is_file()
-        );
+        // A fresh fixture has nothing to clear, so the resume prompt must never fire. This
+        // is a dispatch fact about the run, not an artifact check: the fake established no
+        // meshes, so nothing here asserts something the test itself put in place.
+        assert_eq!(adapters.clear_prompt_count(), 0);
     }
 
     #[test]
