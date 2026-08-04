@@ -3,12 +3,12 @@
   "1": "GeneratePrevisibines",
   "2": "toolchain.rs",
   "3": "cli.rs",
-  "4": "WorkflowRun",
-  "5": "Graphify Pipeline",
-  "6": "interactive.rs",
-  "7": "BuildMode",
+  "4": "run.rs",
+  "5": "files.rs",
+  "6": "BuildMode",
+  "7": "PluginIdentity",
   "8": "precombine_workspace.rs",
-  "9": ".steps_for",
+  "9": "CLAUDE.md",
   "10": "creation_kit.rs",
   "11": "validation.rs",
   "12": "discovery.rs",
@@ -19,5 +19,6 @@
   "17": "read_lossy",
   "18": "Q: $improve-codebase-architecture",
   "19": "ProjectConfig",
-  "20": "Q: How are the Workflow Plan and dry-run preview built from registered Workflow Operations, including ordering, resume behavior, StepNotImplemented, and production operation availability?"
+  "20": "Q: How are the Workflow Plan and dry-run preview built from registered Workflow Operations, including ordering, resume behavior, StepNotImplemented, and production operation availability?",
+  "21": ".claude/CLAUDE.md"
 }

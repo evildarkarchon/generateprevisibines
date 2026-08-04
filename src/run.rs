@@ -211,6 +211,7 @@ mod tests {
     use crate::config::PluginIdentity;
     use crate::discovery::ToolPaths;
     use crate::error::Error;
+    use crate::files::{FileSpace, SystemFileSpace};
     use crate::tools::CkOperation;
     use std::cell::RefCell;
     use std::fs;
@@ -219,9 +220,15 @@ mod tests {
     #[derive(Debug, Default)]
     struct RecordingOperationAdapters {
         creation_kit_calls: RefCell<Vec<(CkOperation, String, String)>>,
+        /// This fake still fabricates real files, so it stays on the real filesystem adapter.
+        files: SystemFileSpace,
     }
 
     impl OperationAdapters for RecordingOperationAdapters {
+        fn files(&self) -> &dyn FileSpace {
+            &self.files
+        }
+
         fn run_creation_kit(
             &self,
             run: &WorkflowRun,

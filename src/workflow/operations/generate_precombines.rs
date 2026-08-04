@@ -21,7 +21,7 @@ pub(super) const DEFINITION: WorkflowOperationDefinition = WorkflowOperationDefi
 /// Run the Step 1 Generate Precombines Operation for a prepared Workflow Run.
 pub(super) fn run(run: &WorkflowRun, adapters: &dyn OperationAdapters) -> Result<()> {
     let config = run.config();
-    let workspace = PrecombineWorkspace::new(config);
+    let workspace = PrecombineWorkspace::new(config, adapters.files());
     maybe_clear_precombined_on_resume(run, adapters, &workspace)?;
 
     workspace.prepare_for_generate()?;

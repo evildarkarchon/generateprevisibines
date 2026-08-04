@@ -17,6 +17,7 @@ pub mod tools;
 pub mod validation;
 pub mod workflow;
 
+mod files;
 mod text;
 
 pub use cli::Cli;

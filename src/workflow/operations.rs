@@ -7,6 +7,7 @@ use std::path::Path;
 
 use crate::config::{BuildMode, WorkflowStep};
 use crate::error::{Error, Result};
+use crate::files::{FileSpace, SystemFileSpace};
 use crate::interactive;
 use crate::run::WorkflowRun;
 use crate::toolchain::ToolchainRequirements;
@@ -207,23 +208,36 @@ pub(crate) trait OperationAdapters {
 
     /// Ask whether existing precombined meshes should be cleared before Step 1 resumes.
     fn confirm_clear_precombined(&self, precombined_dir: &Path) -> Result<bool>;
+
+    /// The `FileSpace` every Workflow Operation reads and cleans up external-tool outputs through.
+    ///
+    /// One adapter shared by all planned steps, reached through this bundle like every other.
+    fn files(&self) -> &dyn FileSpace;
 }
 
 /// Production adapters for external tools and interactive prompts.
 #[derive(Debug, Default)]
 pub(crate) struct ProductionOperationAdapters {
     ck: CreationKitOps,
+    files: SystemFileSpace,
 }
 
 impl ProductionOperationAdapters {
     /// Create production operation adapters.
     #[must_use]
     pub(crate) const fn new() -> Self {
-        Self { ck: CreationKitOps }
+        Self {
+            ck: CreationKitOps,
+            files: SystemFileSpace,
+        }
     }
 }
 
 impl OperationAdapters for ProductionOperationAdapters {
+    fn files(&self) -> &dyn FileSpace {
+        &self.files
+    }
+
     fn run_creation_kit(
         &self,
         run: &WorkflowRun,
@@ -444,6 +458,8 @@ mod tests {
         clear_response: bool,
         artifacts: RecordedArtifacts,
         ck_log_contents: &'static [u8],
+        /// This fake still fabricates real files, so it stays on the real filesystem adapter.
+        files: SystemFileSpace,
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -489,6 +505,7 @@ mod tests {
                 clear_response: true,
                 artifacts: RecordedArtifacts::with_combined_objects(combined_objects),
                 ck_log_contents: b"ok\n",
+                files: SystemFileSpace,
             }
         }
 
@@ -509,6 +526,10 @@ mod tests {
     }
 
     impl OperationAdapters for RecordingAdapters {
+        fn files(&self) -> &dyn FileSpace {
+            &self.files
+        }
+
         fn run_creation_kit(
             &self,
             run: &WorkflowRun,
