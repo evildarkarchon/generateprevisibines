@@ -38,7 +38,7 @@ cargo clippy             # Lint with pedantic warnings enabled
 
 ### Issue tracker
 
-Issues and PRDs are tracked in GitHub Issues; external pull requests are not a triage request surface. See `docs/agents/issue-tracker.md`.
+Issues and PRDs are tracked as local markdown files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

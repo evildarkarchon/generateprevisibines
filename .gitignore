@@ -48,3 +48,5 @@ GeneratePrevisibines.bat
 
 #/target
 graphify-out/
+
+.mcp.json
