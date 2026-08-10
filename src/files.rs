@@ -6,8 +6,13 @@
 //! filesystem. Both adapters live here so the two-adapter justification for the seam is
 //! visible in one place.
 //!
-//! The interface deliberately has no create or write operation: no production rule creates
-//! an artifact, only the external tools do.
+//! The interface long had no create or write operation, because no production rule creates
+//! an *artifact* — only the external tools do. That reasoning still holds for artifacts, and
+//! is why nothing here writes a mesh, a `.uvd` or a plugin. Write operations exist now for a
+//! different class of file the crate does author itself: the session log and the disabled-DLL
+//! placeholders. Those went straight to `std::fs`, which put the machine's real `%TEMP%` and
+//! the real Fallout 4 directory in the path of a unit test, and hid *when* the DLL guard
+//! renames relative to the tool spawn.
 
 use std::path::{Path, PathBuf};
 
@@ -21,6 +26,17 @@ use crate::error::Result;
 ///
 /// Implementors must be `Debug` so the domain types that hold a `FileSpace` — the
 /// Precombine Workspace among them — can keep deriving `Debug`.
+// The write-side operations below (`rename`, `exists`, `write`, `append`, `temp_dir`) have
+// tests but no production caller yet: `logging` and `DllGuard` move onto them in the two
+// issues that follow this one. The allow is scoped to non-test builds so the tests still hold
+// them live, and it comes out once those callers land.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "logging and DllGuard become the production callers in the next two issues"
+    )
+)]
 pub(crate) trait FileSpace: std::fmt::Debug {
     /// Whether `path` names an existing file (not a directory).
     fn is_file(&self, path: &Path) -> bool;
@@ -49,6 +65,39 @@ pub(crate) trait FileSpace: std::fmt::Debug {
     /// External tool logs are not guaranteed to be valid UTF-8. Returns
     /// [`crate::error::Error::Io`] when the file cannot be read at all.
     fn read_lossy(&self, path: &Path) -> Result<String>;
+
+    /// Rename `from` to `to`, replacing any existing file at `to`.
+    ///
+    /// Returns [`crate::error::Error::Io`] when `from` does not exist, so this is not
+    /// idempotent. Does **not** create parent directories: a `to` whose parent is missing is
+    /// an error, not a silent `mkdir -p`.
+    fn rename(&self, from: &Path, to: &Path) -> Result<()>;
+
+    /// Whether anything exists at `path` — file **or** directory.
+    ///
+    /// Deliberately distinct from [`FileSpace::is_file`]. The DLL guard uses it to detect that
+    /// something has reappeared at a path it is about to write to, and a directory counts;
+    /// narrowing it to `is_file` would turn a deliberate skip into an attempted rename that
+    /// cannot succeed.
+    fn exists(&self, path: &Path) -> bool;
+
+    /// Write `contents` to `path`, replacing any existing file rather than appending.
+    ///
+    /// Creates missing parent directories. Returns [`crate::error::Error::Io`] when the
+    /// directories or the file cannot be created.
+    fn write(&self, path: &Path, contents: &str) -> Result<()>;
+
+    /// Append `contents` to `path`, creating the file when it is absent.
+    ///
+    /// Creates missing parent directories, like [`FileSpace::write`]. Returns
+    /// [`crate::error::Error::Io`] when the file cannot be opened or extended.
+    fn append(&self, path: &Path, contents: &str) -> Result<()>;
+
+    /// Root for per-run temporary files.
+    ///
+    /// [`SystemFileSpace`] returns [`std::env::temp_dir`]; the in-memory adapter returns a
+    /// synthetic root, so a test that logs never touches the machine's real `%TEMP%`.
+    fn temp_dir(&self) -> PathBuf;
 }
 
 /// The production `FileSpace`, backed by the standard library.
@@ -83,6 +132,56 @@ impl FileSpace for SystemFileSpace {
         // it still serves the logging, toolchain and validation modules directly.
         crate::text::read_lossy(path)
     }
+
+    fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+        std::fs::rename(from, to)?;
+        Ok(())
+    }
+
+    fn exists(&self, path: &Path) -> bool {
+        path.exists()
+    }
+
+    fn write(&self, path: &Path, contents: &str) -> Result<()> {
+        create_parent_directories(path)?;
+        std::fs::write(path, contents)?;
+        Ok(())
+    }
+
+    fn append(&self, path: &Path, contents: &str) -> Result<()> {
+        use std::io::Write as _;
+
+        create_parent_directories(path)?;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        file.write_all(contents.as_bytes())?;
+        Ok(())
+    }
+
+    fn temp_dir(&self) -> PathBuf {
+        std::env::temp_dir()
+    }
+}
+
+/// Create `path`'s parent directory chain, tolerating a path that has no parent.
+///
+/// A bare file name (`"previs.log"`) yields `Some("")` from [`Path::parent`], and asking
+/// `create_dir_all` for the empty path is an error on Windows, so the empty parent is skipped.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "reached only through FileSpace::write and ::append, whose production callers arrive with the logging port"
+    )
+)]
+fn create_parent_directories(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    Ok(())
 }
 
 /// Depth-first search for the first file matching `extension` beneath `directory`.
@@ -210,7 +309,73 @@ mod in_memory {
                 .into()),
             }
         }
+
+        fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+            let mut files = self.files.borrow_mut();
+            let Some(contents) = files.remove(from) else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("no such file in space: {}", from.display()),
+                )
+                .into());
+            };
+
+            // Replacing whatever sat at `to` matches `std::fs::rename` for files, which is
+            // the only case the flat map can represent. The trait's "does not create parent
+            // directories" clause is vacuous for the same reason, so it too is pinned on
+            // `SystemFileSpace`.
+            files.insert(to.to_path_buf(), contents);
+
+            Ok(())
+        }
+
+        /// Coincides with [`InMemoryFileSpace::is_file`], and that is correct rather than a
+        /// gap to close.
+        ///
+        /// This adapter is a flat map with no directory concept, by the explicit design noted
+        /// on the struct: file-versus-directory discrimination is verified against
+        /// [`super::SystemFileSpace`], where directories actually live. Adding directory
+        /// modelling here to make the two answers differ would contradict that. Any test that
+        /// turns on the distinction belongs on `SystemFileSpace` with `tempfile`.
+        fn exists(&self, path: &Path) -> bool {
+            self.is_file(path)
+        }
+
+        fn write(&self, path: &Path, contents: &str) -> Result<()> {
+            // Parent creation is meaningless in a flat map, so the "creates parents" half of
+            // the contract is vacuously satisfied here and pinned on `SystemFileSpace`.
+            self.files
+                .borrow_mut()
+                .insert(path.to_path_buf(), Some(contents.to_owned()));
+
+            Ok(())
+        }
+
+        fn append(&self, path: &Path, contents: &str) -> Result<()> {
+            // Parent creation is vacuous here exactly as it is in `write` above.
+            let mut files = self.files.borrow_mut();
+            let entry = files.entry(path.to_path_buf()).or_default();
+            match entry {
+                Some(existing) => existing.push_str(contents),
+                // A recorded-but-contentless file means "unreadable", so an appender has
+                // nothing to preserve and starts from empty rather than failing.
+                None => *entry = Some(contents.to_owned()),
+            }
+
+            Ok(())
+        }
+
+        fn temp_dir(&self) -> PathBuf {
+            PathBuf::from(IN_MEMORY_TEMP_ROOT)
+        }
     }
+
+    /// The synthetic temporary root handed out by [`InMemoryFileSpace::temp_dir`].
+    ///
+    /// Deliberately not a real path: if a caller ever escapes the seam and hands one of these
+    /// paths to `std::fs`, the failure should be obvious rather than land in the machine's
+    /// real `%TEMP%`.
+    const IN_MEMORY_TEMP_ROOT: &str = "in-memory-temp";
 }
 
 #[cfg(test)]
@@ -256,6 +421,177 @@ mod tests {
         assert!(!space.is_file(&mesh));
         // Removing an absent tree is success.
         space.remove_dir_all(&root.join("meshes")).unwrap();
+    }
+
+    #[test]
+    fn in_memory_space_renames_carrying_contents_and_replacing_the_destination() {
+        let space = InMemoryFileSpace::new();
+        let from = PathBuf::from("Fallout4").join("d3d11.dll");
+        let to = PathBuf::from("Fallout4").join("d3d11.dll-PJMdisabled");
+        space.add_file_with_contents(&from, "enb");
+        space.add_file_with_contents(&to, "stale");
+
+        space.rename(&from, &to).unwrap();
+
+        assert!(!space.is_file(&from));
+        assert_eq!(space.read_lossy(&to).unwrap(), "enb");
+    }
+
+    #[test]
+    fn in_memory_space_rename_of_a_missing_source_errors() {
+        let space = InMemoryFileSpace::new();
+
+        assert!(
+            space
+                .rename(Path::new("absent.dll"), Path::new("absent.dll-disabled"))
+                .is_err()
+        );
+    }
+
+    /// `exists` coincides with `is_file` here, and that is the design — see the adapter's
+    /// own doc comment. The two are pinned apart on [`SystemFileSpace`].
+    #[test]
+    fn in_memory_space_exists_answers_for_recorded_paths_only() {
+        let space = InMemoryFileSpace::new();
+        let dll = PathBuf::from("Fallout4").join("d3d11.dll");
+
+        assert!(!space.exists(&dll));
+
+        space.add_file(&dll);
+
+        assert!(space.exists(&dll));
+        assert_eq!(space.exists(&dll), space.is_file(&dll));
+    }
+
+    #[test]
+    fn in_memory_space_write_replaces_rather_than_appends() {
+        let space = InMemoryFileSpace::new();
+        let log = PathBuf::from("temp").join("previs.log");
+
+        space.write(&log, "first\n").unwrap();
+        assert_eq!(space.read_lossy(&log).unwrap(), "first\n");
+
+        space.write(&log, "second\n").unwrap();
+        assert_eq!(space.read_lossy(&log).unwrap(), "second\n");
+    }
+
+    #[test]
+    fn in_memory_space_append_creates_then_accumulates() {
+        let space = InMemoryFileSpace::new();
+        let log = PathBuf::from("temp").join("previs.log");
+
+        space.append(&log, "first\n").unwrap();
+        assert!(space.is_file(&log));
+
+        space.append(&log, "second\n").unwrap();
+        assert_eq!(space.read_lossy(&log).unwrap(), "first\nsecond\n");
+    }
+
+    /// Appending to a recorded-but-contentless file treats it as empty rather than erroring:
+    /// the contentless marker means "unreadable", and a writer has nothing to preserve.
+    #[test]
+    fn in_memory_space_append_to_a_contentless_file_starts_from_empty() {
+        let space = InMemoryFileSpace::new();
+        let log = PathBuf::from("temp").join("previs.log");
+        space.add_file(&log);
+
+        space.append(&log, "line\n").unwrap();
+
+        assert_eq!(space.read_lossy(&log).unwrap(), "line\n");
+    }
+
+    #[test]
+    fn in_memory_space_temp_dir_is_synthetic() {
+        let space = InMemoryFileSpace::new();
+
+        assert_ne!(space.temp_dir(), std::env::temp_dir());
+    }
+
+    #[test]
+    fn system_space_renames_replacing_the_destination() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let from = dir.path().join("d3d11.dll");
+        let to = dir.path().join("d3d11.dll-PJMdisabled");
+        fs::write(&from, b"enb").unwrap();
+        fs::write(&to, b"stale").unwrap();
+
+        space.rename(&from, &to).unwrap();
+
+        assert!(!from.exists());
+        assert_eq!(fs::read(&to).unwrap(), b"enb");
+    }
+
+    #[test]
+    fn system_space_rename_of_a_missing_source_errors() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+
+        assert!(
+            space
+                .rename(&dir.path().join("absent.dll"), &dir.path().join("moved.dll"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn system_space_rename_does_not_create_parent_directories() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let from = dir.path().join("d3d11.dll");
+        fs::write(&from, b"enb").unwrap();
+        let to = dir.path().join("absent").join("d3d11.dll");
+
+        assert!(space.rename(&from, &to).is_err());
+        assert!(from.is_file());
+        assert!(!to.parent().unwrap().exists());
+    }
+
+    /// The one place `exists` and `is_file` are pinned *apart*, which is why `exists` is a
+    /// separate operation: a directory at the queried path exists but is not a file.
+    #[test]
+    fn system_space_exists_is_true_for_a_directory_where_is_file_is_false() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let subdirectory = dir.path().join("d3d11.dll");
+        fs::create_dir_all(&subdirectory).unwrap();
+
+        assert!(space.exists(&subdirectory));
+        assert!(!space.is_file(&subdirectory));
+        assert!(!space.exists(&dir.path().join("absent")));
+    }
+
+    #[test]
+    fn system_space_write_creates_parents_and_replaces_rather_than_appends() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let log = dir.path().join("logs").join("previs.log");
+
+        space.write(&log, "first\n").unwrap();
+        assert_eq!(space.read_lossy(&log).unwrap(), "first\n");
+
+        space.write(&log, "second\n").unwrap();
+        assert_eq!(space.read_lossy(&log).unwrap(), "second\n");
+    }
+
+    #[test]
+    fn system_space_append_creates_then_accumulates() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let log = dir.path().join("logs").join("previs.log");
+
+        space.append(&log, "first\n").unwrap();
+        assert!(log.is_file());
+
+        space.append(&log, "second\n").unwrap();
+        assert_eq!(space.read_lossy(&log).unwrap(), "first\nsecond\n");
+    }
+
+    #[test]
+    fn system_space_temp_dir_is_the_process_temp_dir() {
+        let space = SystemFileSpace;
+
+        assert_eq!(space.temp_dir(), std::env::temp_dir());
     }
 
     #[test]
