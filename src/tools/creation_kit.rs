@@ -1,12 +1,13 @@
 //! Creation Kit invocation (`:RunCK` in batch).
 
-use std::process::Command;
+use std::ffi::OsString;
 
 use crate::error::Result;
 use crate::logging;
-use crate::timing::{self, MO2_DELAY_AFTER_CK_SECS};
 use crate::tools::ToolContext;
 use crate::tools::dll::DllGuard;
+use crate::tools::process::{ProcessRunner, SystemProcessRunner};
+use crate::tools::wait::{MO2_DELAY_AFTER_CK_SECS, SystemWait, Wait};
 
 /// Creation Kit command-line operations from the batch workflow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,15 +49,13 @@ impl CreationKitOps {
             std::fs::remove_file(&ctx.ck_log_path)?;
         }
 
-        let arg = operation_arg(operation, plugin_file);
-        let mut command = Command::new(&ctx.creation_kit);
-        command.current_dir(&ctx.fallout4_dir).arg(&arg);
-        for qualifier in qualifier_args(qualifiers) {
-            command.arg(qualifier);
-        }
-        let status = command.status()?;
+        let mut args = vec![OsString::from(operation_arg(operation, plugin_file))];
+        args.extend(qualifier_args(qualifiers).map(OsString::from));
+        // Still a direct `SystemProcessRunner` / `SystemWait`: the ports exist, but injecting
+        // them is part of reshaping this adapter into a deep module, not of adding them.
+        let status = SystemProcessRunner.run(&ctx.creation_kit, &args, &ctx.fallout4_dir)?;
 
-        timing::mo2_sync_delay(MO2_DELAY_AFTER_CK_SECS);
+        SystemWait.sync_delay(MO2_DELAY_AFTER_CK_SECS);
 
         if let Some(session) = &ctx.session_log {
             logging::append_ck_log(session, &ctx.ck_log_path)?;

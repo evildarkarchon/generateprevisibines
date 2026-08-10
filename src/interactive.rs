@@ -6,8 +6,8 @@ use dialoguer::{Confirm, Input};
 
 use crate::config::{BuildMode, PluginIdentity, WorkflowStep};
 use crate::error::{Error, Result};
-use crate::timing::{self, MO2_DELAY_AFTER_SEED_COPY_SECS};
 use crate::toolchain::PluginReadiness;
+use crate::tools::wait::{MO2_DELAY_AFTER_SEED_COPY_SECS, SystemWait, Wait};
 use crate::validation;
 use crate::workflow;
 
@@ -66,7 +66,9 @@ pub fn copy_seed_plugin(data_dir: &Path, plugin_path: &Path) -> Result<()> {
     std::fs::copy(&seed, plugin_path)?;
 
     if !plugin_path.is_file() {
-        timing::mo2_sync_delay(MO2_DELAY_AFTER_SEED_COPY_SECS);
+        // Left on a direct `SystemWait` deliberately: routing intake through the port is a
+        // separate change from raising the seam around the Creation Kit episode.
+        SystemWait.sync_delay(MO2_DELAY_AFTER_SEED_COPY_SECS);
     }
 
     if plugin_path.is_file() {

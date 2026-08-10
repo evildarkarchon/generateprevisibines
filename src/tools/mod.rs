@@ -8,6 +8,11 @@ mod creation_kit;
 mod dll;
 mod fo4edit;
 
+// Internal seams: crate-visible so the tests in `src/workflow/` can reach the recording
+// adapters, but never part of what a Workflow Operation is handed.
+pub(crate) mod process;
+pub(crate) mod wait;
+
 pub use archive::ArchiveOps;
 pub use creation_kit::{CkOperation, CreationKitOps};
 pub use dll::DllGuard;

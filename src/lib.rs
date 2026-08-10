@@ -11,7 +11,6 @@ pub mod intake;
 pub mod interactive;
 pub mod logging;
 pub mod run;
-pub mod timing;
 pub mod toolchain;
 pub mod tools;
 pub mod validation;

@@ -136,13 +136,13 @@ src/
   config.rs         # BuildMode, ArchiveTool, WorkflowStep, ProjectConfig
   interactive.rs    # plugin prompts, seed copy, resume menu
   checks.rs         # Step 1 preamble/post path checks
-  timing.rs         # MO2 sync delays
   discovery.rs      # tool paths (partial)
   validation.rs     # plugin + CKPE + xEdit scripts
   workflow.rs       # step planning + engine
   logging.rs        # session log + CK log append
   workflow/         # Workflow Operation registration, dispatch, and operation tests
-  tools/            # CK adapter, DLL guard, FO4Edit/archive stubs
+  tools/            # CK adapter, DLL guard, FO4Edit/archive stubs,
+                    #   process/wait internal seams (MO2 sync delays live here)
   error.rs
 ```
 
