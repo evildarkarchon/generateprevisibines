@@ -17,8 +17,14 @@ pub(crate) mod process;
 pub(crate) mod wait;
 
 pub use archive::ArchiveOps;
-pub use creation_kit::{CkOperation, CreationKitOps};
 pub use fo4edit::Fo4EditOps;
+
+// Crate-visible, not public: `CreationKitOps` borrows the crate-private `ProcessRunner`,
+// `Wait` and `FileSpace` ports, so it cannot be constructed from outside the crate anyway.
+// `CkOperation` is not re-exported at all — Creation Kit's command grammar stays inside
+// `creation_kit`, behind the four domain methods. `CkRun` joins this line once a Workflow
+// Operation names the type, which is when the postcondition check reads its log content.
+pub(crate) use creation_kit::CreationKitOps;
 
 /// Shared context passed to each tool invocation.
 #[derive(Debug, Clone)]

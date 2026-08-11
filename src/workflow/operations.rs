@@ -11,7 +11,9 @@ use crate::files::{FileSpace, SystemFileSpace};
 use crate::interactive;
 use crate::run::WorkflowRun;
 use crate::toolchain::ToolchainRequirements;
-use crate::tools::{CkOperation, CreationKitOps};
+use crate::tools::CreationKitOps;
+use crate::tools::process::SystemProcessRunner;
+use crate::tools::wait::SystemWait;
 use crate::workflow::WorkflowPlan;
 
 mod generate_precombines;
@@ -201,13 +203,16 @@ pub(crate) fn execute_registered_workflow(
 
 /// Adapters required by Workflow Operations.
 pub(crate) trait OperationAdapters {
-    /// Run a Creation Kit command-line operation for a Workflow Run.
-    fn run_creation_kit(
+    /// Ask Creation Kit to generate precombined meshes for a Workflow Run.
+    ///
+    /// A domain verb, not Creation Kit's command grammar: the batch qualifier strings are
+    /// derived from `build_mode` inside `CreationKitOps`, which is also where the DLL guard,
+    /// the MO2 delay and the log lifecycle live.
+    fn generate_precombined(
         &self,
         run: &WorkflowRun,
-        operation: CkOperation,
         plugin_file: &str,
-        qualifiers: &str,
+        build_mode: BuildMode,
     ) -> Result<()>;
 
     /// Ask whether existing precombined meshes should be cleared before Step 1 resumes.
@@ -220,9 +225,14 @@ pub(crate) trait OperationAdapters {
 }
 
 /// Production adapters for external tools and interactive prompts.
+///
+/// Owns the three production ports a Creation Kit episode is built from. It no longer holds a
+/// `CreationKitOps`: that adapter now carries its own resolved paths, so it is assembled per
+/// call from the ports here and the run's tool context.
 #[derive(Debug, Default)]
 pub(crate) struct ProductionOperationAdapters {
-    ck: CreationKitOps,
+    process: SystemProcessRunner,
+    wait: SystemWait,
     files: SystemFileSpace,
 }
 
@@ -231,9 +241,28 @@ impl ProductionOperationAdapters {
     #[must_use]
     pub(crate) const fn new() -> Self {
         Self {
-            ck: CreationKitOps,
+            process: SystemProcessRunner,
+            wait: SystemWait,
             files: SystemFileSpace,
         }
+    }
+
+    /// Assemble the Creation Kit adapter for a prepared Workflow Run.
+    ///
+    /// The path translation lives here only until the operation ports bundle replaces this
+    /// trait: `CreationKitOps` wants narrow inputs, `ToolContext` is the bag that still holds
+    /// them, and going through `run.tool_context()` is the circularity that bundle removes.
+    fn creation_kit<'a>(&'a self, run: &'a WorkflowRun) -> CreationKitOps<'a> {
+        let ctx = run.tool_context();
+        CreationKitOps::new(
+            ctx.creation_kit.clone(),
+            ctx.fallout4_dir.clone(),
+            ctx.ck_log_path.clone(),
+            ctx.session_log.clone(),
+            &self.process,
+            &self.wait,
+            &self.files,
+        )
     }
 }
 
@@ -242,20 +271,19 @@ impl OperationAdapters for ProductionOperationAdapters {
         &self.files
     }
 
-    fn run_creation_kit(
+    fn generate_precombined(
         &self,
         run: &WorkflowRun,
-        operation: CkOperation,
         plugin_file: &str,
-        qualifiers: &str,
+        build_mode: BuildMode,
     ) -> Result<()> {
-        self.ck.run(
-            run.tool_context(),
-            operation,
-            plugin_file,
-            qualifiers,
-            &self.files,
-        )
+        // The returned log content has no reader yet: the Precombine Workspace still finds the
+        // Creation Kit log by path through its own `FileSpace`. Threading `CkRun` into the
+        // postcondition check is the operation ports bundle's work.
+        self.creation_kit(run)
+            .generate_precombined(plugin_file, build_mode)?;
+
+        Ok(())
     }
 
     fn confirm_clear_precombined(&self, precombined_dir: &Path) -> Result<bool> {
@@ -268,7 +296,7 @@ mod tests {
     use std::fs;
     use tempfile::{TempDir, tempdir};
 
-    use super::recording_adapters::RecordingOperationAdapters;
+    use super::recording_adapters::{RecordedCreationKitCall, RecordingOperationAdapters};
     use super::*;
     use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
     use crate::run::WorkflowRequest;
@@ -503,25 +531,26 @@ mod tests {
         (dir, run)
     }
 
+    /// Step 1 asks for precombines once, naming the plugin and the run's build mode.
+    ///
+    /// What each build mode turns into on Creation Kit's command line is asserted in
+    /// `tools::creation_kit`, against the arguments the process port actually received.
     #[test]
-    fn step_one_selects_creation_kit_qualifiers_from_the_build_mode() {
-        let cases = [
-            (BuildMode::Clean, "clean all"),
-            (BuildMode::Filtered, "filtered all"),
-            (BuildMode::Xbox, "filtered all"),
-        ];
-
-        for (mode, expected_qualifiers) in cases {
+    fn step_one_asks_creation_kit_to_generate_precombines_for_the_build_mode() {
+        for mode in [BuildMode::Clean, BuildMode::Filtered, BuildMode::Xbox] {
             let (_dir, run) = prepared_run(mode, None, true);
             let adapters = RecordingOperationAdapters::new();
 
             generate_precombines::run(&run, &adapters).unwrap();
 
-            let calls = adapters.creation_kit_calls();
-            assert_eq!(calls.len(), 1, "mode: {mode:?}");
-            assert_eq!(calls[0].operation, CkOperation::GeneratePrecombined);
-            assert_eq!(calls[0].plugin_file, "MyMod.esp");
-            assert_eq!(calls[0].qualifiers, expected_qualifiers, "mode: {mode:?}");
+            assert_eq!(
+                adapters.creation_kit_calls(),
+                vec![RecordedCreationKitCall {
+                    plugin_file: "MyMod.esp".to_owned(),
+                    build_mode: mode,
+                }],
+                "mode: {mode:?}"
+            );
         }
     }
 

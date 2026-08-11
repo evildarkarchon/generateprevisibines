@@ -1,6 +1,6 @@
 # 05 — Reshape `CreationKitOps` into a concrete deep module
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01, 02, 03, 04
 
 The core of Phase A. `CreationKitOps` stops being a stateless unit struct that takes a
@@ -111,3 +111,46 @@ read *that* log" verifiable for the first time.
 - No `std::process`, `std::fs` or `std::thread::sleep` call remains in `creation_kit.rs`.
 - The nine-step ordering above is asserted in order by a test.
 - `cargo test` and `cargo clippy` are clean.
+
+## Resolution notes
+
+Done as specified. Five things worth flagging, four of them consequences the issue text did
+not spell out.
+
+**`logging::append_ck_log` changed signature.** Step 5's "read the log once and reuse the
+content" is incompatible with a helper that takes a path and reads it itself, so it now takes
+`contents: &str`. "No log at all" became the adapter's state to recognise rather than the
+helper's. Two of its tests were reshaped accordingly and
+`append_ck_log_writes_nothing_when_the_creation_kit_log_is_absent` was deleted — that
+behaviour now lives in `CreationKitOps::read_ck_log`, covered by
+`an_absent_creation_kit_log_yields_no_content_and_appends_nothing`. Its non-UTF-8 test no
+longer applies either (the helper reads nothing); tolerant reading stays pinned on
+`SystemFileSpace::read_lossy` in `files::tests`, and what remains asserts the framing through
+the system space.
+
+**The `OperationAdapters` trait had to move too**, because `CkOperation` must not appear in
+`src/workflow/`. `run_creation_kit(run, operation, plugin_file, qualifiers)` became
+`generate_precombined(run, plugin_file, build_mode) -> Result<()>`. The trait itself, the
+`&WorkflowRun` parameter and `ToolContext` all still die in issue `06`; this is the smallest
+change that gets CK's command grammar out of the workflow layer.
+
+**Issue `06` has one less bullet.** `precombine_qualifiers` is already gone from
+`generate_precombines.rs` — the qualifier mapping moved into `CreationKitOps` here, which is
+what made the domain-verb signature possible.
+
+**Three domain methods and `CkRun.log` carry `cfg_attr(not(test), allow(dead_code))`**, the
+same pattern `logging::append_log_line` uses. `compress_psg`, `build_cdx` and
+`generate_previs_data` wait on the Step 3/4/6 Workflow Operations; `CkRun.log` waits on issue
+`06` threading it into the postcondition check, which is when `CkRun` also rejoins the
+`tools::mod` re-export. Delete each allow with the arrival of its caller.
+
+**Step 5's `Option<String>` is narrower than it first looks.** `None` means Creation Kit wrote
+no log. A log that exists but cannot be read stays an error, as it was before the reshape —
+collapsing the two would have been a live regression, because the caller's handle-array scan
+clears a run it finds no marker in, so an unreadable log would have become a silent pass for a
+failed Creation Kit run. `read_ck_log` returns `Result<Option<String>>` and
+`a_present_but_unreadable_creation_kit_log_is_an_error` pins it.
+
+**`std::process` survives in `creation_kit.rs` as one type import** — `ExitStatus`, in the
+test module, for the local `FailingProcessRunner` that covers restore-on-spawn-failure. No
+spawn, no `std::fs`, no `sleep`.

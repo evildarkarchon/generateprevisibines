@@ -17,16 +17,18 @@ use crate::config::BuildMode;
 use crate::error::Result;
 use crate::files::{FileSpace, InMemoryFileSpace};
 use crate::run::WorkflowRun;
-use crate::tools::CkOperation;
 
 use super::OperationAdapters;
 
-/// One Creation Kit invocation as the operation under test issued it.
+/// One Creation Kit request as the operation under test issued it.
+///
+/// Records the domain inputs, not Creation Kit's command grammar: what the build mode turns
+/// into on the command line is `CreationKitOps`' business, and its own tests assert it against
+/// the recorded argv rather than against a qualifier string passed through a fake.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecordedCreationKitCall {
-    pub(crate) operation: CkOperation,
     pub(crate) plugin_file: String,
-    pub(crate) qualifiers: String,
+    pub(crate) build_mode: BuildMode,
 }
 
 /// Whether a simulated Creation Kit run leaves a given artifact behind.
@@ -160,19 +162,17 @@ impl OperationAdapters for RecordingOperationAdapters {
         &self.files
     }
 
-    fn run_creation_kit(
+    fn generate_precombined(
         &self,
         run: &WorkflowRun,
-        operation: CkOperation,
         plugin_file: &str,
-        qualifiers: &str,
+        build_mode: BuildMode,
     ) -> Result<()> {
         self.creation_kit_calls
             .borrow_mut()
             .push(RecordedCreationKitCall {
-                operation,
                 plugin_file: plugin_file.to_owned(),
-                qualifiers: qualifiers.to_owned(),
+                build_mode,
             });
 
         // The fake supplies Creation Kit's external outputs while the real operation keeps

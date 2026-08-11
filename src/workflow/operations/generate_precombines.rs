@@ -3,11 +3,10 @@
 //! This module owns Step 1 domain flow: preconditions, CK action selection,
 //! postconditions, and cleanup rules before any external-tool adapter details.
 
-use crate::config::{BuildMode, WorkflowStep};
+use crate::config::WorkflowStep;
 use crate::error::{Error, Result};
 use crate::run::WorkflowRun;
 use crate::toolchain::ToolchainRequirements;
-use crate::tools::CkOperation;
 
 use super::precombine_workspace::PrecombineWorkspace;
 use super::{OperationAdapters, WorkflowOperationDefinition};
@@ -26,13 +25,7 @@ pub(super) fn run(run: &WorkflowRun, adapters: &dyn OperationAdapters) -> Result
 
     workspace.prepare_for_generate()?;
 
-    let qualifiers = precombine_qualifiers(config.build_mode);
-    adapters.run_creation_kit(
-        run,
-        CkOperation::GeneratePrecombined,
-        &config.plugin.file_name,
-        qualifiers,
-    )?;
+    adapters.generate_precombined(run, &config.plugin.file_name, config.build_mode)?;
 
     workspace.validate_generated(&run.tool_context().ck_log_path)?;
 
@@ -71,13 +64,4 @@ fn maybe_clear_precombined_on_resume(
     workspace.clear_precombined_meshes()?;
 
     Ok(())
-}
-
-/// CK `-GeneratePrecombined` qualifier string (batch lines 249-253).
-fn precombine_qualifiers(build_mode: BuildMode) -> &'static str {
-    if build_mode == BuildMode::Clean {
-        "clean all"
-    } else {
-        "filtered all"
-    }
 }

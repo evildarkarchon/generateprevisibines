@@ -61,17 +61,13 @@ pub fn init_session_log(
     files.write(path, &format!("{header}\n"))
 }
 
-/// Append Creation Kit log contents to the session log (batch `:RunCK` lines 447–448).
+/// Append already-read Creation Kit log contents to the session log (batch `:RunCK` lines 447–448).
 ///
-/// An absent `ck_log` is success and appends nothing, so callers need no existence check.
-/// Returns [`crate::error::Error::Io`] when a present Creation Kit log cannot be read or the
-/// session log cannot be extended.
-pub fn append_ck_log(session_log: &Path, ck_log: &Path, files: &dyn FileSpace) -> Result<()> {
-    if !files.is_file(ck_log) {
-        return Ok(());
-    }
-    let contents = files.read_lossy(ck_log)?;
-
+/// Takes `contents` rather than a path so the Creation Kit adapter reads its log exactly once
+/// and uses that one read for both this append and the content it hands back to the Workflow
+/// Operation. "No log at all" is therefore the caller's state to recognise, not this
+/// function's. Returns [`crate::error::Error::Io`] when the session log cannot be extended.
+pub fn append_ck_log(session_log: &Path, contents: &str, files: &dyn FileSpace) -> Result<()> {
     // Assembled in full before the single append: the framing — leading blank line, banner,
     // and a normalised trailing newline so the next banner starts on its own line — is one
     // block of the log, and building it here keeps that true whatever `FileSpace` backs it.
@@ -150,11 +146,9 @@ mod tests {
     fn append_ck_log_frames_the_creation_kit_contents() {
         let files = InMemoryFileSpace::new();
         let session_log = files.temp_dir().join("MyMod.log");
-        let ck_log = PathBuf::from("Fallout4").join("CK.log");
         init_session_log(&session_log, "clean", "MyMod.esp", &files).unwrap();
-        files.add_file_with_contents(&ck_log, "Masterfile: Fallout4.esm\n");
 
-        append_ck_log(&session_log, &ck_log, &files).unwrap();
+        append_ck_log(&session_log, "Masterfile: Fallout4.esm\n", &files).unwrap();
 
         assert_eq!(
             files.read_lossy(&session_log).unwrap(),
@@ -168,10 +162,8 @@ mod tests {
     fn append_ck_log_normalises_a_missing_trailing_newline() {
         let files = InMemoryFileSpace::new();
         let session_log = files.temp_dir().join("MyMod.log");
-        let ck_log = PathBuf::from("Fallout4").join("CK.log");
-        files.add_file_with_contents(&ck_log, "truncated");
 
-        append_ck_log(&session_log, &ck_log, &files).unwrap();
+        append_ck_log(&session_log, "truncated", &files).unwrap();
 
         assert_eq!(
             files.read_lossy(&session_log).unwrap(),
@@ -179,27 +171,19 @@ mod tests {
         );
     }
 
+    /// Pinned on [`SystemFileSpace`]: the framing has to survive a real file, and this is the
+    /// one place the session log is written through the standard-library adapter.
+    ///
+    /// Tolerance for the non-UTF-8 bytes Creation Kit emits is no longer asserted here — this
+    /// function no longer reads the log. That property now belongs to
+    /// `SystemFileSpace::read_lossy`, where `files::tests` pins it.
     #[test]
-    fn append_ck_log_writes_nothing_when_the_creation_kit_log_is_absent() {
-        let files = InMemoryFileSpace::new();
-        let session_log = files.temp_dir().join("MyMod.log");
-
-        append_ck_log(&session_log, &PathBuf::from("absent.log"), &files).unwrap();
-
-        assert!(!files.is_file(&session_log));
-    }
-
-    /// Pinned on [`SystemFileSpace`] rather than the in-memory adapter: tolerance for the
-    /// non-UTF-8 bytes Creation Kit emits is a property of reading real files.
-    #[test]
-    fn append_ck_log_tolerates_non_utf8_bytes() {
+    fn append_ck_log_frames_through_the_system_space_too() {
         let dir = tempfile::tempdir().unwrap();
         let files = SystemFileSpace;
         let session_log = dir.path().join("session.log");
-        let ck_log = dir.path().join("CK.log");
-        std::fs::write(&ck_log, b"ok\xFF\n").unwrap();
 
-        append_ck_log(&session_log, &ck_log, &files).unwrap();
+        append_ck_log(&session_log, "ok\u{fffd}\n", &files).unwrap();
 
         let session = std::fs::read_to_string(session_log).unwrap();
         assert!(session.contains("Creation Kit log"));

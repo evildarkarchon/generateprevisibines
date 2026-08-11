@@ -219,7 +219,6 @@ mod tests {
     use crate::discovery::ToolPaths;
     use crate::error::Error;
     use crate::files::InMemoryFileSpace;
-    use crate::tools::CkOperation;
     use crate::workflow::operations::recording_adapters::{
         RecordedCreationKitCall, RecordingOperationAdapters,
     };
@@ -335,14 +334,14 @@ mod tests {
         );
     }
 
-    /// The prepared run dispatches Step 1 and hands Creation Kit the Clean-mode qualifiers.
+    /// The prepared run dispatches Step 1 and hands Creation Kit the run's Clean build mode.
     ///
     /// Artifact assertions belong to the Workflow Operation and Precombine Workspace tests.
     /// The subject here is the Workflow Run's own dispatch, so checking for files the fake
     /// wrote moments earlier — through the same accessors the assertions used — would only
     /// report confidence this test has not earned.
     #[test]
-    fn prepared_run_dispatches_step_one_with_clean_mode_creation_kit_qualifiers() {
+    fn prepared_run_dispatches_step_one_with_the_runs_clean_build_mode() {
         let fixture = ready_workflow_fixture();
         let run = WorkflowRun::prepare(
             &fixture.request,
@@ -359,9 +358,8 @@ mod tests {
         assert_eq!(
             adapters.creation_kit_calls(),
             vec![RecordedCreationKitCall {
-                operation: CkOperation::GeneratePrecombined,
                 plugin_file: "MyMod.esp".to_owned(),
-                qualifiers: "clean all".to_owned(),
+                build_mode: BuildMode::Clean,
             }]
         );
         // A fresh fixture has nothing to clear, so the resume prompt must never fire. This
