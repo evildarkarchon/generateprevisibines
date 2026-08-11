@@ -13,6 +13,7 @@ mod dll;
 
 // Internal seams: crate-visible so the tests in `src/workflow/` can reach the recording
 // adapters, but never part of what a Workflow Operation is handed.
+pub(crate) mod clock;
 pub(crate) mod process;
 pub(crate) mod wait;
 
@@ -21,4 +22,4 @@ pub(crate) mod wait;
 // `CkOperation` is not re-exported at all — Creation Kit's command grammar stays inside
 // `creation_kit`, behind the four domain methods. `CkRun` is not re-exported either: the
 // Generate Precombines Operation reads its log content without ever naming the type.
-pub(crate) use creation_kit::{CreationKitOps, CreationKitPaths};
+pub(crate) use creation_kit::{CkPorts, CreationKitOps, CreationKitPaths};

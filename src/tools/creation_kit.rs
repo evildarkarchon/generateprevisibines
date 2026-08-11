@@ -13,6 +13,7 @@ use crate::config::BuildMode;
 use crate::error::Result;
 use crate::files::FileSpace;
 use crate::logging;
+use crate::tools::clock::Clock;
 use crate::tools::dll::DllGuard;
 use crate::tools::process::ProcessRunner;
 use crate::tools::wait::{MO2_DELAY_AFTER_CK_SECS, Wait};
@@ -78,45 +79,55 @@ pub(crate) struct CreationKitPaths {
 }
 
 impl CreationKitPaths {
-    /// Bind the resolved paths to the three ports one Creation Kit episode runs through.
+    /// Bind the resolved paths to the ports one Creation Kit episode runs through.
     ///
     /// The ports are chosen at execution time rather than stored here, so the paths a Workflow
     /// Run carries stay plain data and a test can drive the real episode over recording ports.
-    pub(crate) fn bind<'a>(
-        &'a self,
-        process: &'a dyn ProcessRunner,
-        wait: &'a dyn Wait,
-        files: &'a dyn FileSpace,
-    ) -> CreationKitOps<'a> {
+    pub(crate) fn bind<'a>(&'a self, ports: CkPorts<'a>) -> CreationKitOps<'a> {
         CreationKitOps::new(
             self.exe.clone(),
             self.fallout4_dir.clone(),
             self.ck_log_path.clone(),
             Some(self.session_log.clone()),
-            process,
-            wait,
-            files,
+            ports,
         )
     }
 }
 
+/// The internal seams one Creation Kit episode runs through.
+///
+/// Grouped rather than passed one by one: four separate reference parameters put
+/// [`CreationKitOps::new`] over `clippy::too_many_arguments` beside its four paths, and the set
+/// travels together at every call site anyway. Not part of what a Workflow Operation is handed —
+/// ADR-0002 keeps these seams inside the tools layer; they are crate-visible only so the Step 1
+/// tests in `src/workflow/` can assemble recording ones.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CkPorts<'a> {
+    /// Starts `CreationKit.exe` and waits for it.
+    pub(crate) process: &'a dyn ProcessRunner,
+    /// The mandated MO2 virtual-filesystem sync delay (docs/workarounds.md §2).
+    pub(crate) wait: &'a dyn Wait,
+    /// The wall-clock readings that bracket the run in the session log.
+    pub(crate) clock: &'a dyn Clock,
+    /// The DLL guard's renames, the log lifecycle, and the session-log append.
+    pub(crate) files: &'a dyn FileSpace,
+}
+
 /// Creation Kit process launcher with DLL guard, log lifecycle and MO2 sync delay.
 ///
-/// Holds its own narrow inputs rather than a shared context bag, and borrows the three ports
-/// the episode is built from for its lifetime.
+/// Holds its own narrow inputs rather than a shared context bag, and borrows the ports the
+/// episode is built from for its lifetime.
 #[derive(Debug)]
 pub(crate) struct CreationKitOps<'a> {
     exe: PathBuf,
     fallout4_dir: PathBuf,
     ck_log_path: PathBuf,
     session_log: Option<PathBuf>,
-    process: &'a dyn ProcessRunner,
-    wait: &'a dyn Wait,
-    files: &'a dyn FileSpace,
+    ports: CkPorts<'a>,
 }
 
 impl<'a> CreationKitOps<'a> {
-    /// Build the Creation Kit adapter from resolved paths and the three ports it runs through.
+    /// Build the Creation Kit adapter from resolved paths and the ports it runs through.
     ///
     /// `ck_log_path` is the log CKPE configures Creation Kit to write; this adapter owns its
     /// whole lifecycle, deleting it before each run and folding it into `session_log` after.
@@ -127,18 +138,14 @@ impl<'a> CreationKitOps<'a> {
         fallout4_dir: PathBuf,
         ck_log_path: PathBuf,
         session_log: Option<PathBuf>,
-        process: &'a dyn ProcessRunner,
-        wait: &'a dyn Wait,
-        files: &'a dyn FileSpace,
+        ports: CkPorts<'a>,
     ) -> Self {
         Self {
             exe,
             fallout4_dir,
             ck_log_path,
             session_log,
-            process,
-            wait,
-            files,
+            ports,
         }
     }
 
@@ -207,32 +214,63 @@ impl<'a> CreationKitOps<'a> {
     ///
     /// 1. disable the ENB/ReShade DLLs, which crash Creation Kit
     /// 2. delete any stale Creation Kit log, so what is read back is only this run's
-    /// 3. spawn, with the Fallout 4 directory as the working directory
-    /// 4. wait for MO2's virtual filesystem to sync
-    /// 5. read the log once, serving both the session-log append and the return value
-    /// 6. fold it into the session log
-    /// 7. warn — never fail — on a non-zero exit; the Workflow Operation's postconditions
+    /// 3. open the session-log entry — which operation is about to run, and `Start`
+    /// 4. spawn, with the Fallout 4 directory as the working directory
+    /// 5. close the timing bracket with `Ended`, before the delay rather than after it
+    /// 6. wait for MO2's virtual filesystem to sync
+    /// 7. read the log once, serving both the session-log append and the return value
+    /// 8. append it to the session log, or record that Creation Kit wrote none
+    /// 9. warn — never fail — on a non-zero exit; the Workflow Operation's postconditions
     ///    decide whether the step succeeded
-    /// 8. restore the DLLs as the guard drops, on every exit path including an error
+    /// 10. restore the DLLs as the guard drops, on every exit path including an error
+    ///
+    /// Steps 3 and 5 are written when the batch writes them rather than assembled into one
+    /// append at the end, and that placement is the point of them: a Creation Kit that crashes,
+    /// hangs, or never launches leaves the session log holding its banner and `Start`, which is
+    /// the only record that the run was attempted at all. Deferring the entry would lose it on
+    /// exactly the runs worth recording.
     ///
     /// Returns [`crate::error::Error::Io`] when the DLL guard, the stale-log delete, the spawn
-    /// itself, or reading back a log Creation Kit did write fails.
+    /// itself, a session-log append, or reading back a log Creation Kit did write fails.
     fn run(&self, operation: CkOperation, plugin_file: &str, qualifiers: &str) -> Result<CkRun> {
-        let _dll_guard = DllGuard::disable(self.files, &self.fallout4_dir)?;
+        let _dll_guard = DllGuard::disable(self.ports.files, &self.fallout4_dir)?;
 
-        if self.files.is_file(&self.ck_log_path) {
-            self.files.remove_file(&self.ck_log_path)?;
+        if self.ports.files.is_file(&self.ck_log_path) {
+            self.ports.files.remove_file(&self.ck_log_path)?;
         }
 
         let mut args = vec![OsString::from(operation_arg(operation, plugin_file))];
         args.extend(qualifier_args(qualifiers).map(OsString::from));
-        let status = self.process.run(&self.exe, &args, &self.fallout4_dir)?;
 
-        self.wait.sync_delay(MO2_DELAY_AFTER_CK_SECS);
+        let started_at = self.ports.clock.time_of_day();
+        if let Some(session) = &self.session_log {
+            logging::append_ck_run_header(
+                session,
+                operation.flag(),
+                &started_at,
+                self.ports.files,
+            )?;
+        }
+
+        // Held rather than `?`-propagated so `Ended` still lands when the spawn fails: the batch
+        // reaches line 457 whatever `START` did, and an entry that opened but never closed would
+        // read as a Creation Kit still running.
+        let spawn = self.ports.process.run(&self.exe, &args, &self.fallout4_dir);
+
+        // Read before the delay, as the batch does, so the bracket measures Creation Kit and not
+        // the workaround that follows it.
+        let ended_at = self.ports.clock.time_of_day();
+        if let Some(session) = &self.session_log {
+            logging::append_ck_run_ended(session, &ended_at, self.ports.files)?;
+        }
+
+        let status = spawn?;
+
+        self.ports.wait.sync_delay(MO2_DELAY_AFTER_CK_SECS);
 
         let log = self.read_ck_log()?;
-        if let (Some(session), Some(contents)) = (&self.session_log, &log) {
-            logging::append_ck_log(session, contents, self.files)?;
+        if let Some(session) = &self.session_log {
+            logging::append_ck_log(session, log.as_deref(), &self.ck_log_path, self.ports.files)?;
         }
 
         if !status.success() {
@@ -253,11 +291,11 @@ impl<'a> CreationKitOps<'a> {
     /// would let a Creation Kit failure pass as a success. Only Creation Kit having written
     /// nothing at all — the batch's "Unable to find log" — is a `None`.
     fn read_ck_log(&self) -> Result<Option<String>> {
-        if !self.files.is_file(&self.ck_log_path) {
+        if !self.ports.files.is_file(&self.ck_log_path) {
             return Ok(None);
         }
 
-        self.files.read_lossy(&self.ck_log_path).map(Some)
+        self.ports.files.read_lossy(&self.ck_log_path).map(Some)
     }
 }
 
@@ -294,6 +332,7 @@ mod tests {
 
     use super::*;
     use crate::files::InMemoryFileSpace;
+    use crate::tools::clock::ScriptedClock;
     use crate::tools::process::{RecordedProcessCall, RecordingProcessRunner};
     use crate::tools::wait::RecordingWait;
 
@@ -324,10 +363,20 @@ mod tests {
     /// A quiet Creation Kit log: readable and free of any failure marker.
     const QUIET_CK_LOG: &str = "Masterfile: Fallout4.esm\n";
 
+    /// The scripted clock readings the session-log assertions expect, in `Start`/`Ended` order.
+    const RUN_STARTED_AT: &str = "09:00:00.00";
+    const RUN_ENDED_AT: &str = "09:04:12.34";
+
+    /// A clock that reads `Start` then `Ended`, distinct so a transposition is visible.
+    fn scripted_clock() -> ScriptedClock {
+        ScriptedClock::new([RUN_STARTED_AT, RUN_ENDED_AT])
+    }
+
     /// Build the adapter under test over the supplied ports, with a session log configured.
     fn ops<'a>(
         process: &'a dyn ProcessRunner,
         wait: &'a dyn Wait,
+        clock: &'a dyn Clock,
         files: &'a dyn FileSpace,
     ) -> CreationKitOps<'a> {
         CreationKitOps::new(
@@ -335,9 +384,23 @@ mod tests {
             fallout4_dir(),
             ck_log(),
             Some(session_log()),
-            process,
-            wait,
-            files,
+            CkPorts {
+                process,
+                wait,
+                clock,
+                files,
+            },
+        )
+    }
+
+    /// The session-log entry one run of `operation` produces, `tail` appended verbatim.
+    fn expected_session_entry(operation: &str, tail: &str) -> String {
+        format!(
+            "Running CK option {operation}:\n\
+             ====================================\n\
+             Start {RUN_STARTED_AT}\n\
+             Ended {RUN_ENDED_AT}\n\
+             {tail}"
         )
     }
 
@@ -349,8 +412,9 @@ mod tests {
         let files = InMemoryFileSpace::new();
         let process = RecordingProcessRunner::new();
         let wait = RecordingWait::new();
+        let clock = scripted_clock();
 
-        operation(&ops(&process, &wait, &files)).unwrap();
+        operation(&ops(&process, &wait, &clock, &files)).unwrap();
 
         let mut calls = process.calls();
         assert_eq!(calls.len(), 1, "expected exactly one Creation Kit spawn");
@@ -381,6 +445,9 @@ mod tests {
         Renamed(PathBuf, PathBuf),
         Removed(PathBuf),
         Spawned,
+        /// A `Clock::time_of_day` reading, carrying what it answered. Named apart from the
+        /// `FileSpace` moments around it so it does not read as "a file was read".
+        ClockRead(String),
         Waited(u64),
         Appended(PathBuf),
     }
@@ -467,10 +534,35 @@ mod tests {
         }
     }
 
+    /// A [`Clock`] that records each reading onto the shared timeline as it hands it out.
+    ///
+    /// Where the reading lands in the sequence is the point: the batch brackets the spawn
+    /// itself, not the ten-second MO2 delay that follows it.
+    #[derive(Debug)]
+    struct TracingClock<'a> {
+        inner: ScriptedClock,
+        timeline: &'a Timeline,
+    }
+
+    impl Clock for TracingClock<'_> {
+        fn time_of_day(&self) -> String {
+            let reading = self.inner.time_of_day();
+            self.timeline
+                .borrow_mut()
+                .push(Moment::ClockRead(reading.clone()));
+            reading
+        }
+    }
+
     /// The episode's mandated ordering, asserted as one exact sequence.
     ///
     /// DLLs disabled before the spawn and restored after it; the stale log deleted before the
-    /// spawn; the ten-second MO2 delay after the spawn and before the session-log append.
+    /// spawn; the `Start`/`Ended` readings taken either side of the spawn and not around the
+    /// delay; the ten-second MO2 delay after the spawn and before the log append.
+    ///
+    /// Three session-log appends, not one, and *where* they fall is the assertion: the banner
+    /// and `Start` reach the file before Creation Kit is launched, which is what survives a run
+    /// that never comes back.
     #[test]
     fn the_creation_kit_episode_keeps_its_mandated_order() {
         let timeline = Timeline::default();
@@ -487,12 +579,16 @@ mod tests {
         let wait = TracingWait {
             timeline: &timeline,
         };
+        let clock = TracingClock {
+            inner: scripted_clock(),
+            timeline: &timeline,
+        };
         let process = RecordingProcessRunner::new().with_effects(&inner, |space| {
             timeline.borrow_mut().push(Moment::Spawned);
             space.add_file_with_contents(ck_log(), QUIET_CK_LOG);
         });
 
-        ops(&process, &wait, &files)
+        ops(&process, &wait, &clock, &files)
             .generate_precombined("MyMod.esp", BuildMode::Clean)
             .unwrap();
 
@@ -501,7 +597,11 @@ mod tests {
             [
                 Moment::Renamed(enb_dll(), disabled_enb_dll()),
                 Moment::Removed(ck_log()),
+                Moment::ClockRead(RUN_STARTED_AT.to_string()),
+                Moment::Appended(session_log()),
                 Moment::Spawned,
+                Moment::ClockRead(RUN_ENDED_AT.to_string()),
+                Moment::Appended(session_log()),
                 Moment::Waited(MO2_DELAY_AFTER_CK_SECS),
                 Moment::Appended(session_log()),
                 Moment::Renamed(disabled_enb_dll(), enb_dll()),
@@ -565,7 +665,10 @@ mod tests {
         let compress = spawn_for(|ck| ck.compress_psg("MyMod.esp"));
         let cdx = spawn_for(|ck| ck.build_cdx("MyMod.esp"));
 
-        assert_eq!(compress.args, vec![OsString::from("-CompressPSG:MyMod.esp")]);
+        assert_eq!(
+            compress.args,
+            vec![OsString::from("-CompressPSG:MyMod.esp")]
+        );
         assert_eq!(cdx.args, vec![OsString::from("-BuildCDX:MyMod.esp")]);
         assert_eq!(compress.cwd, fallout4_dir());
         assert_eq!(cdx.cwd, fallout4_dir());
@@ -591,37 +694,76 @@ mod tests {
     }
 
     /// The log is read once, and that one read serves both the session log and the caller.
+    ///
+    /// The session log gets the whole `:RunCK` block, not just the log: which operation ran and
+    /// how long it took are what attribute the contents to a step when four runs share the file.
     #[test]
     fn the_creation_kit_log_reaches_both_the_session_log_and_the_caller() {
         let files = InMemoryFileSpace::new();
         let wait = RecordingWait::new();
+        let clock = scripted_clock();
         let process = RecordingProcessRunner::new().with_effects(&files, |space| {
             space.add_file_with_contents(ck_log(), QUIET_CK_LOG);
         });
 
-        let ck_run = ops(&process, &wait, &files)
+        let ck_run = ops(&process, &wait, &clock, &files)
             .generate_precombined("MyMod.esp", BuildMode::Clean)
             .unwrap();
 
         assert_eq!(ck_run.log.as_deref(), Some(QUIET_CK_LOG));
         assert_eq!(
             files.read_lossy(&session_log()).unwrap(),
-            format!("\n----- Creation Kit log -----\n{QUIET_CK_LOG}")
+            expected_session_entry("GeneratePrecombined", QUIET_CK_LOG)
         );
         assert_eq!(wait.delays(), vec![MO2_DELAY_AFTER_CK_SECS]);
     }
 
     /// Creation Kit that writes no log: the batch's "Unable to find log" state.
+    ///
+    /// The run still leaves a record. A crashed Creation Kit is exactly when the session log
+    /// matters most, and it used to be the one case that wrote nothing at all — leaving "ran and
+    /// said nothing" indistinguishable from "never ran" in the only file that would know.
     #[test]
-    fn an_absent_creation_kit_log_yields_no_content_and_appends_nothing() {
+    fn an_absent_creation_kit_log_is_named_in_the_session_log() {
         let files = InMemoryFileSpace::new();
         let process = RecordingProcessRunner::new();
         let wait = RecordingWait::new();
+        let clock = scripted_clock();
 
-        let ck_run = ops(&process, &wait, &files).build_cdx("MyMod.esp").unwrap();
+        let ck_run = ops(&process, &wait, &clock, &files)
+            .build_cdx("MyMod.esp")
+            .unwrap();
 
         assert!(ck_run.log.is_none());
-        assert!(!files.is_file(&session_log()));
+        assert_eq!(
+            files.read_lossy(&session_log()).unwrap(),
+            expected_session_entry(
+                "BuildCDX",
+                &format!("Unable to find log  {}\n", ck_log().display())
+            )
+        );
+    }
+
+    /// A non-zero exit is framed like any other run: the entry is not conditional on success.
+    #[test]
+    fn a_non_zero_exit_still_gets_its_session_log_entry() {
+        let files = InMemoryFileSpace::new();
+        let wait = RecordingWait::new();
+        let clock = scripted_clock();
+        let process = RecordingProcessRunner::new()
+            .returning_exit_code(2)
+            .with_effects(&files, |space| {
+                space.add_file_with_contents(ck_log(), QUIET_CK_LOG);
+            });
+
+        ops(&process, &wait, &clock, &files)
+            .generate_previs_data("MyMod.esp")
+            .unwrap();
+
+        assert_eq!(
+            files.read_lossy(&session_log()).unwrap(),
+            expected_session_entry("GeneratePreVisData", QUIET_CK_LOG)
+        );
     }
 
     /// A log Creation Kit wrote but that cannot be read is an error, not an absent log.
@@ -634,18 +776,24 @@ mod tests {
     fn a_present_but_unreadable_creation_kit_log_is_an_error() {
         let files = InMemoryFileSpace::new();
         let wait = RecordingWait::new();
+        let clock = scripted_clock();
         let process = RecordingProcessRunner::new().with_effects(&files, |space| {
             space.add_file(ck_log());
         });
 
-        let error = ops(&process, &wait, &files)
+        let error = ops(&process, &wait, &clock, &files)
             .generate_precombined("MyMod.esp", BuildMode::Clean)
             .unwrap_err();
 
         assert!(matches!(error, crate::error::Error::Io(_)));
-        // Nothing half-written reached the session log, and the DLL guard still ran to
-        // completion — the failure is reported, not compounded.
-        assert!(!files.is_file(&session_log()));
+        // The run's own framing is there — it is the record that this operation was attempted
+        // and how long it took — but nothing claiming to be Creation Kit's log followed it. The
+        // batch has no line for "the log is there and unreadable", so neither does this: the
+        // failure is reported to the caller, not narrated into the file as an absent log.
+        assert_eq!(
+            files.read_lossy(&session_log()).unwrap(),
+            expected_session_entry("GeneratePrecombined", "")
+        );
     }
 
     /// A non-zero exit is a warning, not an error: `:RunCK` treats it uniformly across all
@@ -654,13 +802,14 @@ mod tests {
     fn a_non_zero_creation_kit_exit_is_not_an_error() {
         let files = InMemoryFileSpace::new();
         let wait = RecordingWait::new();
+        let clock = scripted_clock();
         let process = RecordingProcessRunner::new()
             .returning_exit_code(2)
             .with_effects(&files, |space| {
                 space.add_file_with_contents(ck_log(), QUIET_CK_LOG);
             });
 
-        let ck_run = ops(&process, &wait, &files)
+        let ck_run = ops(&process, &wait, &clock, &files)
             .generate_precombined("MyMod.esp", BuildMode::Filtered)
             .unwrap();
 
@@ -675,8 +824,9 @@ mod tests {
         let files = InMemoryFileSpace::new();
         files.add_file_with_contents(enb_dll(), "enb");
         let wait = RecordingWait::new();
+        let clock = scripted_clock();
 
-        let error = ops(&FailingProcessRunner, &wait, &files)
+        let error = ops(&FailingProcessRunner, &wait, &clock, &files)
             .generate_precombined("MyMod.esp", BuildMode::Clean)
             .unwrap_err();
 
@@ -686,6 +836,28 @@ mod tests {
         assert_eq!(files.read_lossy(&enb_dll()).unwrap(), "enb");
         // A tool that never started has nothing for MO2 to sync.
         assert!(wait.delays().is_empty());
+    }
+
+    /// A Creation Kit that never launches still leaves its record in the session log.
+    ///
+    /// This is what the batch's placement buys and a deferred single append would lose: the
+    /// entry is opened before `START` and closed after it, so a spawn that failed outright is
+    /// still attributable to an operation and a time, rather than absent from the file entirely.
+    /// There is no log line, because there is no log — Creation Kit never ran to write one.
+    #[test]
+    fn a_failed_spawn_still_leaves_its_session_log_entry() {
+        let files = InMemoryFileSpace::new();
+        let wait = RecordingWait::new();
+        let clock = scripted_clock();
+
+        ops(&FailingProcessRunner, &wait, &clock, &files)
+            .generate_precombined("MyMod.esp", BuildMode::Clean)
+            .unwrap_err();
+
+        assert_eq!(
+            files.read_lossy(&session_log()).unwrap(),
+            expected_session_entry("GeneratePrecombined", "")
+        );
     }
 
     #[test]

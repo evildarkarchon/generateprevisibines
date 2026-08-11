@@ -1,6 +1,6 @@
 # 16 — the session log loses `:RunCK`'s per-run framing
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 Surfaced by code review while resolving issue `13`. Pre-existing, unrelated to that change.
@@ -67,3 +67,53 @@ it just never reaches the file.
   either the log contents or the batch's `Unable to find log` line — including when CK wrote no
   log and when it exits non-zero.
 - Timestamps come through a port that tests can control, not a direct system-clock call.
+
+## Answer
+
+`logging` now owns three functions, one per group of batch lines, and `CreationKitOps::run` calls
+each where `:RunCK` calls it:
+
+- `append_ck_run_header` — `Running CK option <op>:`, the 36-`=` rule, `Start <t>` (452–454),
+  written **before** the spawn
+- `append_ck_run_ended` — `Ended <t>` (457), written after the spawn returns and before the MO2
+  delay
+- `append_ck_log` — the log contents, or `Unable to find log  <path>` with the batch's two spaces
+  (460–461), written after the delay
+
+The notes floated a single function owning one contiguous block, and that was tried first. It
+does not work: deferring every write until the run returns means a spawn that fails, or a log
+that cannot be read, leaves the session log with *nothing* — which is the failure this issue was
+filed about. The batch's placement is load-bearing, not incidental. Splitting on the batch's own
+boundaries also gave `append_log_line` its first production caller, so its `dead_code` allow is
+gone.
+
+The invented `----- Creation Kit log -----` banner is gone. It existed only because nothing else
+marked where a CK log began, and keeping it alongside the real framing would have been a
+divergence from batch output with no remaining purpose. **This removal was not asked for by the
+issue** — revert it if a session log is expected to carry that banner.
+
+One state the batch has no line for: a log that exists but cannot be read. That stays an error to
+the caller, and the session log keeps its header and both timestamps with no log line after them,
+rather than being told the log was absent.
+
+Timestamps come from a new `Clock` port (`src/tools/clock.rs`), an internal tools-layer seam
+alongside `Wait` for the reason ADR-0002 gives — what time of day a run started is not build
+meaning. `SystemClock` reads `chrono::Local`; `ScriptedClock` hands tests a scripted sequence,
+holding its final reading so a fixture that does not care about time can supply one and stop
+thinking about it. `chrono` is a new dependency: `std::time` has no calendar breakdown at all,
+and a local time zone needs OS calls this crate cannot make under `unsafe_code = "forbid"`.
+
+`the_creation_kit_episode_keeps_its_mandated_order` asserts the whole sequence, including all
+three appends and both clock readings, through a `TracingClock` that records each reading onto
+the shared timeline. Two tests pin the error paths directly: a failed spawn and an unreadable log
+both still leave a session-log entry.
+
+Adding a fourth port put `CreationKitOps::new` over `clippy::too_many_arguments`, so the four
+seams travel as a `CkPorts` struct and `bind` takes it. That touched the three call sites in
+`run.rs` and `operations.rs`.
+
+`SystemClock`'s reading is zero-padded (`09:05:03.21`) where `cmd`'s `%time%` space-pads the hour
+below ten. Reproducing the locale quirk would mean carrying the user's locale settings for no
+reader's benefit; the divergence is noted in the adapter. Trailing whitespace is not reproduced
+either — every `echo … >> "%Logfile_%"` in `:RunCK` leaves a space before the redirect, and
+`init_session_log` already drops the batch header's two.

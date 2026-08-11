@@ -39,15 +39,6 @@ pub fn unattended_log_path(files: &dyn FileSpace) -> PathBuf {
 ///
 /// Creates the file when it is absent. Returns [`crate::error::Error::Io`] when `files`
 /// cannot extend it.
-// No production caller yet: the batch writes a banner line per step, and the steps that do
-// so are not ported. It stays live through its test until those operations land.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the per-step banner lines arrive with the Workflow Operations that emit them"
-    )
-)]
 pub fn append_log_line(path: &Path, line: &str, files: &dyn FileSpace) -> Result<()> {
     files.append(path, &format!("{line}\n"))
 }
@@ -79,22 +70,86 @@ pub fn init_session_log(
     files.write(path, &format!("{header}\n"))
 }
 
-/// Append already-read Creation Kit log contents to the session log (batch `:RunCK` lines 460–461).
+/// The batch's rule between the run banner and the `Start` line (`:RunCK` line 453).
+///
+/// Thirty-six `=`, as the batch's `echo` writes them, so a session log this port produces lines
+/// up against one the batch produced. Trailing whitespace is the one thing not reproduced: every
+/// `echo … >> "%Logfile_%"` in `:RunCK` leaves a space before the redirect, and `init_session_log`
+/// already drops the batch header's two.
+const CK_RUN_SEPARATOR: &str = "====================================";
+
+/// Open one Creation Kit run's session-log entry (batch `:RunCK` lines 452–454).
+///
+/// `operation` is the batch's `%1` — `GeneratePrecombined` and friends. Four runs share one
+/// session log across a build, so this is what attributes everything below it to a step.
+/// `started_at` is a local time of day, not a duration; see [`crate::tools`]' `Clock`.
+///
+/// Written *before* the spawn, exactly as the batch writes it, and that placement is the point
+/// rather than an implementation detail: it is what leaves a record behind when Creation Kit
+/// crashes, hangs, or never launches at all. Deferring the whole entry until the run returned
+/// would lose precisely the runs worth recording.
+///
+/// Returns [`crate::error::Error::Io`] when the session log cannot be extended.
+pub fn append_ck_run_header(
+    session_log: &Path,
+    operation: &str,
+    started_at: &str,
+    files: &dyn FileSpace,
+) -> Result<()> {
+    files.append(
+        session_log,
+        &format!("Running CK option {operation}:\n{CK_RUN_SEPARATOR}\nStart {started_at}\n"),
+    )
+}
+
+/// Close a Creation Kit run's timing bracket (batch `:RunCK` line 457).
+///
+/// A named function rather than an [`append_log_line`] call at the adapter: every literal the
+/// session log reproduces from the batch lives in this module, so there is one place to check a
+/// wording change against. Written after the spawn returns and before the mandated MO2 delay,
+/// which is where the batch writes it — the bracket measures Creation Kit, not the workaround.
+///
+/// Returns [`crate::error::Error::Io`] when the session log cannot be extended.
+pub fn append_ck_run_ended(
+    session_log: &Path,
+    ended_at: &str,
+    files: &dyn FileSpace,
+) -> Result<()> {
+    append_log_line(session_log, &format!("Ended {ended_at}"), files)
+}
+
+/// Append a Creation Kit run's log, or record that there was none (batch `:RunCK` lines 460–461).
 ///
 /// Takes `contents` rather than a path so the Creation Kit adapter reads its log exactly once
 /// and uses that one read for both this append and the content it hands back to the Workflow
-/// Operation. "No log at all" is therefore the caller's state to recognise, not this
-/// function's. Returns [`crate::error::Error::Io`] when the session log cannot be extended.
-pub fn append_ck_log(session_log: &Path, contents: &str, files: &dyn FileSpace) -> Result<()> {
-    // Assembled in full before the single append: the framing — leading blank line, banner,
-    // and a normalised trailing newline so the next banner starts on its own line — is one
-    // block of the log, and building it here keeps that true whatever `FileSpace` backs it.
-    let mut block = format!("\n----- Creation Kit log -----\n{contents}");
-    if !contents.ends_with('\n') {
-        block.push('\n');
+/// Operation. `None` — Creation Kit wrote no log at all — becomes the batch's `Unable to find
+/// log` line, which is the only thing distinguishing "Creation Kit ran and said nothing" from
+/// "Creation Kit never ran"; `ck_log_path` is the path that line names.
+///
+/// Returns [`crate::error::Error::Io`] when the session log cannot be extended.
+pub fn append_ck_log(
+    session_log: &Path,
+    contents: Option<&str>,
+    ck_log_path: &Path,
+    files: &dyn FileSpace,
+) -> Result<()> {
+    let Some(contents) = contents else {
+        // Batch line 460, two spaces before the path included.
+        return append_log_line(
+            session_log,
+            &format!("Unable to find log  {}", ck_log_path.display()),
+            files,
+        );
+    };
+
+    // Assembled before the single append so the log and the newline that normalises it are one
+    // write, whatever `FileSpace` backs it. An empty log is left alone: the batch's `type` of an
+    // empty file appends nothing, and a blank line would claim content that is not there.
+    if contents.is_empty() || contents.ends_with('\n') {
+        return files.append(session_log, contents);
     }
 
-    files.append(session_log, &block)
+    files.append(session_log, &format!("{contents}\n"))
 }
 
 #[cfg(test)]
@@ -160,51 +215,171 @@ mod tests {
         );
     }
 
+    /// A Creation Kit log path for the framing tests; only its spelling is under assertion.
+    fn ck_log() -> PathBuf {
+        PathBuf::from("Fallout4").join("CK.log")
+    }
+
+    /// Write one whole run's entry, the way the Creation Kit adapter writes it.
+    ///
+    /// Three appends rather than one, in the batch's own order: the header goes down before
+    /// Creation Kit is launched, `Ended` when it returns, the log after the MO2 delay.
+    fn append_whole_run(
+        session_log: &Path,
+        operation: &str,
+        contents: Option<&str>,
+        files: &dyn FileSpace,
+    ) {
+        append_ck_run_header(session_log, operation, "09:00:00.00", files).unwrap();
+        append_ck_run_ended(session_log, "09:04:12.34", files).unwrap();
+        append_ck_log(session_log, contents, &ck_log(), files).unwrap();
+    }
+
+    /// The whole `:RunCK` entry, asserted exactly: which operation ran, the batch's rule, both
+    /// timestamps, then the log.
     #[test]
-    fn append_ck_log_frames_the_creation_kit_contents() {
+    fn a_creation_kit_run_is_framed_by_its_operation_and_timestamps() {
         let files = InMemoryFileSpace::new();
         let session_log = files.temp_dir().join("MyMod.log");
         init_session_log(&session_log, "clean", "MyMod.esp", &files).unwrap();
 
-        append_ck_log(&session_log, "Masterfile: Fallout4.esm\n", &files).unwrap();
+        append_whole_run(
+            &session_log,
+            "GeneratePrecombined",
+            Some("Masterfile: Fallout4.esm\n"),
+            &files,
+        );
 
         assert_eq!(
             files.read_lossy(&session_log).unwrap(),
-            "Starting clean Build V2.95 of MyMod.esp\n\n----- Creation Kit log -----\nMasterfile: Fallout4.esm\n"
+            "Starting clean Build V2.95 of MyMod.esp\n\
+             Running CK option GeneratePrecombined:\n\
+             ====================================\n\
+             Start 09:00:00.00\n\
+             Ended 09:04:12.34\n\
+             Masterfile: Fallout4.esm\n"
         );
     }
 
-    /// A Creation Kit log with no final newline still ends the block on one, so a later
-    /// append starts on its own line.
+    /// Creation Kit wrote no log: the entry still lands, and says so by name.
+    ///
+    /// This is the case the missing framing hurt most — a crashed Creation Kit used to leave
+    /// nothing behind at all, so the session log could not distinguish it from a run that never
+    /// happened.
+    #[test]
+    fn a_missing_creation_kit_log_is_named_in_the_session_log() {
+        let files = InMemoryFileSpace::new();
+        let session_log = files.temp_dir().join("MyMod.log");
+
+        append_whole_run(&session_log, "GeneratePrecombined", None, &files);
+
+        assert_eq!(
+            files.read_lossy(&session_log).unwrap(),
+            format!(
+                "Running CK option GeneratePrecombined:\n\
+                 ====================================\n\
+                 Start 09:00:00.00\n\
+                 Ended 09:04:12.34\n\
+                 Unable to find log  {}\n",
+                ck_log().display()
+            )
+        );
+    }
+
+    /// The header alone is a complete record of a run that never came back.
+    ///
+    /// A Creation Kit that hangs or is killed leaves exactly this, because the batch writes
+    /// lines 452–454 before `START` rather than after it. Nothing downstream gets to append.
+    #[test]
+    fn a_run_that_never_returns_still_leaves_its_header() {
+        let files = InMemoryFileSpace::new();
+        let session_log = files.temp_dir().join("MyMod.log");
+
+        append_ck_run_header(&session_log, "GeneratePreVisData", "09:00:00.00", &files).unwrap();
+
+        assert_eq!(
+            files.read_lossy(&session_log).unwrap(),
+            "Running CK option GeneratePreVisData:\n\
+             ====================================\n\
+             Start 09:00:00.00\n"
+        );
+    }
+
+    /// Two runs in one session log stay attributable to their own operations.
+    #[test]
+    fn consecutive_runs_each_get_their_own_entry() {
+        let files = InMemoryFileSpace::new();
+        let session_log = files.temp_dir().join("MyMod.log");
+
+        append_whole_run(&session_log, "GeneratePrecombined", Some("first\n"), &files);
+        append_whole_run(&session_log, "BuildCDX", Some("second\n"), &files);
+
+        assert_eq!(
+            files.read_lossy(&session_log).unwrap(),
+            "Running CK option GeneratePrecombined:\n\
+             ====================================\n\
+             Start 09:00:00.00\n\
+             Ended 09:04:12.34\n\
+             first\n\
+             Running CK option BuildCDX:\n\
+             ====================================\n\
+             Start 09:00:00.00\n\
+             Ended 09:04:12.34\n\
+             second\n"
+        );
+    }
+
+    /// A Creation Kit log with no final newline still ends on one, so the next run's banner
+    /// starts on its own line.
     #[test]
     fn append_ck_log_normalises_a_missing_trailing_newline() {
         let files = InMemoryFileSpace::new();
         let session_log = files.temp_dir().join("MyMod.log");
 
-        append_ck_log(&session_log, "truncated", &files).unwrap();
+        append_ck_log(&session_log, Some("truncated"), &ck_log(), &files).unwrap();
+
+        assert_eq!(files.read_lossy(&session_log).unwrap(), "truncated\n");
+    }
+
+    /// An empty log gets no invented blank line — the batch's `type` of an empty file writes
+    /// nothing, and a blank line would claim content Creation Kit did not produce.
+    #[test]
+    fn an_empty_creation_kit_log_adds_no_line_of_its_own() {
+        let files = InMemoryFileSpace::new();
+        let session_log = files.temp_dir().join("MyMod.log");
+
+        append_ck_run_ended(&session_log, "09:04:12.34", &files).unwrap();
+        append_ck_log(&session_log, Some(""), &ck_log(), &files).unwrap();
 
         assert_eq!(
             files.read_lossy(&session_log).unwrap(),
-            "\n----- Creation Kit log -----\ntruncated\n"
+            "Ended 09:04:12.34\n"
         );
     }
 
     /// Pinned on [`SystemFileSpace`]: the framing has to survive a real file, and this is the
     /// one place the session log is written through the standard-library adapter.
     ///
-    /// Tolerance for the non-UTF-8 bytes Creation Kit emits is no longer asserted here — this
-    /// function no longer reads the log. That property now belongs to
+    /// Tolerance for the non-UTF-8 bytes Creation Kit emits is no longer asserted here — these
+    /// functions no longer read the log. That property now belongs to
     /// `SystemFileSpace::read_lossy`, where `files::tests` pins it.
     #[test]
-    fn append_ck_log_frames_through_the_system_space_too() {
+    fn a_creation_kit_run_frames_through_the_system_space_too() {
         let dir = tempfile::tempdir().unwrap();
         let files = SystemFileSpace;
         let session_log = dir.path().join("session.log");
 
-        append_ck_log(&session_log, "ok\u{fffd}\n", &files).unwrap();
+        append_whole_run(
+            &session_log,
+            "GeneratePrecombined",
+            Some("ok\u{fffd}\n"),
+            &files,
+        );
 
         let session = std::fs::read_to_string(session_log).unwrap();
-        assert!(session.contains("Creation Kit log"));
+        assert!(session.contains("Running CK option GeneratePrecombined:"));
+        assert!(session.contains("Start 09:00:00.00"));
+        assert!(session.contains("Ended 09:04:12.34"));
         assert!(session.contains("ok"));
     }
 }

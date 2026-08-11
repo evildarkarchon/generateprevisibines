@@ -12,6 +12,11 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.103"
+# Local wall-clock time of day, for the batch's `Start %time%` / `Ended %time%` session-log
+# lines. `std::time` offers no calendar breakdown at all — only a duration since the Unix
+# epoch — and resolving a local time zone needs OS calls this crate cannot make itself under
+# `unsafe_code = "forbid"`.
+chrono = {version = "0.4", default-features = false, features = ["clock", "std"]}
 clap = {version = "4.5", features = ["derive"]}
 dialoguer = "0.12.0"
 thiserror = "2.0"

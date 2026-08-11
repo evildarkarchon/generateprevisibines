@@ -10,9 +10,10 @@ use crate::error::{Error, Result};
 use crate::files::{FileSpace, SystemFileSpace};
 use crate::logging;
 use crate::toolchain::{ToolchainDiagnostic, WorkflowToolchainProbe};
-use crate::tools::CreationKitPaths;
+use crate::tools::clock::SystemClock;
 use crate::tools::process::SystemProcessRunner;
 use crate::tools::wait::SystemWait;
+use crate::tools::{CkPorts, CreationKitPaths};
 use crate::validation;
 use crate::workflow::WorkflowPlan;
 use crate::workflow::operations::{
@@ -166,6 +167,7 @@ impl WorkflowRun {
         let files = SystemFileSpace;
         let process = SystemProcessRunner;
         let wait = SystemWait;
+        let clock = SystemClock;
         let prompts = InteractivePrompts;
 
         // Every registered Workflow Operation requires Creation Kit today, so a prepared run
@@ -175,7 +177,12 @@ impl WorkflowRun {
         let ck = self
             .creation_kit()
             .ok_or(Error::CreationKitNotPrepared)?
-            .bind(&process, &wait, &files);
+            .bind(CkPorts {
+                process: &process,
+                wait: &wait,
+                clock: &clock,
+                files: &files,
+            });
 
         self.execute_with_ports(&OperationPorts {
             ck: &ck,
@@ -246,6 +253,7 @@ mod tests {
     use crate::discovery::ToolPaths;
     use crate::error::Error;
     use crate::files::InMemoryFileSpace;
+    use crate::tools::clock::ScriptedClock;
     use crate::tools::process::RecordingProcessRunner;
     use crate::tools::wait::{MO2_DELAY_AFTER_CK_SECS, RecordingWait};
     use crate::workflow::operations::recording_adapters::{
@@ -385,11 +393,16 @@ mod tests {
             record_successful_precombine_outputs(space, &config, &ck_log);
         });
         let wait = RecordingWait::new();
+        // The subject here is the run's dispatch, not the session log, so a clock that never
+        // moves is all this needs.
+        let clock = ScriptedClock::fixed();
         let prompts = RecordingPrompts::new();
-        let ck = run
-            .creation_kit()
-            .unwrap()
-            .bind(&process, &wait, &fixture.files);
+        let ck = run.creation_kit().unwrap().bind(CkPorts {
+            process: &process,
+            wait: &wait,
+            clock: &clock,
+            files: &fixture.files,
+        });
 
         assert_eq!(run.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
         run.execute_with_ports(&OperationPorts {

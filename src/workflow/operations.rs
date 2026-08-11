@@ -256,6 +256,8 @@ mod tests {
     use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
     use crate::files::InMemoryFileSpace;
     use crate::run::WorkflowRequest;
+    use crate::tools::CkPorts;
+    use crate::tools::clock::ScriptedClock;
     use crate::tools::process::{ProcessRunner, RecordingProcessRunner};
     use crate::tools::wait::{MO2_DELAY_AFTER_CK_SECS, RecordingWait};
     use crate::{discovery::ToolPaths, toolchain::WorkflowToolchainProbe};
@@ -460,6 +462,11 @@ mod tests {
         /// identically-named fixtures in `run` and `precombine_workspace`.
         files: InMemoryFileSpace,
         wait: RecordingWait,
+        /// The `Start`/`Ended` readings the episode writes into the session log.
+        ///
+        /// Scripted so the session-log assertions below are not at the mercy of wall time; the
+        /// two readings are distinct because the block records both.
+        clock: ScriptedClock,
         prompts: RecordingPrompts,
     }
 
@@ -480,11 +487,12 @@ mod tests {
             process: &dyn ProcessRunner,
             use_ports: impl FnOnce(&OperationPorts<'_>) -> T,
         ) -> T {
-            let ck = self
-                .run
-                .creation_kit()
-                .unwrap()
-                .bind(process, &self.wait, &self.files);
+            let ck = self.run.creation_kit().unwrap().bind(CkPorts {
+                process,
+                wait: &self.wait,
+                clock: &self.clock,
+                files: &self.files,
+            });
 
             use_ports(&OperationPorts {
                 ck: &ck,
@@ -541,9 +549,14 @@ mod tests {
             run,
             files,
             wait: RecordingWait::new(),
+            clock: ScriptedClock::new([STEP_ONE_STARTED_AT, STEP_ONE_ENDED_AT]),
             prompts: RecordingPrompts::new(),
         }
     }
+
+    /// The scripted `Start`/`Ended` readings a Step 1 fixture's Creation Kit run reports.
+    const STEP_ONE_STARTED_AT: &str = "09:00:00.00";
+    const STEP_ONE_ENDED_AT: &str = "09:04:12.34";
 
     /// A Creation Kit spawn that leaves a successful precombine run's outputs behind.
     fn successful_spawn(fixture: &Step1Fixture) -> RecordingProcessRunner<'_> {
@@ -618,13 +631,20 @@ mod tests {
 
         // The delay workarounds.md §2 mandates, once, at its batch duration.
         assert_eq!(fixture.wait.delays(), vec![MO2_DELAY_AFTER_CK_SECS]);
-        // The Creation Kit log reached the session log rather than being read and dropped.
+        // The Creation Kit log reached the session log rather than being read and dropped, and
+        // it arrived framed: attributable to the operation that produced it, and bracketed by
+        // the run's own timestamps.
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(session.contains(QUIET_CK_LOG), "session log: {session}");
         assert!(
-            fixture
-                .files
-                .read_lossy(fixture.run.log_path())
-                .unwrap()
-                .contains(QUIET_CK_LOG)
+            session.contains("Running CK option GeneratePrecombined:"),
+            "session log: {session}"
+        );
+        assert!(
+            session.contains(&format!(
+                "Start {STEP_ONE_STARTED_AT}\nEnded {STEP_ONE_ENDED_AT}\n"
+            )),
+            "session log: {session}"
         );
         // The DLL guard ran and put the ENB DLL back, contents intact.
         assert_eq!(fixture.files.read_lossy(&enb_dll).unwrap(), "enb");
