@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::config::{ArchiveTool, CkpeConfigKind, PluginIdentity};
 use crate::discovery::{self, ToolPaths};
 use crate::error::{Error, Result};
+use crate::files::FileSpace;
 use crate::logging;
 use crate::tools::ToolContext;
 use crate::validation;
@@ -240,14 +241,21 @@ impl WorkflowToolchain {
     }
 
     /// Build the Creation Kit invocation context required by CK-backed operations.
-    pub fn creation_kit_context(&self, session_log: PathBuf) -> Result<ToolContext> {
+    ///
+    /// `files` supplies the temporary root the unattended xEdit log path is derived from, so
+    /// the context a test prepares names a log inside that test's own space.
+    pub(crate) fn creation_kit_context(
+        &self,
+        session_log: PathBuf,
+        files: &dyn FileSpace,
+    ) -> Result<ToolContext> {
         let creation_kit = self.creation_kit.as_ref().ok_or_else(|| {
             Error::Other("Creation Kit was not prepared for this Workflow Run".into())
         })?;
 
         Ok(ToolContext {
             session_log: Some(session_log),
-            unattended_log: Some(logging::unattended_log_path()),
+            unattended_log: Some(logging::unattended_log_path(files)),
             fallout4_dir: self.fallout4_dir.clone(),
             creation_kit: creation_kit.executable.clone(),
             ck_log_path: creation_kit.ck_log_path.clone(),
@@ -426,6 +434,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+    use crate::files::InMemoryFileSpace;
 
     fn probe_with_fo4(fallout4_dir: PathBuf) -> WorkflowToolchainProbe {
         WorkflowToolchainProbe::from_tool_paths(ToolPaths {
@@ -498,12 +507,17 @@ mod tests {
         let toolchain = probe
             .prepare(dir.path(), ArchiveTool::Archive2, requirements)
             .unwrap();
+        let files = InMemoryFileSpace::new();
         let ctx = toolchain
-            .creation_kit_context(dir.path().join("session.log"))
+            .creation_kit_context(dir.path().join("session.log"), &files)
             .unwrap();
 
         assert_eq!(ctx.creation_kit, ck);
         assert_eq!(ctx.ck_log_path, fo4.join("CK.log"));
+        assert_eq!(
+            ctx.unattended_log,
+            Some(files.temp_dir().join("UnattendedScript.log"))
+        );
         assert!(toolchain.diagnostics().iter().any(|diagnostic| matches!(
             diagnostic,
             ToolchainDiagnostic::CkpeConfig { log_file, .. } if log_file == "CK.log"

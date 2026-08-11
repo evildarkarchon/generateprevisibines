@@ -8,6 +8,7 @@ use std::path::Path;
 use crate::cli::Cli;
 use crate::config::{BuildMode, PluginIdentity, WorkflowStep};
 use crate::error::{Error, Result};
+use crate::files::SystemFileSpace;
 use crate::interactive::{self, ExistingPluginAction};
 use crate::run::{WorkflowRequest, WorkflowRun};
 use crate::toolchain::{PluginReadiness, WorkflowToolchainProbe};
@@ -83,7 +84,8 @@ impl<P: WorkflowIntakePrompts> WorkflowRequestIntake<P> {
             return Ok(WorkflowIntakeOutcome::Exited);
         };
 
-        let run = WorkflowRun::prepare(&request, exe_dir, probe)?;
+        // Production's `FileSpace`: the session log this creates belongs in the real `%TEMP%`.
+        let run = WorkflowRun::prepare(&request, exe_dir, probe, &SystemFileSpace)?;
         Ok(WorkflowIntakeOutcome::Ready(Box::new(run)))
     }
 

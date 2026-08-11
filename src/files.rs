@@ -26,15 +26,15 @@ use crate::error::Result;
 ///
 /// Implementors must be `Debug` so the domain types that hold a `FileSpace` — the
 /// Precombine Workspace among them — can keep deriving `Debug`.
-// The write-side operations below (`rename`, `exists`, `write`, `append`, `temp_dir`) have
-// tests but no production caller yet: `logging` and `DllGuard` move onto them in the two
-// issues that follow this one. The allow is scoped to non-test builds so the tests still hold
-// them live, and it comes out once those callers land.
+// `write`, `append` and `temp_dir` now have their production caller: `logging` routes the
+// session log through them. `rename` and `exists` still have tests but no production caller —
+// `DllGuard` moves onto them in the issue that follows. The allow is scoped to non-test builds
+// so the tests keep those two live, and it comes out once the guard lands.
 #[cfg_attr(
     not(test),
     allow(
         dead_code,
-        reason = "logging and DllGuard become the production callers in the next two issues"
+        reason = "DllGuard becomes the production caller of rename and exists in the next issue"
     )
 )]
 pub(crate) trait FileSpace: std::fmt::Debug {
@@ -169,13 +169,6 @@ impl FileSpace for SystemFileSpace {
 ///
 /// A bare file name (`"previs.log"`) yields `Some("")` from [`Path::parent`], and asking
 /// `create_dir_all` for the empty path is an error on Windows, so the empty parent is skipped.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "reached only through FileSpace::write and ::append, whose production callers arrive with the logging port"
-    )
-)]
 fn create_parent_directories(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)?;

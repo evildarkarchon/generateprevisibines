@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{ArchiveTool, BuildMode, PluginIdentity, ProjectConfig, WorkflowStep};
 use crate::error::Result;
+use crate::files::FileSpace;
 use crate::logging;
 use crate::toolchain::{ToolchainDiagnostic, WorkflowToolchainProbe};
 use crate::tools::ToolContext;
@@ -85,16 +86,20 @@ pub struct WorkflowRun {
 impl WorkflowRun {
     /// Prepare a workflow run from the production-backed Workflow Plan.
     ///
+    /// `files` is the space the session log is created in; it is borrowed only for the
+    /// duration of preparation, because nothing the prepared run does later touches it.
+    ///
     /// Returns the fully validated run, or propagates request validation, unimplemented resume,
     /// toolchain readiness, log initialization, and Creation Kit context errors.
-    pub fn prepare(
+    pub(crate) fn prepare(
         request: &WorkflowRequest,
         exe_dir: &Path,
         probe: &WorkflowToolchainProbe,
+        files: &dyn FileSpace,
     ) -> Result<Self> {
         let config = request.to_project_config(probe)?;
         let preparation = prepare_production_workflow(config.build_mode, config.resume_from)?;
-        Self::prepare_with_registration(config, exe_dir, probe, preparation)
+        Self::prepare_with_registration(config, exe_dir, probe, preparation, files)
     }
 
     /// Complete preparation from a validated config and registration-resolved workflow state.
@@ -107,6 +112,7 @@ impl WorkflowRun {
         exe_dir: &Path,
         probe: &WorkflowToolchainProbe,
         preparation: ProductionWorkflowPreparation,
+        files: &dyn FileSpace,
     ) -> Result<Self> {
         let (plan, requirements) = preparation.into_parts();
         let toolchain = probe.prepare(exe_dir, config.archive_tool, requirements)?;
@@ -123,19 +129,20 @@ impl WorkflowRun {
             });
         }
 
-        let log_path = logging::session_log_path(&config.plugin);
+        let log_path = logging::session_log_path(&config.plugin, files);
         logging::init_session_log(
             &log_path,
             config.build_mode.as_str(),
             &config.plugin.file_name,
+            files,
         )?;
 
         let ctx = if requirements.needs_creation_kit() {
-            toolchain.creation_kit_context(log_path.clone())?
+            toolchain.creation_kit_context(log_path.clone(), files)?
         } else {
             ToolContext {
                 session_log: Some(log_path.clone()),
-                unattended_log: Some(logging::unattended_log_path()),
+                unattended_log: Some(logging::unattended_log_path(files)),
                 fallout4_dir: config.fallout4_dir.clone(),
                 ..ToolContext::default()
             }
@@ -211,6 +218,7 @@ mod tests {
     use crate::config::PluginIdentity;
     use crate::discovery::ToolPaths;
     use crate::error::Error;
+    use crate::files::InMemoryFileSpace;
     use crate::tools::CkOperation;
     use crate::workflow::operations::recording_adapters::{
         RecordedCreationKitCall, RecordingOperationAdapters,
@@ -223,6 +231,11 @@ mod tests {
         fallout4_directory: PathBuf,
         probe: WorkflowToolchainProbe,
         request: WorkflowRequest,
+        /// The space the prepared run's session log lands in.
+        ///
+        /// Owned per fixture, which is what keeps the several test modules that all prepare a
+        /// run for the plugin `MyMod` off one shared `%TEMP%\MyMod.log`.
+        files: InMemoryFileSpace,
     }
 
     /// Build a real filesystem fixture with the production Step 1 toolchain ready.
@@ -257,6 +270,7 @@ mod tests {
             fallout4_directory,
             probe,
             request,
+            files: InMemoryFileSpace::new(),
         }
     }
 
@@ -287,8 +301,13 @@ mod tests {
     fn prepare_creates_runnable_step_one_run() {
         let fixture = ready_workflow_fixture();
 
-        let run = WorkflowRun::prepare(&fixture.request, fixture.directory.path(), &fixture.probe)
-            .unwrap();
+        let run = WorkflowRun::prepare(
+            &fixture.request,
+            fixture.directory.path(),
+            &fixture.probe,
+            &fixture.files,
+        )
+        .unwrap();
 
         assert_eq!(run.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
         assert_eq!(
@@ -307,6 +326,13 @@ mod tests {
             run.tool_context().ck_log_path,
             fixture.fallout4_directory.join("CK.log")
         );
+        // The session log is initialized in the fixture's own space, not the machine's
+        // `%TEMP%`, so concurrent test modules preparing a `MyMod` run cannot collide.
+        assert_eq!(run.log_path(), fixture.files.temp_dir().join("MyMod.log"));
+        assert_eq!(
+            fixture.files.read_lossy(run.log_path()).unwrap(),
+            "Starting clean Build V2.95 of MyMod.esp\n"
+        );
     }
 
     /// The prepared run dispatches Step 1 and hands Creation Kit the Clean-mode qualifiers.
@@ -318,8 +344,13 @@ mod tests {
     #[test]
     fn prepared_run_dispatches_step_one_with_clean_mode_creation_kit_qualifiers() {
         let fixture = ready_workflow_fixture();
-        let run = WorkflowRun::prepare(&fixture.request, fixture.directory.path(), &fixture.probe)
-            .unwrap();
+        let run = WorkflowRun::prepare(
+            &fixture.request,
+            fixture.directory.path(),
+            &fixture.probe,
+            &fixture.files,
+        )
+        .unwrap();
         let adapters = RecordingOperationAdapters::new();
 
         assert_eq!(run.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
@@ -358,7 +389,13 @@ mod tests {
             None,
         );
 
-        let error = WorkflowRun::prepare(&request, directory.path(), &probe).unwrap_err();
+        let error = WorkflowRun::prepare(
+            &request,
+            directory.path(),
+            &probe,
+            &InMemoryFileSpace::new(),
+        )
+        .unwrap_err();
 
         assert!(matches!(
             error,
@@ -377,11 +414,16 @@ mod tests {
 
         for (build_mode, skipped, planned) in cases {
             let fixture = ready_workflow_fixture();
-            let mut request = fixture.request;
+            let mut request = fixture.request.clone();
             request.build_mode = build_mode;
 
-            let run =
-                WorkflowRun::prepare(&request, fixture.directory.path(), &fixture.probe).unwrap();
+            let run = WorkflowRun::prepare(
+                &request,
+                fixture.directory.path(),
+                &fixture.probe,
+                &fixture.files,
+            )
+            .unwrap();
 
             assert!(
                 run.diagnostics()
@@ -398,12 +440,18 @@ mod tests {
         let mut request = fixture.request.clone();
         request.resume_from = Some(WorkflowStep::MergePrecombineObjects);
         let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
-            fallout4_dir: Some(fixture.fallout4_directory),
+            fallout4_dir: Some(fixture.fallout4_directory.clone()),
             ..ToolPaths::default()
         })
         .unwrap();
 
-        let error = WorkflowRun::prepare(&request, fixture.directory.path(), &probe).unwrap_err();
+        let error = WorkflowRun::prepare(
+            &request,
+            fixture.directory.path(),
+            &probe,
+            &fixture.files,
+        )
+        .unwrap_err();
 
         assert!(matches!(error, Error::StepNotImplemented(2)));
     }
@@ -435,7 +483,8 @@ mod tests {
             None,
         );
 
-        let run = WorkflowRun::prepare(&request, dir.path(), &probe).unwrap();
+        let run =
+            WorkflowRun::prepare(&request, dir.path(), &probe, &InMemoryFileSpace::new()).unwrap();
 
         assert_eq!(run.tool_context().ck_log_path, fo4.join("CK.log"));
     }

@@ -249,8 +249,13 @@ impl OperationAdapters for ProductionOperationAdapters {
         plugin_file: &str,
         qualifiers: &str,
     ) -> Result<()> {
-        self.ck
-            .run(run.tool_context(), operation, plugin_file, qualifiers)
+        self.ck.run(
+            run.tool_context(),
+            operation,
+            plugin_file,
+            qualifiers,
+            &self.files,
+        )
     }
 
     fn confirm_clear_precombined(&self, precombined_dir: &Path) -> Result<bool> {
@@ -486,7 +491,15 @@ mod tests {
             None,
         );
 
-        let run = WorkflowRun::prepare(&request, dir.path(), &probe).unwrap();
+        // A per-call in-memory space, so this module's `MyMod` runs never share a session log
+        // with the identically-named fixtures in `run` and `precombine_workspace`.
+        let run = WorkflowRun::prepare(
+            &request,
+            dir.path(),
+            &probe,
+            &crate::files::InMemoryFileSpace::new(),
+        )
+        .unwrap();
         (dir, run)
     }
 

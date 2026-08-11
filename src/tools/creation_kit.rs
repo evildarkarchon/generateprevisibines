@@ -3,6 +3,7 @@
 use std::ffi::OsString;
 
 use crate::error::Result;
+use crate::files::FileSpace;
 use crate::logging;
 use crate::tools::ToolContext;
 use crate::tools::dll::DllGuard;
@@ -36,12 +37,25 @@ pub struct CreationKitOps;
 
 impl CreationKitOps {
     /// Run a CK operation (`START /wait` equivalent).
-    pub fn run(
+    ///
+    /// `files` is the space the Creation Kit log is folded into the session log through. The
+    /// DLL guard and the stale-log removal above it still go straight to `std::fs`; moving
+    /// those across the seam is the next two issues' work, not this one's.
+    // The receiver is unused only because this adapter still reaches for
+    // `SystemProcessRunner`/`SystemWait` directly. Narrowing the method to `pub(crate)` is
+    // what exposed it to `unused_self`; it stays a method because the reshape that injects
+    // those ports puts them in `self`.
+    #[allow(
+        clippy::unused_self,
+        reason = "the injected process and wait ports become fields of this adapter"
+    )]
+    pub(crate) fn run(
         &self,
         ctx: &ToolContext,
         operation: CkOperation,
         plugin_file: &str,
         qualifiers: &str,
+        files: &dyn FileSpace,
     ) -> Result<()> {
         let _dll_guard = DllGuard::disable(&ctx.fallout4_dir)?;
 
@@ -58,7 +72,7 @@ impl CreationKitOps {
         SystemWait.sync_delay(MO2_DELAY_AFTER_CK_SECS);
 
         if let Some(session) = &ctx.session_log {
-            logging::append_ck_log(session, &ctx.ck_log_path)?;
+            logging::append_ck_log(session, &ctx.ck_log_path, files)?;
         }
 
         if !status.success() {

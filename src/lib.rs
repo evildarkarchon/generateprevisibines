@@ -9,7 +9,6 @@ pub mod discovery;
 pub mod error;
 pub mod intake;
 pub mod interactive;
-pub mod logging;
 pub mod run;
 pub mod toolchain;
 pub mod tools;
@@ -18,6 +17,10 @@ pub mod workflow;
 
 mod files;
 mod text;
+
+// Crate-private because every entry point now takes a `FileSpace`, and that seam is
+// crate-private by design; the session log is internal machinery, not part of the API.
+pub(crate) mod logging;
 
 pub use cli::Cli;
 pub use config::{ArchiveTool, BuildMode, ProjectConfig, WorkflowStep};
