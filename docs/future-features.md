@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document is the implementation backlog for turning the Rust **scaffold** into a full replacement for the V2.96 GeneratePrevisibines batch workflow. [workarounds.md](workarounds.md) and the other docs in `docs/` remain the behavioral source of truth until parity is demonstrated on a real Fallout 4 / MO2 setup.
+This document is the implementation backlog for turning the Rust **scaffold** into a full replacement for the V2.96 GeneratePrevisibines batch workflow. [workarounds.md](workarounds.md) and the other docs in `docs/` remain the behavioral source of truth until parity is demonstrated on a real Fallout 4 / MO2 setup. [episodes.md](episodes.md) is the per-step parity reference: it enumerates every external-tool interaction — command lines, pre/post-checks, log predicates and severities, delays — so a slice below can point at it instead of restating the detail.
 
 **Reader:** a maintainer choosing the next vertical slice.  
 **After reading:** you can pick a slice, know which batch behavior it must preserve, and see how it relates to existing modules (`cli`, `discovery`, `validation`, `workflow`, `tools`).
@@ -37,23 +37,19 @@ Ordered slices recommended for parity work:
 1. ~~**Interactive plugin flow**~~ — implemented in `interactive` (`dialoguer` prompts, seed copy + 5s MO2 delay, Y/N/C, `:GetStep` resume).
 2. ~~**Step 1 — Generate precombines**~~ — implemented through the Workflow Operation seam with `tools/creation_kit` and `checks` (preamble/post, CK run + 10s delay). Steps 2–8 stop the runnable sequence at the first missing registered operation.
 3. **Step 2 — Merge CombinedObjects** — FO4Edit `Batch_FO4MergeCombinedObjectsAndCheck.pas`, warning on `Error:` in unattended log.
-   Invocation detail the `tools/fo4edit` adapter built by this slice must reproduce (see [workarounds.md](workarounds.md) §1–§2):
-   - Build the plugin list file at `%TEMP%\Plugins.txt`.
-   - Launch with `-fo4 -autoexit -P:<plugin list> -Script:<script name> -Mod:<target plugin> -log:<unattended log>`.
-   - Add `-D:<dir>\Data` when the `-FO4` override is set (batch V2.96).
-   - PowerShell / `SendInput` ENTER for the Module Selection dialog.
-   - Poll for the unattended log, close the window, `TaskKill` fallback.
-   - MO2 sync delays of 5s, 10s and 15s punctuate that sequence, as in the batch.
+   The flag set, the `%TEMP%\Plugins.txt` layout, the `-D:<dir>\Data` rule, the Module Selection
+   keystroke and the full delay/poll/kill sequence the `tools/fo4edit` adapter must reproduce are
+   enumerated in [episodes.md](episodes.md) § *FO4Edit* (see also [workarounds.md](workarounds.md) §1–§2).
 4. **Step 3 — Archive precombines** — create `{plugin} - Main.ba2`, delete precombined folder when using Archive2.
-   Invocation detail the `tools/archive` adapter built by this slice must reproduce:
-   - `BSArch`: pack with `-mt -fo4 -z`.
-   - Xbox mode: `-compression=XBox` for Archive2.
+   Per-verb command lines for both tools, the Xbox-compression divergence and the BSArch staging-dir
+   behaviour are in [episodes.md](episodes.md) § *Archive*.
 5. **Steps 4–5 — PSG / CDX** (clean only) — `CompressPSG`, `BuildCDX`, delete intermediate `.psg`.
 6. **Step 6 — Generate previs** — empty `Data\vis`, `GeneratePreVisData`, visibility task warning.
 7. **Step 7 — Merge previs** — `Batch_FO4MergePrevisandCleanRefr.pas`, success string check.
 8. **Step 8 — Add previs to archive** — `AddToArchive` with extract-repack path for Archive2.
    - Archive2 has no append verb: extract, wait 5s, delete the archive, re-pack (see [workarounds.md](workarounds.md) §4).
-   - `BSArch`: the optional append path, instead of extract-repack.
+   - `BSArch` has no append verb either — it repacks the staging dir it has been accumulating since
+     step 3. Both paths, with the `:ArchiveOnly` fallbacks, are in [episodes.md](episodes.md) § *Archive*.
 9. **Finish / cleanup** — list output files, optional delete CombinedObjects.esp / Previs.esp, restore DLLs.
 
 Each slice should wire through the Workflow Operation seam and real tool adapters.

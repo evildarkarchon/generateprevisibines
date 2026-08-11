@@ -30,6 +30,7 @@ cargo clippy             # Lint with pedantic warnings enabled
 ## Reference Documentation
 
 - [docs/workarounds.md](docs/workarounds.md) - Required workarounds with batch line references
+- [docs/episodes.md](docs/episodes.md) - Per-step external-tool episodes: commands, checks, log predicates, delays (the parity reference)
 - [docs/behaviors.md](docs/behaviors.md) - Key behaviors and UX expectations to preserve
 - [docs/technical.md](docs/technical.md) - Windows APIs, recommended crates, code style, testing
 - [docs/future-features.md](docs/future-features.md) - Post-scaffold implementation backlog

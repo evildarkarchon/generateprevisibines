@@ -1,6 +1,6 @@
 # 10 — Persist the external-tool episode enumeration as `docs/episodes.md`
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 Independent of Phase A, but it is the parity reference Phase B depends on and the material
@@ -137,3 +137,45 @@ Fixed cost: ~50s per xEdit run (×2) plus polling; 10s per CK run (×4 clean, ×
 
 - `docs/episodes.md` exists with the above, every citation verified against the file on disk.
 - `docs/future-features.md` and `AGENTS.md` link to it.
+
+## Comments
+
+Landed as `docs/episodes.md`. Every citation above was re-derived against the 556-line V2.98
+file; the line numbers all resolved, but **four claims in this ticket did not** and were
+corrected in the doc rather than transcribed:
+
+1. **Step-1 preamble severities.** "archive-exists → fatal; `Data\vis` non-empty → fatal" is
+   wrong on both counts. Archive-exists is `goto GetPlugin` (251) — re-prompt interactively,
+   `PauseAndExit` otherwise. `Data\vis` non-empty (252–254) and precombined non-empty
+   (247–249) are `Goto Done`: a hard stop with DLL restore and no failure banner. None of the
+   three is `:failed`.
+2. **`BSArchTemp` is not "cleared only at line 256."** It is also removed at 426 after a
+   *successful* BSArch step-8 pack. The cross-step inheritance is real, but only for a run
+   that stopped between step 3 and a successful step 8 — including the partially-moved tree a
+   failed pack leaves behind (422–425).
+3. **DLL restore is not on "every exit path."** `:Done` (353–358) covers `:Fin`, `:Failed`
+   (366–368) and the three `Goto Done` stops, but `:PauseAndExit` (361) is reached by `goto`
+   from eleven sites and bypasses it. All but one of those sit before any CK run; the exception
+   is step 2's precondition (275), reachable only when step 1's identical check at 268 already
+   passed. So it is nearly always harmless — but leftover `*-PJMdisabled` files from an earlier
+   crashed run survive that path.
+4. **The Archive2 step-8 chain is a branch, not a straight line.** The `.nif` re-scan at 432
+   falls through to `:ArchiveOnly` (436) when the extract produced no precombined meshes,
+   rebuilding the archive from `vis` alone.
+
+Detail added beyond the ticket, each verified against the batch: the per-CK-run episode chain
+(445–463), the xEdit launch flag set (534, so issue `08`'s flag detail has a home), a
+user-prompt table with the interactive-only proof for each, the 1s `Start-Sleep` inside the
+`AppActivate` one-liner (537), `Arch2Quals_` printing empty in the step-8 BSArch log header on
+a direct resume (417), the differing failure-path `MOVE` targets (391 vs 424), step 7's
+`failed` for the same missing `.uvd` files step 8 only warns about (316–317 vs 326), and one
+latent batch bug: `-bsarch` with no existing `- Main.ba2` stages `vis` under
+`BSArchTemp\Meshes` (386–387), producing `Meshes\vis\*.uvd` in the BA2.
+
+Also added an **Episode** entry to `CONTEXT.md`'s Language section — the section already used
+the phrase "the Creation Kit episode" in two definitions without defining it, and this doc
+makes the term load-bearing. Not requested by this ticket; follows the issue-`09` precedent.
+
+`docs/workarounds.md`'s stale V2.96 citations were deliberately left alone — issue `11` owns
+that sweep. `docs/episodes.md` states that its own citations are the current ones and points
+at `11`.

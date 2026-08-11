@@ -28,6 +28,10 @@ _Avoid_: Step list, runner capability, dry-run steps
 The domain behavior for one planned workflow step: its required toolchain readiness, preconditions, external-tool action, postconditions, warnings, cleanup, and mode-specific rules. It is the step's build meaning before any specific process, filesystem, prompt, or timing adapter is chosen. The adapters it needs arrive as Operation Ports — data handed to it per dispatch — rather than through a single adapter trait it is written against. Step identity, ordering, build-mode inclusion, and resume sequencing belong to the Workflow Plan rather than the Workflow Operation.
 _Avoid_: Tool runner step, step helper, command wrapper
 
+**Episode**:
+One interaction between the build and something outside the process: a Creation Kit invocation, an FO4Edit script run, an archive operation, a user prompt, a wall-clock MO2 sync wait, a filesystem mutation, or a log read. It is the unit of external-tool behavior a Workflow Operation must reproduce, enumerated per step in `docs/episodes.md`; an episode bundles its own command line, delays, and log lifecycle, while the success criteria over its result stay with the Workflow Operation.
+_Avoid_: tool call, adapter invocation, side effect
+
 **Operation Ports**:
 The adapters a Workflow Operation is handed for one dispatch: the Creation Kit episode, confirmations, and the file space. It is the set of substitutable things a Workflow Operation may reach, not a seam in its own right — process spawn and MO2 wait sit behind the Creation Kit episode, not beside it.
 _Avoid_: adapter bundle, operation context, tool registry
