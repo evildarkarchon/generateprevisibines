@@ -270,8 +270,16 @@ const fn precombine_qualifiers(build_mode: BuildMode) -> &'static str {
     }
 }
 
+/// The `-<Operation>:<plugin>` argument for one Creation Kit run (batch line 455).
+///
+/// Unquoted, deliberately: the batch writes `-<Operation>:"<plugin>"` onto a raw command line
+/// so the quotes survive `cmd`'s tokenizer, and `CommandLineToArgvW` then strips them before
+/// Creation Kit sees the name. Rust has no `cmd` layer — `Command::arg` escapes an embedded `"`
+/// as `\"`, which `CommandLineToArgvW` reads as a literal quote character, so quoting here would
+/// hand Creation Kit a plugin name with quotes in it. One argv entry across a name with spaces
+/// is already guaranteed by `Command::arg`, which is what the batch's quotes were buying.
 fn operation_arg(operation: CkOperation, plugin_file: &str) -> String {
-    format!("-{}:\"{plugin_file}\"", operation.flag())
+    format!("-{}:{plugin_file}", operation.flag())
 }
 
 fn qualifier_args(qualifiers: &str) -> impl Iterator<Item = &str> {
@@ -503,11 +511,13 @@ mod tests {
         assert_eq!(inner.read_lossy(&enb_dll()).unwrap(), "enb");
     }
 
-    /// The quoted plugin name is one argv entry, and the qualifiers are separate ones.
+    /// A plugin name with a space is one argv entry, and the qualifiers are separate ones.
     ///
     /// Asserted against what the process port received rather than against the formatted Rust
-    /// string, because a helper returning `-GeneratePrecombined:"My Mod.esp"` says nothing
-    /// about how many arguments reach `CreateProcess`.
+    /// string, because a helper returning `-GeneratePrecombined:My Mod.esp` says nothing about
+    /// how many arguments reach `CreateProcess`. The name carries no literal quote characters:
+    /// the batch's quotes are there to survive `cmd`'s tokenizer, a layer that does not exist
+    /// here, and `Command::arg` already guarantees one argv entry across the space.
     #[test]
     fn the_plugin_argument_stays_one_argv_entry_beside_separate_qualifiers() {
         let call = spawn_for(|ck| ck.generate_precombined("My Mod.esp", BuildMode::Clean));
@@ -517,7 +527,7 @@ mod tests {
             RecordedProcessCall {
                 exe: creation_kit_exe(),
                 args: vec![
-                    OsString::from("-GeneratePrecombined:\"My Mod.esp\""),
+                    OsString::from("-GeneratePrecombined:My Mod.esp"),
                     OsString::from("clean"),
                     OsString::from("all"),
                 ],
@@ -540,7 +550,7 @@ mod tests {
             assert_eq!(
                 call.args,
                 vec![
-                    OsString::from("-GeneratePrecombined:\"MyMod.esp\""),
+                    OsString::from("-GeneratePrecombined:MyMod.esp"),
                     OsString::from(expected_first_qualifier),
                     OsString::from("all"),
                 ],
@@ -555,11 +565,8 @@ mod tests {
         let compress = spawn_for(|ck| ck.compress_psg("MyMod.esp"));
         let cdx = spawn_for(|ck| ck.build_cdx("MyMod.esp"));
 
-        assert_eq!(
-            compress.args,
-            vec![OsString::from("-CompressPSG:\"MyMod.esp\"")]
-        );
-        assert_eq!(cdx.args, vec![OsString::from("-BuildCDX:\"MyMod.esp\"")]);
+        assert_eq!(compress.args, vec![OsString::from("-CompressPSG:MyMod.esp")]);
+        assert_eq!(cdx.args, vec![OsString::from("-BuildCDX:MyMod.esp")]);
         assert_eq!(compress.cwd, fallout4_dir());
         assert_eq!(cdx.cwd, fallout4_dir());
     }
@@ -575,7 +582,7 @@ mod tests {
         assert_eq!(
             call.args,
             vec![
-                OsString::from("-GeneratePreVisData:\"MyMod.esp\""),
+                OsString::from("-GeneratePreVisData:MyMod.esp"),
                 OsString::from("clean"),
                 OsString::from("all"),
             ]

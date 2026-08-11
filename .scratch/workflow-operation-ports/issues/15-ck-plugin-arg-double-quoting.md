@@ -1,6 +1,6 @@
 # 15 — `operation_arg` sends Creation Kit a plugin name with literal quotes
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 Surfaced by code review while resolving issue `13`. Pre-existing, unrelated to that change.
@@ -67,3 +67,24 @@ cements the quoting, so a fix has to update this test and the three sibling asse
 - The argv-count property stays asserted; only the expected strings change.
 - If CK turns out to *require* the quotes, record that in `docs/workarounds.md` instead and close
   this — but verify against the real tool first, do not infer it from the batch.
+
+## Answer
+
+`operation_arg` now emits `-{flag}:{plugin_file}` (`src/tools/creation_kit.rs`), with a docstring
+recording why the batch's quotes do not carry over: they exist for `cmd`'s tokenizer, and
+`Command::arg` already delivers one argv entry across a name with spaces.
+
+The four assertions in `creation_kit.rs` were updated to the unquoted literal; the argv-count
+property is unchanged, and the leading test's docstring now says why the name carries no quotes.
+The sample arguments in `process.rs`'s `RecordingProcessRunner` tests were updated the same way —
+they are arbitrary payloads, but they were modelled on CK's grammar and would have kept the wrong
+form visible as an example. They still carry a space, so what those tests actually cover is intact.
+
+`docs/episodes.md` gained a note under the `:RunCK` invocation shape that the quotes around
+`<PluginNameExt_>` belong to `cmd`, not to CK's grammar, so a future reader does not port them
+back in from the citation.
+
+Not verified against a real Creation Kit — no CK is available in this environment. The reasoning
+is from `CommandLineToArgvW`'s documented behaviour and Rust's Windows argument escaping, not from
+observing the tool. If CK is ever seen to *require* the literal quotes, this is the change to
+revert, and it belongs in `docs/workarounds.md` at that point.

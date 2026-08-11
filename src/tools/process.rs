@@ -197,7 +197,7 @@ mod tests {
             .run(
                 &exe,
                 &[
-                    OsString::from("-GeneratePrecombined:\"My Mod.esp\""),
+                    OsString::from("-GeneratePrecombined:My Mod.esp"),
                     OsString::from("clean"),
                     OsString::from("all"),
                 ],
@@ -205,7 +205,7 @@ mod tests {
             )
             .unwrap();
         runner
-            .run(&exe, &[OsString::from("-BuildCDX:\"My Mod.esp\"")], &cwd)
+            .run(&exe, &[OsString::from("-BuildCDX:My Mod.esp")], &cwd)
             .unwrap();
 
         assert_eq!(
@@ -214,7 +214,7 @@ mod tests {
                 RecordedProcessCall {
                     exe: exe.clone(),
                     args: vec![
-                        OsString::from("-GeneratePrecombined:\"My Mod.esp\""),
+                        OsString::from("-GeneratePrecombined:My Mod.esp"),
                         OsString::from("clean"),
                         OsString::from("all"),
                     ],
@@ -222,7 +222,7 @@ mod tests {
                 },
                 RecordedProcessCall {
                     exe,
-                    args: vec![OsString::from("-BuildCDX:\"My Mod.esp\"")],
+                    args: vec![OsString::from("-BuildCDX:My Mod.esp")],
                     cwd,
                 },
             ]
@@ -260,7 +260,7 @@ mod tests {
         runner
             .run(
                 Path::new("CreationKit.exe"),
-                &[OsString::from("-BuildCDX:\"My Mod.esp\"")],
+                &[OsString::from("-BuildCDX:My Mod.esp")],
                 Path::new(r"C:\Games\Fallout4"),
             )
             .unwrap();

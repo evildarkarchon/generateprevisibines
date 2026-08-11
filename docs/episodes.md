@@ -35,6 +35,11 @@ START "CK" /D"<fo4dir>" /wait "CreationKit.exe" -<Operation>:"<PluginNameExt_>" 
 The plugin argument is **always the patch plugin** — never `CombinedObjects.esp` or
 `Previs.esp`; those are outputs.
 
+The quotes around `<PluginNameExt_>` belong to `cmd`'s tokenizer, not to Creation Kit's
+grammar: `CommandLineToArgvW` strips them, so CK sees `-<Operation>:<plugin>`. A port that
+builds argv directly must **not** reproduce them — see
+`.scratch/workflow-operation-ports/issues/15-ck-plugin-arg-double-quoting.md`.
+
 | Operation | Step | Qualifier | Expected output | Post-run log scan |
 |---|---|---|---|---|
 | `GeneratePrecombined` | 1 | `clean all` / `filtered all` — BuildMode-derived (263, 266) | `CombinedObjects.esp` (fixed) | `OUT OF HANDLE ARRAY ENTRIES` (270) → **fatal** (271) |
