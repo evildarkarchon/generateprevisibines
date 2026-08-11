@@ -21,7 +21,8 @@ pub fn session_log_path(plugin: &PluginIdentity, files: &dyn FileSpace) -> PathB
 /// Path matching batch unattended xEdit log location, rooted in `files`' temporary directory.
 // No production caller since the Creation Kit paths stopped travelling in a shared tool
 // context: this log belongs to the xEdit runs, and the Workflow Operations that launch them
-// are not ported. It stays live through its test until `Fo4EditOps` names it again.
+// are not ported. It stays live through its test until the step 2 xEdit adapter names it
+// again (deferred to Phase B by ADR-0002).
 #[cfg_attr(
     not(test),
     allow(

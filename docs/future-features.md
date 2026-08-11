@@ -37,11 +37,23 @@ Ordered slices recommended for parity work:
 1. ~~**Interactive plugin flow**~~ — implemented in `interactive` (`dialoguer` prompts, seed copy + 5s MO2 delay, Y/N/C, `:GetStep` resume).
 2. ~~**Step 1 — Generate precombines**~~ — implemented through the Workflow Operation seam with `tools/creation_kit` and `checks` (preamble/post, CK run + 10s delay). Steps 2–8 stop the runnable sequence at the first missing registered operation.
 3. **Step 2 — Merge CombinedObjects** — FO4Edit `Batch_FO4MergeCombinedObjectsAndCheck.pas`, warning on `Error:` in unattended log.
+   Invocation detail the `tools/fo4edit` adapter built by this slice must reproduce (see [workarounds.md](workarounds.md) §1–§2):
+   - Build the plugin list file at `%TEMP%\Plugins.txt`.
+   - Launch with `-fo4 -autoexit -P:<plugin list> -Script:<script name> -Mod:<target plugin> -log:<unattended log>`.
+   - Add `-D:<dir>\Data` when the `-FO4` override is set (batch V2.96).
+   - PowerShell / `SendInput` ENTER for the Module Selection dialog.
+   - Poll for the unattended log, close the window, `TaskKill` fallback.
+   - MO2 sync delays of 5s, 10s and 15s punctuate that sequence, as in the batch.
 4. **Step 3 — Archive precombines** — create `{plugin} - Main.ba2`, delete precombined folder when using Archive2.
+   Invocation detail the `tools/archive` adapter built by this slice must reproduce:
+   - `BSArch`: pack with `-mt -fo4 -z`.
+   - Xbox mode: `-compression=XBox` for Archive2.
 5. **Steps 4–5 — PSG / CDX** (clean only) — `CompressPSG`, `BuildCDX`, delete intermediate `.psg`.
 6. **Step 6 — Generate previs** — empty `Data\vis`, `GeneratePreVisData`, visibility task warning.
 7. **Step 7 — Merge previs** — `Batch_FO4MergePrevisandCleanRefr.pas`, success string check.
 8. **Step 8 — Add previs to archive** — `AddToArchive` with extract-repack path for Archive2.
+   - Archive2 has no append verb: extract, wait 5s, delete the archive, re-pack (see [workarounds.md](workarounds.md) §4).
+   - `BSArch`: the optional append path, instead of extract-repack.
 9. **Finish / cleanup** — list output files, optional delete CombinedObjects.esp / Previs.esp, restore DLLs.
 
 Each slice should wire through the Workflow Operation seam and real tool adapters.
@@ -141,7 +153,7 @@ src/
   workflow.rs       # step planning + engine
   logging.rs        # session log + CK log append
   workflow/         # Workflow Operation registration, dispatch, and operation tests
-  tools/            # CK adapter, DLL guard, FO4Edit/archive stubs,
+  tools/            # CK adapter, DLL guard,
                     #   process/wait internal seams (MO2 sync delays live here)
   error.rs
 ```

@@ -1,6 +1,6 @@
 # 08 — Delete the FO4Edit and archive stubs, keep their reference detail
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 ## Why
