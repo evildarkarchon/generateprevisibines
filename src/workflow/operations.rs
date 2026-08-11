@@ -558,7 +558,9 @@ mod tests {
     fn step_one_rejects_existing_plugin_archive_before_ck() {
         let (_dir, run) = prepared_run(BuildMode::Filtered, None, true);
         let adapters = RecordingOperationAdapters::new();
-        adapters.file_space().add_file(run.config().plugin_archive_path());
+        adapters
+            .file_space()
+            .add_file(run.config().plugin_archive_path());
 
         let err = generate_precombines::run(&run, &adapters).unwrap_err();
 
@@ -643,10 +645,8 @@ mod tests {
 
         let err = generate_precombines::run(&run, &adapters).unwrap_err();
 
-        assert!(
-            matches!(err, Error::Other(message) if message
-                == "precombined meshes not cleared - choose another resume step")
-        );
+        assert!(matches!(err, Error::Other(message) if message
+                == "precombined meshes not cleared - choose another resume step"));
         assert_eq!(adapters.clear_prompt_count(), 1);
         assert!(adapters.creation_kit_calls().is_empty());
         // A refusal leaves the meshes alone; the run stops rather than clearing anyway.

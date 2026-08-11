@@ -200,8 +200,10 @@ impl OperationAdapters for RecordingOperationAdapters {
             );
         }
 
-        self.files
-            .add_file_with_contents(&run.tool_context().ck_log_path, self.ck_log_contents.clone());
+        self.files.add_file_with_contents(
+            &run.tool_context().ck_log_path,
+            self.ck_log_contents.clone(),
+        );
 
         Ok(())
     }

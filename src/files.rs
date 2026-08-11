@@ -164,7 +164,10 @@ impl FileSpace for SystemFileSpace {
 /// A bare file name (`"previs.log"`) yields `Some("")` from [`Path::parent`], and asking
 /// `create_dir_all` for the empty path is an error on Windows, so the empty parent is skipped.
 fn create_parent_directories(path: &Path) -> Result<()> {
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(parent)?;
     }
 
@@ -516,7 +519,10 @@ mod tests {
 
         assert!(
             space
-                .rename(&dir.path().join("absent.dll"), &dir.path().join("moved.dll"))
+                .rename(
+                    &dir.path().join("absent.dll"),
+                    &dir.path().join("moved.dll")
+                )
                 .is_err()
         );
     }

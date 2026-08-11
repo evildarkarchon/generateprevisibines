@@ -443,13 +443,9 @@ mod tests {
         })
         .unwrap();
 
-        let error = WorkflowRun::prepare(
-            &request,
-            fixture.directory.path(),
-            &probe,
-            &fixture.files,
-        )
-        .unwrap_err();
+        let error =
+            WorkflowRun::prepare(&request, fixture.directory.path(), &probe, &fixture.files)
+                .unwrap_err();
 
         assert!(matches!(error, Error::StepNotImplemented(2)));
     }
