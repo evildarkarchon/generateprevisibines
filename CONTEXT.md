@@ -25,8 +25,12 @@ The ordered workflow steps for a Workflow Run, including which steps belong to t
 _Avoid_: Step list, runner capability, dry-run steps
 
 **Workflow Operation**:
-The domain behavior for one planned workflow step: its required toolchain readiness, preconditions, external-tool action, postconditions, warnings, cleanup, and mode-specific rules. It is the step's build meaning before any specific process, filesystem, prompt, or timing adapter is chosen. Step identity, ordering, build-mode inclusion, and resume sequencing belong to the Workflow Plan rather than the Workflow Operation.
+The domain behavior for one planned workflow step: its required toolchain readiness, preconditions, external-tool action, postconditions, warnings, cleanup, and mode-specific rules. It is the step's build meaning before any specific process, filesystem, prompt, or timing adapter is chosen. The adapters it needs arrive as Operation Ports — data handed to it per dispatch — rather than through a single adapter trait it is written against. Step identity, ordering, build-mode inclusion, and resume sequencing belong to the Workflow Plan rather than the Workflow Operation.
 _Avoid_: Tool runner step, step helper, command wrapper
+
+**Operation Ports**:
+The adapters a Workflow Operation is handed for one dispatch: the Creation Kit episode, confirmations, and the file space. It is the set of substitutable things a Workflow Operation may reach, not a seam in its own right — process spawn and MO2 wait sit behind the Creation Kit episode, not beside it.
+_Avoid_: adapter bundle, operation context, tool registry
 
 **Generate Precombines Operation**:
 The Workflow Operation for Step 1, where a Workflow Run generates precombined meshes and prepares the precombine artifacts required by later steps.

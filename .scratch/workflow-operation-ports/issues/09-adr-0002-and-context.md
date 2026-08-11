@@ -1,6 +1,6 @@
 # 09 — Record the decision: ADR-0002 and CONTEXT.md
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 06
 
 ## Why
