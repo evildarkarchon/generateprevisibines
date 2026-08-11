@@ -1,6 +1,6 @@
 # 12 — `discovery` misses the `xFOEdit.exe` candidate V2.98 probes first
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 Raised by the V2.98 doc sweep (issue `11`), which was documentation-only by charter. This is a
@@ -52,3 +52,11 @@ directory holding both `xFOEdit.exe` and `FO4Edit64.exe` resolves to `xFOEdit.ex
 
 - `discover_fo4edit` probes the same five names in the same order as batch lines 26–35.
 - A test pins `xFOEdit.exe` ahead of `FO4Edit64.exe`.
+
+## Comments
+
+Resolved. `FO4EDIT_CANDIDATES` now lists all five names in batch order with a doc comment
+recording that the order is a parity contract, and `prefers_xfoedit_over_fo4edit64` pins the
+precedence (red before the constant changed, green after). No other candidate list existed in
+the tree to keep in sync. `cargo test` (141 lib + 1 integration) and `cargo clippy
+--all-targets` are clean.

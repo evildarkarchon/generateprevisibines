@@ -9,7 +9,16 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 
-const FO4EDIT_CANDIDATES: &[&str] = &["FO4Edit64.exe", "xEdit64.exe", "FO4Edit.exe", "xEdit.exe"];
+/// Executable names `:xEditCheck` probes in the script's own directory, in the batch's own order
+/// (V2.98 lines 26–35). Order is a parity contract: an install carrying more than one of these
+/// must resolve to the same binary the batch would have picked.
+const FO4EDIT_CANDIDATES: &[&str] = &[
+    "xFOEdit.exe",
+    "FO4Edit64.exe",
+    "xEdit64.exe",
+    "FO4Edit.exe",
+    "xEdit.exe",
+];
 
 /// Discovered external tool paths.
 #[derive(Debug, Clone, Default)]
@@ -150,6 +159,19 @@ mod tests {
         fs::write(&exe, b"").unwrap();
         let found = discover_fo4edit(dir.path()).unwrap();
         assert_eq!(found, exe);
+    }
+
+    /// `:xEditCheck` probes `xFOEdit.exe` (batch line 26) before `FO4Edit64.exe` (line 28), so a
+    /// directory holding both must resolve to `xFOEdit.exe` — the candidate order is a parity
+    /// contract with the batch, not an incidental list ordering.
+    #[test]
+    fn prefers_xfoedit_over_fo4edit64() {
+        let dir = tempdir().unwrap();
+        let preferred = dir.path().join("xFOEdit.exe");
+        fs::write(&preferred, b"").unwrap();
+        fs::write(dir.path().join("FO4Edit64.exe"), b"").unwrap();
+        let found = discover_fo4edit(dir.path()).unwrap();
+        assert_eq!(found, preferred);
     }
 
     #[test]
