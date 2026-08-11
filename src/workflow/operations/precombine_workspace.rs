@@ -1,6 +1,6 @@
 //! Precombine Workspace artifact checks and cleanup for Step 1.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::config::{BuildMode, ProjectConfig};
 use crate::error::{Error, Result};
@@ -84,7 +84,10 @@ impl<'a> PrecombineWorkspace<'a> {
     }
 
     /// Validate Creation Kit outputs after the Generate Precombines command finishes.
-    pub(super) fn validate_generated(&self, ck_log_path: &Path) -> Result<()> {
+    ///
+    /// `ck_log` is the log *content* the Creation Kit adapter read back, not a path: that
+    /// adapter owns the log's lifecycle, and `None` is its "Creation Kit wrote no log" state.
+    pub(super) fn validate_generated(&self, ck_log: Option<&str>) -> Result<()> {
         if !self.files.is_file(&self.combined_objects_path()) {
             return Err(Error::MissingCombinedObjects);
         }
@@ -101,7 +104,7 @@ impl<'a> PrecombineWorkspace<'a> {
             return Err(Error::NoPrecombinedMeshes);
         }
 
-        if self.ck_log_has_handle_array_error(ck_log_path) {
+        if ck_log.is_some_and(has_handle_array_error) {
             return Err(Error::HandleArrayLogError);
         }
 
@@ -123,23 +126,22 @@ impl<'a> PrecombineWorkspace<'a> {
             .find_first_file_with_extension(&self.config.vis_dir(), "uvd")
             .is_some()
     }
+}
 
-    /// Whether Creation Kit's log reports the handle-array exhaustion marker.
-    ///
-    /// A log that cannot be read means "no handle-array error": the marker's absence is the
-    /// only thing that clears the run, and an unreadable log cannot contain it.
-    fn ck_log_has_handle_array_error(&self, log_path: &Path) -> bool {
-        let Ok(contents) = self.files.read_lossy(log_path) else {
-            return false;
-        };
-        // `Findstr /I` is case-insensitive, and the marker is pure ASCII, so folding both
-        // sides the same way is enough — no Unicode case mapping is in play on either side.
-        // The marker is folded too rather than assumed uppercase: a constant respelled in
-        // mixed case would otherwise silently stop matching anything.
-        contents
-            .to_ascii_uppercase()
-            .contains(&HANDLE_ARRAY_MARKER.to_ascii_uppercase())
-    }
+/// Whether Creation Kit's log reports the handle-array exhaustion marker.
+///
+/// An absent log means "no handle-array error": the marker's absence is the only thing that
+/// clears the run, and a log Creation Kit never wrote cannot contain it. A log that *is* there
+/// but cannot be read never reaches here — the Creation Kit adapter raises that as an error
+/// rather than folding it into "no log", precisely so it cannot pass as a clear run.
+fn has_handle_array_error(contents: &str) -> bool {
+    // `Findstr /I` is case-insensitive, and the marker is pure ASCII, so folding both
+    // sides the same way is enough — no Unicode case mapping is in play on either side.
+    // The marker is folded too rather than assumed uppercase: a constant respelled in
+    // mixed case would otherwise silently stop matching anything.
+    contents
+        .to_ascii_uppercase()
+        .contains(&HANDLE_ARRAY_MARKER.to_ascii_uppercase())
 }
 
 #[cfg(test)]
@@ -197,8 +199,12 @@ mod tests {
         PathBuf::from("Data").join("vis").join("cell.uvd")
     }
 
-    fn ck_log() -> PathBuf {
-        PathBuf::from("Data").join("CK.log")
+    /// A Creation Kit log carrying the handle-array marker, for the ordering cases below.
+    ///
+    /// Every check that must win over the marker is asserted against a log that *does* carry
+    /// it, so an ordering regression shows up as the wrong error rather than as no error.
+    fn failing_ck_log() -> String {
+        format!("{HANDLE_ARRAY_MARKER}\n")
     }
 
     /// Record what a successful Creation Kit run leaves behind.
@@ -327,10 +333,11 @@ mod tests {
     fn validate_reports_missing_combined_objects_before_every_other_failure() {
         let config = project_config(BuildMode::Clean);
         let space = InMemoryFileSpace::new();
-        space.add_file_with_contents(ck_log(), format!("{HANDLE_ARRAY_MARKER}\n"));
         let workspace = PrecombineWorkspace::new(&config, &space);
 
-        let err = workspace.validate_generated(&ck_log()).unwrap_err();
+        let err = workspace
+            .validate_generated(Some(&failing_ck_log()))
+            .unwrap_err();
 
         assert!(matches!(err, Error::MissingCombinedObjects));
     }
@@ -340,10 +347,11 @@ mod tests {
         let config = project_config(BuildMode::Clean);
         let space = InMemoryFileSpace::new();
         space.add_file(combined_objects());
-        space.add_file_with_contents(ck_log(), format!("{HANDLE_ARRAY_MARKER}\n"));
         let workspace = PrecombineWorkspace::new(&config, &space);
 
-        let err = workspace.validate_generated(&ck_log()).unwrap_err();
+        let err = workspace
+            .validate_generated(Some(&failing_ck_log()))
+            .unwrap_err();
 
         assert!(matches!(err, Error::MissingGeometryPsg(name) if name == "MyMod"));
     }
@@ -355,7 +363,7 @@ mod tests {
         record_generated_outputs(&space, false);
         let workspace = PrecombineWorkspace::new(&config, &space);
 
-        workspace.validate_generated(&ck_log()).unwrap();
+        workspace.validate_generated(None).unwrap();
     }
 
     #[test]
@@ -364,10 +372,11 @@ mod tests {
         let space = InMemoryFileSpace::new();
         space.add_file(combined_objects());
         space.add_file(geometry_psg());
-        space.add_file_with_contents(ck_log(), format!("{HANDLE_ARRAY_MARKER}\n"));
         let workspace = PrecombineWorkspace::new(&config, &space);
 
-        let err = workspace.validate_generated(&ck_log()).unwrap_err();
+        let err = workspace
+            .validate_generated(Some(&failing_ck_log()))
+            .unwrap_err();
 
         assert!(matches!(err, Error::NoPrecombinedMeshes));
     }
@@ -380,10 +389,9 @@ mod tests {
         let config = project_config(BuildMode::Filtered);
         let space = InMemoryFileSpace::new();
         record_generated_outputs(&space, false);
-        space.add_file_with_contents(ck_log(), contents);
         let workspace = PrecombineWorkspace::new(&config, &space);
 
-        workspace.validate_generated(&ck_log())
+        workspace.validate_generated(Some(contents))
     }
 
     // The four marker cases below spell the Creation Kit text out by hand rather than reusing
@@ -431,22 +439,24 @@ mod tests {
         let config = project_config(BuildMode::Clean);
         let space = InMemoryFileSpace::new();
         record_generated_outputs(&space, true);
-        space.add_file_with_contents(ck_log(), "Masterfile: Fallout4.esm\n");
         let workspace = PrecombineWorkspace::new(&config, &space);
 
-        workspace.validate_generated(&ck_log()).unwrap();
+        workspace
+            .validate_generated(Some("Masterfile: Fallout4.esm\n"))
+            .unwrap();
     }
 
     #[test]
-    fn validate_accepts_outputs_when_the_ck_log_cannot_be_read() {
+    fn validate_accepts_outputs_when_creation_kit_wrote_no_log() {
         let config = project_config(BuildMode::Clean);
         let space = InMemoryFileSpace::new();
         record_generated_outputs(&space, true);
-        // The log is deliberately never recorded, so the read fails. An unreadable log means
-        // "no handle-array error": the marker's absence is the only thing that clears the
-        // run, and a log that cannot be read cannot contain it.
+        // The batch's "Unable to find log" state. An absent log means "no handle-array error":
+        // the marker's absence is the only thing that clears the run, and a log Creation Kit
+        // never wrote cannot contain it. A log that exists but cannot be read never gets here
+        // — `CreationKitOps` raises that as an error instead of reporting `None`.
         let workspace = PrecombineWorkspace::new(&config, &space);
 
-        workspace.validate_generated(&ck_log()).unwrap();
+        workspace.validate_generated(None).unwrap();
     }
 }

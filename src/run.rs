@@ -6,16 +6,18 @@
 use std::path::{Path, PathBuf};
 
 use crate::config::{ArchiveTool, BuildMode, PluginIdentity, ProjectConfig, WorkflowStep};
-use crate::error::Result;
-use crate::files::FileSpace;
+use crate::error::{Error, Result};
+use crate::files::{FileSpace, SystemFileSpace};
 use crate::logging;
 use crate::toolchain::{ToolchainDiagnostic, WorkflowToolchainProbe};
-use crate::tools::ToolContext;
+use crate::tools::CreationKitPaths;
+use crate::tools::process::SystemProcessRunner;
+use crate::tools::wait::SystemWait;
 use crate::validation;
 use crate::workflow::WorkflowPlan;
 use crate::workflow::operations::{
-    OperationAdapters, ProductionOperationAdapters, ProductionWorkflowPreparation,
-    execute_registered_workflow, prepare_production_workflow,
+    InteractivePrompts, OperationPorts, ProductionWorkflowPreparation, execute_registered_workflow,
+    prepare_production_workflow,
 };
 
 /// User intent before tool paths, CKPE configuration, logs, or runnable steps are resolved.
@@ -77,7 +79,8 @@ pub enum RunDiagnostic {
 #[derive(Debug, Clone)]
 pub struct WorkflowRun {
     config: ProjectConfig,
-    ctx: ToolContext,
+    /// Resolved Creation Kit paths, or `None` when no runnable step required Creation Kit.
+    creation_kit: Option<CreationKitPaths>,
     plan: WorkflowPlan,
     diagnostics: Vec<RunDiagnostic>,
     log_path: PathBuf,
@@ -137,37 +140,57 @@ impl WorkflowRun {
             files,
         )?;
 
-        let ctx = if requirements.needs_creation_kit() {
-            toolchain.creation_kit_context(log_path.clone(), files)?
+        // Absent rather than empty when Creation Kit was never required: there is no usable
+        // Creation Kit path set for a run that did not ask for one, and saying so with `None`
+        // is what keeps unresolved paths out of an episode that would then spawn them.
+        let creation_kit = if requirements.needs_creation_kit() {
+            Some(toolchain.creation_kit_paths(log_path.clone())?)
         } else {
-            ToolContext {
-                session_log: Some(log_path.clone()),
-                unattended_log: Some(logging::unattended_log_path(files)),
-                fallout4_dir: config.fallout4_dir.clone(),
-                ..ToolContext::default()
-            }
+            None
         };
 
         Ok(Self {
             config,
-            ctx,
+            creation_kit,
             plan,
             diagnostics,
             log_path,
         })
     }
 
-    /// Execute the runnable subset of the prepared workflow through production operations.
+    /// Execute the runnable subset of the prepared workflow through the production ports.
+    ///
+    /// Returns [`Error::CreationKitNotPrepared`] when the prepared run carries no Creation Kit
+    /// paths, and otherwise propagates whatever the dispatched Workflow Operations report.
     pub fn execute(&self) -> Result<()> {
-        self.execute_with_adapters(&ProductionOperationAdapters::new())
+        let files = SystemFileSpace;
+        let process = SystemProcessRunner;
+        let wait = SystemWait;
+        let prompts = InteractivePrompts;
+
+        // Every registered Workflow Operation requires Creation Kit today, so a prepared run
+        // that reaches here without its paths is a preparation bug rather than a user state.
+        // The check is not removable as dead code, though: the moment an xEdit-backed operation
+        // is registered, a plan can be runnable without Creation Kit ever being resolved.
+        let ck = self
+            .creation_kit()
+            .ok_or(Error::CreationKitNotPrepared)?
+            .bind(&process, &wait, &files);
+
+        self.execute_with_ports(&OperationPorts {
+            ck: &ck,
+            prompts: &prompts,
+            files: &files,
+        })
     }
 
-    /// Execute this prepared run through production registration with crate-private adapters.
+    /// Execute this prepared run through production registration with crate-private ports.
     ///
-    /// The supplied adapters replace only external programs and prompts; the prepared Workflow
-    /// Plan and registered Workflow Operations continue to own sequencing and domain behavior.
-    pub(crate) fn execute_with_adapters(&self, adapters: &dyn OperationAdapters) -> Result<()> {
-        execute_registered_workflow(self, adapters)
+    /// The supplied ports replace only external programs, prompts and the filesystem; the
+    /// prepared Workflow Plan and registered Workflow Operations continue to own sequencing
+    /// and domain behavior.
+    pub(crate) fn execute_with_ports(&self, ports: &OperationPorts<'_>) -> Result<()> {
+        execute_registered_workflow(self, ports)
     }
 
     /// Diagnostics collected while preparing the run.
@@ -206,9 +229,13 @@ impl WorkflowRun {
         &self.config
     }
 
-    /// Tool invocation context for Workflow Operation adapters.
-    pub(crate) const fn tool_context(&self) -> &ToolContext {
-        &self.ctx
+    /// Resolved paths this run's Creation Kit episodes run against.
+    ///
+    /// `None` when no runnable Workflow Operation required Creation Kit readiness, so nothing
+    /// was resolved. Deliberately narrow: the ports an episode runs through are chosen at
+    /// execution time, so a Workflow Operation is never handed the run back to fish them out.
+    pub(crate) const fn creation_kit(&self) -> Option<&CreationKitPaths> {
+        self.creation_kit.as_ref()
     }
 }
 
@@ -219,8 +246,10 @@ mod tests {
     use crate::discovery::ToolPaths;
     use crate::error::Error;
     use crate::files::InMemoryFileSpace;
+    use crate::tools::process::RecordingProcessRunner;
+    use crate::tools::wait::{MO2_DELAY_AFTER_CK_SECS, RecordingWait};
     use crate::workflow::operations::recording_adapters::{
-        RecordedCreationKitCall, RecordingOperationAdapters,
+        RecordingPrompts, record_successful_precombine_outputs,
     };
     use std::fs;
     use tempfile::{TempDir, tempdir};
@@ -322,7 +351,7 @@ mod tests {
                 })
         );
         assert_eq!(
-            run.tool_context().ck_log_path,
+            run.creation_kit().unwrap().ck_log_path,
             fixture.fallout4_directory.join("CK.log")
         );
         // The session log is initialized in the fixture's own space, not the machine's
@@ -337,9 +366,9 @@ mod tests {
     /// The prepared run dispatches Step 1 and hands Creation Kit the run's Clean build mode.
     ///
     /// Artifact assertions belong to the Workflow Operation and Precombine Workspace tests.
-    /// The subject here is the Workflow Run's own dispatch, so checking for files the fake
-    /// wrote moments earlier — through the same accessors the assertions used — would only
-    /// report confidence this test has not earned.
+    /// The subject here is the Workflow Run's own dispatch, so checking for files the simulated
+    /// Creation Kit wrote moments earlier — through the same accessors the assertions used —
+    /// would only report confidence this test has not earned.
     #[test]
     fn prepared_run_dispatches_step_one_with_the_runs_clean_build_mode() {
         let fixture = ready_workflow_fixture();
@@ -350,22 +379,46 @@ mod tests {
             &fixture.files,
         )
         .unwrap();
-        let adapters = RecordingOperationAdapters::new();
+        let config = run.config().clone();
+        let ck_log = run.creation_kit().unwrap().ck_log_path.clone();
+        let process = RecordingProcessRunner::new().with_effects(&fixture.files, move |space| {
+            record_successful_precombine_outputs(space, &config, &ck_log);
+        });
+        let wait = RecordingWait::new();
+        let prompts = RecordingPrompts::new();
+        let ck = run
+            .creation_kit()
+            .unwrap()
+            .bind(&process, &wait, &fixture.files);
 
         assert_eq!(run.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
-        run.execute_with_adapters(&adapters).unwrap();
+        run.execute_with_ports(&OperationPorts {
+            ck: &ck,
+            prompts: &prompts,
+            files: &fixture.files,
+        })
+        .unwrap();
 
-        assert_eq!(
-            adapters.creation_kit_calls(),
-            vec![RecordedCreationKitCall {
-                plugin_file: "MyMod.esp".to_owned(),
-                build_mode: BuildMode::Clean,
-            }]
+        // One spawn, of the run's own Creation Kit, naming the run's own plugin. What the
+        // Clean build mode turns into on that command line is asserted where the mapping
+        // lives, in `tools::creation_kit`; the subject here is the run's dispatch.
+        let calls = process.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].exe, run.creation_kit().unwrap().exe);
+        assert!(
+            calls[0]
+                .args
+                .iter()
+                .any(|arg| arg.to_string_lossy().contains("MyMod.esp")),
+            "args: {:?}",
+            calls[0].args
         );
-        // A fresh fixture has nothing to clear, so the resume prompt must never fire. This
-        // is a dispatch fact about the run, not an artifact check: the fake established no
-        // meshes, so nothing here asserts something the test itself put in place.
-        assert_eq!(adapters.clear_prompt_count(), 0);
+        // Dispatching Step 1 dispatches the whole episode, mandated delay included.
+        assert_eq!(wait.delays(), vec![MO2_DELAY_AFTER_CK_SECS]);
+        // A fresh fixture has nothing to clear, so the resume prompt must never fire. This is
+        // a dispatch fact about the run, not an artifact check: the simulated Creation Kit
+        // established no prior meshes, so nothing here asserts what the test put in place.
+        assert_eq!(prompts.clear_prompt_count(), 0);
     }
 
     #[test]
@@ -480,6 +533,6 @@ mod tests {
         let run =
             WorkflowRun::prepare(&request, dir.path(), &probe, &InMemoryFileSpace::new()).unwrap();
 
-        assert_eq!(run.tool_context().ck_log_path, fo4.join("CK.log"));
+        assert_eq!(run.creation_kit().unwrap().ck_log_path, fo4.join("CK.log"));
     }
 }

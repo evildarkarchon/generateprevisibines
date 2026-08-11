@@ -19,6 +19,16 @@ pub fn session_log_path(plugin: &PluginIdentity, files: &dyn FileSpace) -> PathB
 }
 
 /// Path matching batch unattended xEdit log location, rooted in `files`' temporary directory.
+// No production caller since the Creation Kit paths stopped travelling in a shared tool
+// context: this log belongs to the xEdit runs, and the Workflow Operations that launch them
+// are not ported. It stays live through its test until `Fo4EditOps` names it again.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "the unattended xEdit log arrives with the xEdit-backed Workflow Operations"
+    )
+)]
 #[must_use]
 pub fn unattended_log_path(files: &dyn FileSpace) -> PathBuf {
     files.temp_dir().join("UnattendedScript.log")

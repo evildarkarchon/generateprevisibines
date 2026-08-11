@@ -68,6 +68,13 @@ pub enum Error {
     #[error("workflow step {0} is not implemented yet")]
     StepNotImplemented(u8),
 
+    // A preparation bug rather than a user state: a Workflow Run only resolves Creation Kit
+    // paths when a runnable Workflow Operation asked for Creation Kit readiness, so reaching an
+    // episode without them means planning and readiness disagreed. A variant rather than two
+    // copies of one string, because both the toolchain and the run have to report it.
+    #[error("Creation Kit was not prepared for this Workflow Run")]
+    CreationKitNotPrepared,
+
     #[error("{0}")]
     Other(String),
 }

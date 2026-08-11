@@ -7,9 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::config::{ArchiveTool, CkpeConfigKind, PluginIdentity};
 use crate::discovery::{self, ToolPaths};
 use crate::error::{Error, Result};
-use crate::files::FileSpace;
-use crate::logging;
-use crate::tools::ToolContext;
+use crate::tools::CreationKitPaths;
 use crate::validation;
 
 /// Pre-intake toolchain facts needed before a Workflow Request becomes a Workflow Run.
@@ -240,25 +238,22 @@ impl WorkflowToolchain {
         self.archive.as_deref()
     }
 
-    /// Build the Creation Kit invocation context required by CK-backed operations.
+    /// Resolve the paths a CK-backed Workflow Operation's Creation Kit episodes run against.
     ///
-    /// `files` supplies the temporary root the unattended xEdit log path is derived from, so
-    /// the context a test prepares names a log inside that test's own space.
-    pub(crate) fn creation_kit_context(
-        &self,
-        session_log: PathBuf,
-        files: &dyn FileSpace,
-    ) -> Result<ToolContext> {
-        let creation_kit = self.creation_kit.as_ref().ok_or_else(|| {
-            Error::Other("Creation Kit was not prepared for this Workflow Run".into())
-        })?;
+    /// `session_log` is the Workflow Run's own log, which each episode folds its Creation Kit
+    /// log into. Returns [`Error::CreationKitNotPrepared`] when Creation Kit readiness was never
+    /// required, and so never prepared, for this Workflow Run.
+    pub(crate) fn creation_kit_paths(&self, session_log: PathBuf) -> Result<CreationKitPaths> {
+        let creation_kit = self
+            .creation_kit
+            .as_ref()
+            .ok_or(Error::CreationKitNotPrepared)?;
 
-        Ok(ToolContext {
-            session_log: Some(session_log),
-            unattended_log: Some(logging::unattended_log_path(files)),
+        Ok(CreationKitPaths {
+            exe: creation_kit.executable.clone(),
             fallout4_dir: self.fallout4_dir.clone(),
-            creation_kit: creation_kit.executable.clone(),
             ck_log_path: creation_kit.ck_log_path.clone(),
+            session_log,
         })
     }
 }
@@ -434,7 +429,6 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::files::InMemoryFileSpace;
 
     fn probe_with_fo4(fallout4_dir: PathBuf) -> WorkflowToolchainProbe {
         WorkflowToolchainProbe::from_tool_paths(ToolPaths {
@@ -507,17 +501,13 @@ mod tests {
         let toolchain = probe
             .prepare(dir.path(), ArchiveTool::Archive2, requirements)
             .unwrap();
-        let files = InMemoryFileSpace::new();
-        let ctx = toolchain
-            .creation_kit_context(dir.path().join("session.log"), &files)
-            .unwrap();
+        let session_log = dir.path().join("session.log");
+        let paths = toolchain.creation_kit_paths(session_log.clone()).unwrap();
 
-        assert_eq!(ctx.creation_kit, ck);
-        assert_eq!(ctx.ck_log_path, fo4.join("CK.log"));
-        assert_eq!(
-            ctx.unattended_log,
-            Some(files.temp_dir().join("UnattendedScript.log"))
-        );
+        assert_eq!(paths.exe, ck);
+        assert_eq!(paths.fallout4_dir, fo4);
+        assert_eq!(paths.ck_log_path, fo4.join("CK.log"));
+        assert_eq!(paths.session_log, session_log);
         assert!(toolchain.diagnostics().iter().any(|diagnostic| matches!(
             diagnostic,
             ToolchainDiagnostic::CkpeConfig { log_file, .. } if log_file == "CK.log"

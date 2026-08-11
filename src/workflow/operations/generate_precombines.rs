@@ -9,7 +9,7 @@ use crate::run::WorkflowRun;
 use crate::toolchain::ToolchainRequirements;
 
 use super::precombine_workspace::PrecombineWorkspace;
-use super::{OperationAdapters, WorkflowOperationDefinition};
+use super::{OperationPorts, WorkflowOperationDefinition};
 
 pub(super) const DEFINITION: WorkflowOperationDefinition = WorkflowOperationDefinition::new(
     WorkflowStep::GeneratePrecombines,
@@ -18,23 +18,28 @@ pub(super) const DEFINITION: WorkflowOperationDefinition = WorkflowOperationDefi
 );
 
 /// Run the Step 1 Generate Precombines Operation for a prepared Workflow Run.
-pub(super) fn run(run: &WorkflowRun, adapters: &dyn OperationAdapters) -> Result<()> {
+pub(super) fn run(run: &WorkflowRun, ports: &OperationPorts<'_>) -> Result<()> {
     let config = run.config();
-    let workspace = PrecombineWorkspace::new(config, adapters.files());
-    maybe_clear_precombined_on_resume(run, adapters, &workspace)?;
+    let workspace = PrecombineWorkspace::new(config, ports.files);
+    maybe_clear_precombined_on_resume(run, ports, &workspace)?;
 
     workspace.prepare_for_generate()?;
 
-    adapters.generate_precombined(run, &config.plugin.file_name, config.build_mode)?;
+    let ck_run = ports
+        .ck
+        .generate_precombined(&config.plugin.file_name, config.build_mode)?;
 
-    workspace.validate_generated(&run.tool_context().ck_log_path)?;
+    // The log arrives as content, from the adapter that owns its lifecycle, rather than being
+    // re-found by path: the Creation Kit episode deletes the stale log, reads this run's once,
+    // and hands it here. Success criteria stay with the operation, per ADR-0001.
+    workspace.validate_generated(ck_run.log.as_deref())?;
 
     Ok(())
 }
 
 fn maybe_clear_precombined_on_resume(
     run: &WorkflowRun,
-    adapters: &dyn OperationAdapters,
+    ports: &OperationPorts<'_>,
     workspace: &PrecombineWorkspace<'_>,
 ) -> Result<()> {
     let config = run.config();
@@ -55,7 +60,7 @@ fn maybe_clear_precombined_on_resume(
     }
 
     let precombined = workspace.precombined_dir();
-    if !adapters.confirm_clear_precombined(&precombined)? {
+    if !ports.prompts.confirm_clear_precombined(&precombined)? {
         return Err(Error::Other(
             "precombined meshes not cleared - choose another resume step".into(),
         ));

@@ -53,17 +53,51 @@ pub(crate) struct CkRun {
     ///
     /// `None` when Creation Kit wrote no log — a state the batch distinguishes explicitly
     /// ("Unable to find log"). A log that exists but cannot be read is an error, not a `None`.
-    // No production reader yet: the Workflow Operation still finds the log by path through its
-    // own `FileSpace`. Issue 06 threads this content into the postcondition check and the
-    // attribute goes with it.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "the postcondition check reads this once the operation ports bundle lands"
-        )
-    )]
+    /// The Generate Precombines Operation reads this for its handle-array scan, which is why
+    /// the log never reaches a Workflow Operation as a path.
     pub(crate) log: Option<String>,
+}
+
+/// The resolved paths one Workflow Run's Creation Kit episodes run against.
+///
+/// Preparation resolves these once, from the Workflow Toolchain; execution binds them to the
+/// three ports an episode runs through. Deliberately not a shared tool-context bag: it carries
+/// exactly what [`CreationKitOps::new`] needs, nothing reads it for anything else, and it has
+/// no `Default` — "no Creation Kit was prepared" is an absent value, not one assembled out of
+/// empty paths.
+#[derive(Debug, Clone)]
+pub(crate) struct CreationKitPaths {
+    /// The resolved `CreationKit.exe`.
+    pub(crate) exe: PathBuf,
+    /// The Fallout 4 install directory: the spawn's working directory and the DLL guard's root.
+    pub(crate) fallout4_dir: PathBuf,
+    /// The log CKPE configures Creation Kit to write.
+    pub(crate) ck_log_path: PathBuf,
+    /// The Workflow Run's session log, which each episode folds its Creation Kit log into.
+    pub(crate) session_log: PathBuf,
+}
+
+impl CreationKitPaths {
+    /// Bind the resolved paths to the three ports one Creation Kit episode runs through.
+    ///
+    /// The ports are chosen at execution time rather than stored here, so the paths a Workflow
+    /// Run carries stay plain data and a test can drive the real episode over recording ports.
+    pub(crate) fn bind<'a>(
+        &'a self,
+        process: &'a dyn ProcessRunner,
+        wait: &'a dyn Wait,
+        files: &'a dyn FileSpace,
+    ) -> CreationKitOps<'a> {
+        CreationKitOps::new(
+            self.exe.clone(),
+            self.fallout4_dir.clone(),
+            self.ck_log_path.clone(),
+            Some(self.session_log.clone()),
+            process,
+            wait,
+            files,
+        )
+    }
 }
 
 /// Creation Kit process launcher with DLL guard, log lifecycle and MO2 sync delay.

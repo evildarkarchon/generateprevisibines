@@ -1,130 +1,50 @@
-//! The shared recording [`OperationAdapters`] used by Workflow Operation tests.
+//! Test doubles shared by the Workflow Operation and Workflow Run test modules.
 //!
-//! One fake, not one per module: a change to how Creation Kit's effects are simulated
-//! happens here and nowhere else. It is crate-visible rather than nested in a private
-//! `tests` module so the Workflow Run module's tests can drive the same simulation.
+//! Crate-visible rather than nested in a private `tests` module so the Workflow Run module's
+//! tests can drive the same Step 1 simulation the operation's own tests do.
 //!
-//! The fake owns the [`InMemoryFileSpace`] it hands back from [`OperationAdapters::files`],
-//! so the Creation Kit simulation and the Precombine Workspace observe the same space by
-//! construction — no shared-ownership plumbing, and no fabricated files on disk. A test
-//! states artifact outcomes ("Creation Kit ran and produced meshes but no geometry PSG")
+//! There is no recording Creation Kit here, and that is the point. Substitution happens
+//! *underneath* the Creation Kit episode, at `RecordingProcessRunner` and `RecordingWait`, so
+//! the real `CreationKitOps` runs and a Step 1 test observes the DLL guard, the mandated MO2
+//! delay and the log lifecycle rather than a fake's claim about them. What this module supplies
+//! is the other half: the [`Prompts`] the operation asks, and the files Creation Kit would have
+//! left behind — recorded into the space the operation reads back, so a test states an outcome
 //! instead of writing bytes into a temporary directory and hoping the workspace finds them.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::path::Path;
 
-use crate::config::BuildMode;
+use crate::config::{BuildMode, ProjectConfig};
 use crate::error::Result;
-use crate::files::{FileSpace, InMemoryFileSpace};
-use crate::run::WorkflowRun;
+use crate::files::InMemoryFileSpace;
 
-use super::OperationAdapters;
-
-/// One Creation Kit request as the operation under test issued it.
-///
-/// Records the domain inputs, not Creation Kit's command grammar: what the build mode turns
-/// into on the command line is `CreationKitOps`' business, and its own tests assert it against
-/// the recorded argv rather than against a qualifier string passed through a fake.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RecordedCreationKitCall {
-    pub(crate) plugin_file: String,
-    pub(crate) build_mode: BuildMode,
-}
-
-/// Whether a simulated Creation Kit run leaves a given artifact behind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ArtifactOutcome {
-    Present,
-    Absent,
-}
-
-impl ArtifactOutcome {
-    const fn is_present(self) -> bool {
-        matches!(self, Self::Present)
-    }
-}
-
-/// The artifact outcomes a simulated Creation Kit run declares.
-///
-/// A successful Step 1 run is the default; each builder method on the adapter withholds
-/// exactly one artifact so a test names the failure it is about.
-#[derive(Debug, Clone, Copy)]
-struct GeneratedArtifacts {
-    combined_objects: ArtifactOutcome,
-    precombined_mesh: ArtifactOutcome,
-    geometry_psg: ArtifactOutcome,
-}
-
-impl Default for GeneratedArtifacts {
-    fn default() -> Self {
-        Self {
-            combined_objects: ArtifactOutcome::Present,
-            precombined_mesh: ArtifactOutcome::Present,
-            geometry_psg: ArtifactOutcome::Present,
-        }
-    }
-}
+use super::Prompts;
 
 /// A quiet Creation Kit log: present, readable, and free of the handle-array marker.
-const QUIET_CK_LOG: &str = "Masterfile: Fallout4.esm\n";
+pub(crate) const QUIET_CK_LOG: &str = "Masterfile: Fallout4.esm\n";
 
-/// Test [`OperationAdapters`] that record what they were asked to do and declare outcomes.
+/// Test [`Prompts`] that count the confirmations they were asked and answer from a script.
 #[derive(Debug)]
-pub(crate) struct RecordingOperationAdapters {
-    creation_kit_calls: RefCell<Vec<RecordedCreationKitCall>>,
+pub(crate) struct RecordingPrompts {
     clear_prompts: Cell<usize>,
     clear_response: bool,
-    artifacts: GeneratedArtifacts,
-    ck_log_contents: String,
-    files: InMemoryFileSpace,
 }
 
-impl Default for RecordingOperationAdapters {
+impl Default for RecordingPrompts {
     fn default() -> Self {
         Self {
-            creation_kit_calls: RefCell::new(Vec::new()),
             clear_prompts: Cell::new(0),
+            // Consent by default, so a refusal is something a test has to ask for by name.
             clear_response: true,
-            artifacts: GeneratedArtifacts::default(),
-            ck_log_contents: QUIET_CK_LOG.to_owned(),
-            files: InMemoryFileSpace::new(),
         }
     }
 }
 
-impl RecordingOperationAdapters {
-    /// Adapters simulating a fully successful Creation Kit run over an empty space.
+impl RecordingPrompts {
+    /// Prompts that have been asked nothing yet and consent to what they are asked.
     #[must_use]
     pub(crate) fn new() -> Self {
         Self::default()
-    }
-
-    /// Simulate a Creation Kit run that leaves no merged objects plugin behind.
-    #[must_use]
-    pub(crate) const fn without_combined_objects(mut self) -> Self {
-        self.artifacts.combined_objects = ArtifactOutcome::Absent;
-        self
-    }
-
-    /// Simulate a Creation Kit run that leaves no precombined meshes behind.
-    #[must_use]
-    pub(crate) const fn without_precombined_meshes(mut self) -> Self {
-        self.artifacts.precombined_mesh = ArtifactOutcome::Absent;
-        self
-    }
-
-    /// Simulate a Creation Kit run that leaves no geometry PSG behind.
-    #[must_use]
-    pub(crate) const fn without_geometry_psg(mut self) -> Self {
-        self.artifacts.geometry_psg = ArtifactOutcome::Absent;
-        self
-    }
-
-    /// Give the simulated Creation Kit log the supplied contents.
-    #[must_use]
-    pub(crate) fn with_ck_log_contents(mut self, contents: impl Into<String>) -> Self {
-        self.ck_log_contents = contents.into();
-        self
     }
 
     /// Answer the clear-precombined prompt with a refusal instead of consent.
@@ -134,22 +54,6 @@ impl RecordingOperationAdapters {
         self
     }
 
-    /// The [`FileSpace`] this fake and the operation under test share.
-    ///
-    /// Tests seed preconditions and assert outcomes through it directly. Deliberately not
-    /// called "the artifact space": the glossary binds that phrase to the Precombine
-    /// Workspace, which is a different thing evaluated *through* this space.
-    #[must_use]
-    pub(crate) const fn file_space(&self) -> &InMemoryFileSpace {
-        &self.files
-    }
-
-    /// The Creation Kit invocations recorded so far, in call order.
-    #[must_use]
-    pub(crate) fn creation_kit_calls(&self) -> Vec<RecordedCreationKitCall> {
-        self.creation_kit_calls.borrow().clone()
-    }
-
     /// How many times the clear-precombined prompt was shown.
     #[must_use]
     pub(crate) fn clear_prompt_count(&self) -> usize {
@@ -157,59 +61,40 @@ impl RecordingOperationAdapters {
     }
 }
 
-impl OperationAdapters for RecordingOperationAdapters {
-    fn files(&self) -> &dyn FileSpace {
-        &self.files
-    }
-
-    fn generate_precombined(
-        &self,
-        run: &WorkflowRun,
-        plugin_file: &str,
-        build_mode: BuildMode,
-    ) -> Result<()> {
-        self.creation_kit_calls
-            .borrow_mut()
-            .push(RecordedCreationKitCall {
-                plugin_file: plugin_file.to_owned(),
-                build_mode,
-            });
-
-        // The fake supplies Creation Kit's external outputs while the real operation keeps
-        // ownership of validation: it declares which artifacts appear, never whether the
-        // set of them is enough for Step 1 to pass.
-        let config = run.config();
-
-        if self.artifacts.combined_objects.is_present() {
-            self.files
-                .add_file(config.fo4edit_data_dir().join("CombinedObjects.esp"));
-        }
-
-        if self.artifacts.precombined_mesh.is_present() {
-            // Nested, because that is the shape Creation Kit writes precombines in.
-            self.files
-                .add_file(config.precombined_dir().join("cell").join("mesh.nif"));
-        }
-
-        // Only a Clean-mode run emits the geometry PSG; a Filtered one never does.
-        if config.build_mode == BuildMode::Clean && self.artifacts.geometry_psg.is_present() {
-            self.files.add_file(
-                config
-                    .fo4edit_data_dir()
-                    .join(format!("{} - Geometry.psg", config.plugin.base_name)),
-            );
-        }
-
-        self.files.add_file_with_contents(
-            &run.tool_context().ck_log_path,
-            self.ck_log_contents.clone(),
-        );
-
-        Ok(())
-    }
-
+impl Prompts for RecordingPrompts {
     fn confirm_clear_precombined(&self, _precombined_dir: &Path) -> Result<bool> {
         self.clear_prompts.set(self.clear_prompts.get() + 1);
         Ok(self.clear_response)
     }
+}
+
+/// Record what a successful Creation Kit precombine run leaves in a Workflow Run's space.
+///
+/// Meant as a `RecordingProcessRunner` effects callback body, so the simulated tool writes into
+/// the very space the Precombine Workspace reads back — the same relationship the real pair
+/// has. One definition, not one per test module: a change to what Creation Kit produces belongs
+/// here and nowhere else.
+///
+/// `ck_log` is the log CKPE configured Creation Kit to write. The episode deletes it before the
+/// spawn and reads it back after, so it has to appear as an effect of the spawn rather than as
+/// something the test seeded beforehand.
+pub(crate) fn record_successful_precombine_outputs(
+    space: &InMemoryFileSpace,
+    config: &ProjectConfig,
+    ck_log: &Path,
+) {
+    space.add_file(config.fo4edit_data_dir().join("CombinedObjects.esp"));
+    // Nested, because that is the shape Creation Kit writes precombines in.
+    space.add_file(config.precombined_dir().join("cell").join("mesh.nif"));
+
+    // Only a Clean-mode run emits the geometry PSG; a Filtered one never does.
+    if config.build_mode == BuildMode::Clean {
+        space.add_file(
+            config
+                .fo4edit_data_dir()
+                .join(format!("{} - Geometry.psg", config.plugin.base_name)),
+        );
+    }
+
+    space.add_file_with_contents(ck_log, QUIET_CK_LOG);
 }

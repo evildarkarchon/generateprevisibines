@@ -1,6 +1,6 @@
 # 06 — Replace the `OperationAdapters` trait with an `OperationPorts` struct
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 05
 
 ## Why
