@@ -1,6 +1,6 @@
 # 13 — `discovery` has no equivalent of V2.98's `reg.exe`-absent (Wine) path
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 Second behavioural difference raised by the V2.98 doc sweep (issue `11`), which was
@@ -69,3 +69,48 @@ Is Wine/Proton a supported host for the Rust port at all? The answer changes the
 - A decision on Wine support is recorded (here or in `docs/behaviors.md`).
 - If in scope: a registry-less host reaches the `Fallout4.exe`-not-found message with its two
   remedies, not a raw `winreg` error, and a test covers that path.
+
+## Answer
+
+**Wine/Proton is supported.** Recorded under a new "Host Support" section in
+`docs/behaviors.md`; the batch's structure was mirrored rather than its probe.
+
+What changed:
+
+- `discover_fallout4_dir` returns `Option<PathBuf>` instead of `Result<PathBuf>`. Any
+  unanswerable registry — missing key, no registry, blank value — is the batch's empty
+  `locCreationKit_`. The `WHERE /Q reg.exe` probe was deliberately *not* ported, per the note
+  above: a blank answer is handled identically to a missing binary, via the shared
+  `fallout4_dir_from_registry_value` helper.
+- `discover_tools` no longer returns `Result` at all. It cannot fail now, and saying so in the
+  type keeps the fall-through unfailable by construction rather than by convention.
+- `WorkflowToolchainProbe::from_tool_paths` carries both of batch line 63's remedies: run
+  `Fallout4Launcher.exe` once, or pass `--FO4 <DIR>` (the port's spelling of `-FO4:<dir>`). It
+  extends "Fallout 4 directory could not be determined. Use --FO4 <DIR>." rather than replacing
+  its condition — see the scope note below for why it does not adopt line 63's own wording.
+
+Worth noting beyond the original framing: this is not Wine-only. On plain Windows the HKLM key
+is absent until `Fallout4Launcher.exe` has been run once, so the raw `winreg` error was reachable
+on the most ordinary first-run install there is.
+
+Not done, deliberately — the batch's line-63 check is an `Exist` test on `Fallout4.exe`, which
+the port still has no equivalent of for a *known* directory. A bogus `--FO4` path is caught one
+step later by the `CreationKit.exe` check (batch line 80), so nothing goes unreported; the
+wording just differs. Filed as issue `14`.
+
+A first cut did adopt line 63's own "Fallout4.exe cannot be found" wording, and review caught
+that as a defect: the condition here is only "did we resolve a directory", so that wording would
+have lied for a stale registry entry or a typo'd `--FO4`. The message now names the condition it
+actually tests and keeps both remedies. Porting the wording is issue `14`'s job, together with
+the check that earns it.
+
+Adding the check inside `from_tool_paths` was considered and rejected for this issue: six
+existing probe fixtures across `intake`, `run` and `toolchain` deliberately use synthetic
+directories (`C:\Fallout4`) to keep plugin-readiness tests off the filesystem, and an existence
+check would force all of them onto tempdirs. That is a design decision about where the check
+belongs, not a wording fix.
+
+Tests: `discovery::tests::treats_blank_registry_value_as_no_fallout4_dir`,
+`discovery::tests::absent_registry_yields_no_fallout4_dir_rather_than_an_error`,
+`discovery::tests::override_supplies_fallout4_dir_without_the_registry`,
+`toolchain::tests::probe_reports_missing_fallout4_dir`.

@@ -25,8 +25,7 @@ impl WorkflowToolchainProbe {
     /// This is intentionally light: it must resolve the data root used for plugin readiness,
     /// but it does not require Creation Kit, CKPE, xEdit scripts, or archive tools yet.
     pub fn discover(exe_dir: &Path, fallout4_override: Option<PathBuf>) -> Result<Self> {
-        let tools = discovery::discover_tools(exe_dir, fallout4_override)?;
-        Self::from_tool_paths(tools)
+        Self::from_tool_paths(discovery::discover_tools(exe_dir, fallout4_override))
     }
 
     /// Build a probe from already-discovered tool paths.
@@ -34,8 +33,21 @@ impl WorkflowToolchainProbe {
     /// Tests use this constructor to avoid registry discovery while still exercising the
     /// same readiness logic as production.
     pub fn from_tool_paths(tools: ToolPaths) -> Result<Self> {
+        // Reached whenever the batch's `locCreationKit_` would still be empty: the registry had
+        // no answer and no `-FO4:<dir>` was given. Both of batch line 63's remedies must survive
+        // the port, because a registry-less host (Wine) and a never-launched install both land
+        // here and neither is fixable from a bare registry error. `main` adds `ERROR - `.
+        //
+        // The wording says "directory", not line 63's "Fallout4.exe", on purpose: this is only a
+        // did-we-resolve-a-directory test. Line 63's actual `Exist` check on `Fallout4.exe` has
+        // no counterpart here, so claiming it would be a lie for a stale or typo'd directory,
+        // which reaches the `CreationKit.exe` check below instead.
         let fallout4_dir = tools.fallout4_dir.clone().ok_or_else(|| {
-            Error::Other("Fallout 4 directory could not be determined. Use --FO4 <DIR>.".into())
+            Error::Other(
+                "Fallout 4 directory could not be determined. To fix, run Fallout4Launcher.exe \
+                 once, or use --FO4 <DIR> to specify the location of Fallout4.exe."
+                    .into(),
+            )
         })?;
         let data_dir = fallout4_dir.join("Data");
 
@@ -449,11 +461,27 @@ mod tests {
         assert!(readiness.non_interactive());
     }
 
+    /// An undetermined Fallout 4 directory — the state a registry-less host (Wine) or a
+    /// never-launched install leaves behind — must carry batch line 63's two concrete remedies
+    /// rather than a raw registry error. `main` supplies the `ERROR - ` prefix.
     #[test]
     fn probe_reports_missing_fallout4_dir() {
         let err = WorkflowToolchainProbe::from_tool_paths(ToolPaths::default()).unwrap_err();
+        let message = err.to_string();
 
-        assert!(matches!(err, Error::Other(message) if message.contains("Fallout 4 directory")));
+        assert!(matches!(err, Error::Other(_)), "unexpected variant: {err:?}");
+        assert!(
+            message.contains("Fallout 4 directory"),
+            "missing the condition actually tested: {message}"
+        );
+        assert!(
+            message.contains("Fallout4Launcher.exe"),
+            "missing launcher remedy: {message}"
+        );
+        assert!(
+            message.contains("--FO4"),
+            "missing override remedy: {message}"
+        );
     }
 
     #[test]

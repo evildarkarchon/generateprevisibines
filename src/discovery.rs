@@ -3,7 +3,10 @@
 //!
 //! Both registry lookups sit behind the batch's `reg.exe` probe (21–22) and its `RegErr_`
 //! guards (38, 49), which skip the registry entirely when `reg.exe` is absent — V2.98's
-//! "Support for Wine". This module has no equivalent guard; see issue `13`.
+//! "Support for Wine", which the port supports. Rather than probe for `reg.exe` (a `PATH` test
+//! that a stub binary passes while still answering nothing), both lookups here treat an
+//! unanswerable registry as an empty answer: xEdit falls through to its own not-found error,
+//! and Fallout 4 falls through to the missing-directory message at batch line 63.
 
 use std::path::{Path, PathBuf};
 
@@ -89,52 +92,80 @@ fn fo4edit_from_registry() -> Result<PathBuf> {
     ))
 }
 
-/// Resolve Fallout 4 install directory from registry on Windows.
+/// Resolve the Fallout 4 install directory from the registry on Windows (batch lines 49–50).
+///
+/// Returns `None` when the registry cannot answer — the key is missing because
+/// `Fallout4Launcher.exe` was never run, or there is no usable registry at all (Wine). Both are
+/// the batch's empty `locCreationKit_`, not an error: the caller's missing-directory message
+/// carries the remedies.
 #[cfg(windows)]
-pub fn discover_fallout4_dir() -> Result<PathBuf> {
+#[must_use]
+pub fn discover_fallout4_dir() -> Option<PathBuf> {
     use winreg::RegKey;
     use winreg::enums::HKEY_LOCAL_MACHINE;
 
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let key = hklm.open_subkey(r"SOFTWARE\Wow6432Node\Bethesda Softworks\Fallout4")?;
-    let path: String = key.get_value("installed path")?;
-    Ok(PathBuf::from(path))
+    let value = hklm
+        .open_subkey(r"SOFTWARE\Wow6432Node\Bethesda Softworks\Fallout4")
+        .and_then(|key| key.get_value::<String, _>("installed path"))
+        .ok();
+
+    fallout4_dir_from_registry_value(value)
 }
 
+/// Non-Windows counterpart: there is no registry to consult (batch line 49 skips the query).
 #[cfg(not(windows))]
-pub fn discover_fallout4_dir() -> Result<PathBuf> {
-    Err(Error::Other(
-        "Fallout 4 registry discovery requires Windows".to_string(),
-    ))
+#[must_use]
+pub fn discover_fallout4_dir() -> Option<PathBuf> {
+    // A skipped query and an unanswerable one are the same empty result, so both go through the
+    // same interpretation rather than each inventing its own notion of "absent".
+    fallout4_dir_from_registry_value(None)
+}
+
+/// Interpret the raw `installed path` registry value, if the query produced one at all.
+///
+/// A missing value and a blank one collapse to the same `None`: the batch's `WHERE /Q reg.exe`
+/// probe (line 21) only proves the binary is on `PATH`, so a stub `reg.exe` answers with nothing
+/// useful and must not be mistaken for a real install directory.
+fn fallout4_dir_from_registry_value(value: Option<String>) -> Option<PathBuf> {
+    let value = value?;
+    let trimmed = value.trim();
+
+    (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
 }
 
 /// Fill tool paths from install layout.
-pub fn discover_tools(exe_dir: &Path, fallout4_override: Option<PathBuf>) -> Result<ToolPaths> {
+///
+/// Never fails: an undiscoverable Fallout 4 directory yields `None` here and is reported by
+/// toolchain preparation, mirroring the batch's fall-through to its line-63 check.
+#[must_use]
+pub fn discover_tools(exe_dir: &Path, fallout4_override: Option<PathBuf>) -> ToolPaths {
     let fo4edit = discover_fo4edit(exe_dir).ok();
 
-    let fallout4_dir = match fallout4_override {
-        Some(dir) => dir,
-        None => discover_fallout4_dir()?,
-    };
+    // `-FO4:<dir>` wins outright, so an explicit override never consults the registry.
+    let fallout4_dir = fallout4_override.or_else(discover_fallout4_dir);
 
-    let creation_kit = fallout4_dir.join("CreationKit.exe");
+    let creation_kit = fallout4_dir
+        .as_ref()
+        .map(|dir| dir.join("CreationKit.exe"))
+        .filter(|path| path.is_file());
     let archive2 = fallout4_dir
-        .join("Tools")
-        .join("archive2")
-        .join("archive2.exe");
+        .as_ref()
+        .map(|dir| dir.join("Tools").join("archive2").join("archive2.exe"))
+        .filter(|path| path.is_file());
 
     let bsarch = fo4edit
         .as_ref()
         .and_then(|p| p.parent().map(|d| d.join("BSArch.exe")))
         .filter(|p| p.is_file());
 
-    Ok(ToolPaths {
+    ToolPaths {
         fo4edit,
-        fallout4_dir: Some(fallout4_dir.clone()),
-        creation_kit: creation_kit.is_file().then_some(creation_kit),
-        archive2: archive2.is_file().then_some(archive2),
+        fallout4_dir,
+        creation_kit,
+        archive2,
         bsarch,
-    })
+    }
 }
 
 /// Product version string for an executable (batch uses PowerShell `VersionInfo`).
@@ -172,6 +203,57 @@ mod tests {
         fs::write(dir.path().join("FO4Edit64.exe"), b"").unwrap();
         let found = discover_fo4edit(dir.path()).unwrap();
         assert_eq!(found, preferred);
+    }
+
+    /// Batch lines 21–22 and 49: `WHERE /Q reg.exe` only proves the binary is on `PATH`, so a
+    /// Wine prefix with a stub `reg.exe` passes the probe and still answers nothing. "Query
+    /// returned nothing" must therefore be treated exactly like "no registry at all".
+    #[test]
+    fn treats_blank_registry_value_as_no_fallout4_dir() {
+        assert_eq!(fallout4_dir_from_registry_value(None), None);
+        assert_eq!(fallout4_dir_from_registry_value(Some(String::new())), None);
+        assert_eq!(
+            fallout4_dir_from_registry_value(Some("   ".to_string())),
+            None
+        );
+        assert_eq!(
+            fallout4_dir_from_registry_value(Some(r"C:\Games\Fallout 4\".to_string())),
+            Some(PathBuf::from(r"C:\Games\Fallout 4\"))
+        );
+    }
+
+    /// Batch lines 49–50: a host that cannot answer the registry query leaves `locCreationKit_`
+    /// empty and carries on to the line-63 check. `discover_tools` returning `ToolPaths` rather
+    /// than `Result` makes that unfailable by construction; what this pins is the consequence —
+    /// an unknown directory derives no tools from it.
+    #[test]
+    fn absent_registry_yields_no_fallout4_dir_rather_than_an_error() {
+        let dir = tempdir().unwrap();
+
+        let tools = discover_tools(dir.path(), None);
+
+        // On a developer machine with Fallout 4 installed the registry does answer, so the
+        // directory itself cannot be asserted on every host.
+        if tools.fallout4_dir.is_none() {
+            assert!(tools.creation_kit.is_none());
+            assert!(tools.archive2.is_none());
+        }
+    }
+
+    /// An explicit `-FO4:<dir>` never consults the registry, so the override's own layout is
+    /// what gets probed — the batch reaches line 63 with `locCreationKit_` already set.
+    #[test]
+    fn override_supplies_fallout4_dir_without_the_registry() {
+        let dir = tempdir().unwrap();
+        let fo4 = dir.path().join("Fallout 4");
+        fs::create_dir_all(&fo4).unwrap();
+        fs::write(fo4.join("CreationKit.exe"), b"").unwrap();
+
+        let tools = discover_tools(dir.path(), Some(fo4.clone()));
+
+        assert_eq!(tools.fallout4_dir, Some(fo4.clone()));
+        assert_eq!(tools.creation_kit, Some(fo4.join("CreationKit.exe")));
+        assert_eq!(tools.archive2, None);
     }
 
     #[test]
