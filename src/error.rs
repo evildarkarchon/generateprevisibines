@@ -50,7 +50,10 @@ pub enum Error {
     #[error("vis folder contains .uvd files — remove them before generating precombines")]
     VisUvdFilesExist,
 
-    #[error("DEFAULT: OUT OF HANDLE ARRAY ENTRIES found in Creation Kit log")]
+    // The batch's own wording (`GeneratePrevisibines.bat:271`), which never shows the user the
+    // findstr needle it matched on. `main` prints the `ERROR - ` prefix, so this renders as the
+    // batch's `ERROR - GeneratePrecombined ran out of Reference Handles`.
+    #[error("GeneratePrecombined ran out of Reference Handles")]
     HandleArrayLogError,
 
     #[error("CombinedObjects.esp was not created by Creation Kit")]

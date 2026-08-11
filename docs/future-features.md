@@ -79,7 +79,7 @@ Manual integration checklist (minimum):
 - [ ] Non-interactive: `generateprevisibines.exe MyMod.esp` runs Step 1 only; errors if `--resume-from` ≥ 2
 - [ ] Clean mode: CK qualifiers `clean all`; PSG `{plugin} - Geometry.psg` required after CK
 - [ ] Filtered/Xbox: CK qualifiers `filtered all`; no PSG check
-- [ ] CK log scanned for `DEFAULT: OUT OF HANDLE ARRAY ENTRIES`
+- [ ] CK log scanned for `OUT OF HANDLE ARRAY ENTRIES` (case-insensitive, any prefix)
 - [ ] DLLs renamed to `*-PJMdisabled` during CK and restored after exit
 
 **Full parity (later slices):**

@@ -6,7 +6,14 @@ use crate::config::{BuildMode, ProjectConfig};
 use crate::error::{Error, Result};
 use crate::files::FileSpace;
 
-const HANDLE_ARRAY_MARKER: &str = "DEFAULT: OUT OF HANDLE ARRAY ENTRIES";
+/// The Creation Kit log text that means the precombine ran out of Reference Handles.
+///
+/// Held in the batch's own shape — `Findstr /I /M /C:"OUT OF HANDLE ARRAY ENTRIES"`
+/// (`GeneratePrevisibines.bat:270`): a case-insensitive substring, carrying no prefix. The
+/// Creation Kit usually emits it under `DEFAULT: `, but the batch never required that, so
+/// neither do we; requiring it would let a differently-prefixed line pass a run the batch
+/// would have failed.
+const HANDLE_ARRAY_MARKER: &str = "OUT OF HANDLE ARRAY ENTRIES";
 
 /// Artifact space prepared and validated by the Generate Precombines Operation.
 ///
@@ -125,7 +132,13 @@ impl<'a> PrecombineWorkspace<'a> {
         let Ok(contents) = self.files.read_lossy(log_path) else {
             return false;
         };
-        contents.contains(HANDLE_ARRAY_MARKER)
+        // `Findstr /I` is case-insensitive, and the marker is pure ASCII, so folding both
+        // sides the same way is enough — no Unicode case mapping is in play on either side.
+        // The marker is folded too rather than assumed uppercase: a constant respelled in
+        // mixed case would otherwise silently stop matching anything.
+        contents
+            .to_ascii_uppercase()
+            .contains(&HANDLE_ARRAY_MARKER.to_ascii_uppercase())
     }
 }
 
@@ -359,20 +372,58 @@ mod tests {
         assert!(matches!(err, Error::NoPrecombinedMeshes));
     }
 
-    #[test]
-    fn validate_reports_the_handle_array_marker_in_the_ck_log() {
+    /// Drive `validate_generated` over a Filtered-mode run whose only variable is the log.
+    ///
+    /// The marker cases differ in nothing but the log text, so the outputs and the mode are
+    /// factored out here to keep each case down to the line it is actually pinning.
+    fn validate_with_ck_log(contents: &str) -> Result<()> {
         let config = project_config(BuildMode::Filtered);
         let space = InMemoryFileSpace::new();
         record_generated_outputs(&space, false);
-        space.add_file_with_contents(
-            ck_log(),
-            format!("Masterfile: Fallout4.esm\n{HANDLE_ARRAY_MARKER}\n"),
-        );
+        space.add_file_with_contents(ck_log(), contents);
         let workspace = PrecombineWorkspace::new(&config, &space);
 
-        let err = workspace.validate_generated(&ck_log()).unwrap_err();
+        workspace.validate_generated(&ck_log())
+    }
+
+    // The four marker cases below spell the Creation Kit text out by hand rather than reusing
+    // `HANDLE_ARRAY_MARKER`: a test built from the constant would follow a narrowed constant
+    // instead of catching it, which is exactly the divergence from `Findstr /I /C:` these
+    // cases exist to pin.
+
+    #[test]
+    fn validate_reports_the_handle_array_marker_under_the_default_prefix() {
+        let err = validate_with_ck_log(
+            "Masterfile: Fallout4.esm\nDEFAULT: OUT OF HANDLE ARRAY ENTRIES\n",
+        )
+        .unwrap_err();
 
         assert!(matches!(err, Error::HandleArrayLogError));
+    }
+
+    #[test]
+    fn validate_reports_the_handle_array_marker_without_a_prefix() {
+        let err = validate_with_ck_log("Masterfile: Fallout4.esm\nOUT OF HANDLE ARRAY ENTRIES\n")
+            .unwrap_err();
+
+        assert!(matches!(err, Error::HandleArrayLogError));
+    }
+
+    #[test]
+    fn validate_reports_the_handle_array_marker_in_lowercase() {
+        // Case is the only thing varied against the prefixed case above, so a failure here
+        // points at the comparison rather than at the prefix.
+        let err = validate_with_ck_log(
+            "Masterfile: Fallout4.esm\ndefault: out of handle array entries\n",
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, Error::HandleArrayLogError));
+    }
+
+    #[test]
+    fn validate_accepts_a_ck_log_without_the_handle_array_marker() {
+        validate_with_ck_log("Masterfile: Fallout4.esm\nDEFAULT: exporting cell\n").unwrap();
     }
 
     #[test]

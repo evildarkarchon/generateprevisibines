@@ -1,6 +1,6 @@
 # 07 — Fix the handle-array marker divergence
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 06
 
 ## Why
