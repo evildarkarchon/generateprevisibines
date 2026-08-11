@@ -26,17 +26,11 @@ use crate::error::Result;
 ///
 /// Implementors must be `Debug` so the domain types that hold a `FileSpace` — the
 /// Precombine Workspace among them — can keep deriving `Debug`.
-// `write`, `append` and `temp_dir` now have their production caller: `logging` routes the
-// session log through them. `rename` and `exists` still have tests but no production caller —
-// `DllGuard` moves onto them in the issue that follows. The allow is scoped to non-test builds
-// so the tests keep those two live, and it comes out once the guard lands.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "DllGuard becomes the production caller of rename and exists in the next issue"
-    )
-)]
+// Every operation here has a production caller: `logging` routes the session log through
+// `write`, `append` and `temp_dir`, and `DllGuard` renames through `rename`, `exists`,
+// `is_file` and `remove_file`. The `dead_code` allow that once covered the unadopted half of
+// the trait is gone with them; if one of these goes quiet again, delete it rather than
+// re-adding the allow.
 pub(crate) trait FileSpace: std::fmt::Debug {
     /// Whether `path` names an existing file (not a directory).
     fn is_file(&self, path: &Path) -> bool;

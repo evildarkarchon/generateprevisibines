@@ -1,6 +1,6 @@
 # 04 — Move `DllGuard` onto `FileSpace`
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 02
 
 ## Why
@@ -79,7 +79,10 @@ costs nothing.
 
 ## Done when
 
-- No `std::fs` call remains in `src/tools/dll.rs`.
+- No `std::fs` call remains in the production code of `src/tools/dll.rs`. (Scoped to
+  non-test code on resolution: `restores_previous_renames_when_disable_fails` is kept on
+  `tempfile` by this same issue, and setting it up needs `fs::write` and `fs::create_dir` —
+  the latter has no `FileSpace` equivalent, deliberately.)
 - Every predicate is unchanged: `exists` at `:44` and `:68`, `is_file` at `:37` and `:65`.
 - `renames_and_restores_on_drop` passes against `InMemoryFileSpace`;
   `restores_previous_renames_when_disable_fails` still passes against `SystemFileSpace`.

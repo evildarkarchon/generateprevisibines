@@ -38,9 +38,9 @@ pub struct CreationKitOps;
 impl CreationKitOps {
     /// Run a CK operation (`START /wait` equivalent).
     ///
-    /// `files` is the space the Creation Kit log is folded into the session log through. The
-    /// DLL guard and the stale-log removal above it still go straight to `std::fs`; moving
-    /// those across the seam is the next two issues' work, not this one's.
+    /// `files` is the space the DLL guard renames through and the Creation Kit log is folded
+    /// into the session log through. The stale-log removal between them still goes straight
+    /// to `std::fs`; moving it across the seam is the reshape issue's work, not this one's.
     // The receiver is unused only because this adapter still reaches for
     // `SystemProcessRunner`/`SystemWait` directly. Narrowing the method to `pub(crate)` is
     // what exposed it to `unused_self`; it stays a method because the reshape that injects
@@ -57,7 +57,7 @@ impl CreationKitOps {
         qualifiers: &str,
         files: &dyn FileSpace,
     ) -> Result<()> {
-        let _dll_guard = DllGuard::disable(&ctx.fallout4_dir)?;
+        let _dll_guard = DllGuard::disable(files, &ctx.fallout4_dir)?;
 
         if ctx.ck_log_path.is_file() {
             std::fs::remove_file(&ctx.ck_log_path)?;

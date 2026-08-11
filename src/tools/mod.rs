@@ -5,6 +5,9 @@
 
 mod archive;
 mod creation_kit;
+// `DllGuard` is deliberately not re-exported below. `disable` takes the crate-private
+// `FileSpace`, so the guard cannot be constructed from outside the crate, and its only
+// caller — `creation_kit` — reaches it through this module directly.
 mod dll;
 mod fo4edit;
 
@@ -15,7 +18,6 @@ pub(crate) mod wait;
 
 pub use archive::ArchiveOps;
 pub use creation_kit::{CkOperation, CreationKitOps};
-pub use dll::DllGuard;
 pub use fo4edit::Fo4EditOps;
 
 /// Shared context passed to each tool invocation.
