@@ -1,6 +1,6 @@
 # 02 — Widen `FileSpace` with rename, write, append and temp root
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 ## Why
