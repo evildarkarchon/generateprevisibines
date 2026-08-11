@@ -142,7 +142,7 @@ impl<'a> CreationKitOps<'a> {
         }
     }
 
-    /// Generate precombined meshes for `plugin_file` (batch `:Precomb`, lines 249-253).
+    /// Generate precombined meshes for `plugin_file` (batch `:Precomb2`, lines 262-266).
     ///
     /// A Clean build passes `clean all`; Filtered and Xbox both pass `filtered all`.
     pub(crate) fn generate_precombined(
@@ -261,7 +261,7 @@ impl<'a> CreationKitOps<'a> {
     }
 }
 
-/// CK `-GeneratePrecombined` qualifier string (batch lines 249-253).
+/// CK `-GeneratePrecombined` qualifier string (batch lines 262-266).
 const fn precombine_qualifiers(build_mode: BuildMode) -> &'static str {
     if matches!(build_mode, BuildMode::Clean) {
         "clean all"

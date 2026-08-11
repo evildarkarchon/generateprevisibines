@@ -1,4 +1,4 @@
-//! Input and environment validation matching batch V2.96 rules.
+//! Input and environment validation matching batch V2.98 rules.
 
 use std::path::Path;
 
@@ -48,7 +48,7 @@ pub fn validate_plugin(plugin: &PluginIdentity, build_mode: BuildMode) -> Result
     Ok(())
 }
 
-/// Detect which CKPE config file the install uses (batch lines 81–87).
+/// Detect which CKPE config file the install uses (batch lines 91–97).
 #[must_use]
 pub fn detect_ckpe_config_kind(fallout4_dir: &Path) -> CkpeConfigKind {
     if fallout4_dir.join("CKPE.Fallout4.dll").is_file() {

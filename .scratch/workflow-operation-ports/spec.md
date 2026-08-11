@@ -130,7 +130,9 @@ FileSpace · `05` CreationKitOps reshape · `06` OperationPorts replaces the tra
 `07` handle-array marker fix · `08` delete the stubs · `09` ADR-0002 and CONTEXT.md.
 
 `10` (episode enumeration doc) and `11` (V2.98 doc sync) are independent and can run at any
-time.
+time. `12` (`xFOEdit.exe` discovery candidate) and `13` (the registry-absent Wine path) were
+raised out of `11`'s sweep and are likewise independent — both are `discovery` parity questions,
+not part of this refactor.
 
 ## Done when
 

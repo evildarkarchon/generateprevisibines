@@ -1,4 +1,9 @@
-//! Tool discovery via current directory and Windows registry (batch lines 24–41).
+//! Tool discovery via current directory and Windows registry (batch lines 24–40 for xEdit,
+//! 46–50 for the Fallout 4 install path, 67–68 for CK and Archive2, 513 for BSArch).
+//!
+//! Both registry lookups sit behind the batch's `reg.exe` probe (21–22) and its `RegErr_`
+//! guards (38, 49), which skip the registry entirely when `reg.exe` is absent — V2.98's
+//! "Support for Wine". This module has no equivalent guard; see issue `13`.
 
 use std::path::{Path, PathBuf};
 

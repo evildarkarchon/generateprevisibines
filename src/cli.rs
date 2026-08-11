@@ -1,4 +1,4 @@
-//! CLI parsing compatible with batch V2.96 argument conventions.
+//! CLI parsing compatible with batch V2.98 argument conventions.
 
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;

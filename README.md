@@ -1,12 +1,12 @@
 # GeneratePrevisibines
 
-Rust port of the GeneratePrevisibines V2.96 workflow for automating Fallout 4 precombine and previs generation.
+Rust port of the GeneratePrevisibines V2.98 workflow for automating Fallout 4 precombine and previs generation.
 
 ## Project status (reboot)
 
 The repository is in a **scaffold** phase:
 
-- **Behavioral reference:** PJM batch V2.96 (kept locally, not in this repo) until parity is proven on a real install.
+- **Behavioral reference:** PJM batch V2.98 (kept locally, not in this repo) until parity is proven on a real install.
 - **Implemented today:** CLI/types, validation rules, workflow step planning, logging layout, tool wrapper stubs, unit tests.
 - **Not implemented yet:** Creation Kit / FO4Edit / archive execution, interactive prompts, full 8-step automation.
 

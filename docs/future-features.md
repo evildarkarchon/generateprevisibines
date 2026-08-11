@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document is the implementation backlog for turning the Rust **scaffold** into a full replacement for the V2.96 GeneratePrevisibines batch workflow. [workarounds.md](workarounds.md) and the other docs in `docs/` remain the behavioral source of truth until parity is demonstrated on a real Fallout 4 / MO2 setup. [episodes.md](episodes.md) is the per-step parity reference: it enumerates every external-tool interaction — command lines, pre/post-checks, log predicates and severities, delays — so a slice below can point at it instead of restating the detail.
+This document is the implementation backlog for turning the Rust **scaffold** into a full replacement for the V2.98 GeneratePrevisibines batch workflow. [workarounds.md](workarounds.md) and the other docs in `docs/` remain the behavioral source of truth until parity is demonstrated on a real Fallout 4 / MO2 setup. [episodes.md](episodes.md) is the per-step parity reference: it enumerates every external-tool interaction — command lines, pre/post-checks, log predicates and severities, delays — so a slice below can point at it instead of restating the detail.
 
 **Reader:** a maintainer choosing the next vertical slice.  
 **After reading:** you can pick a slice, know which batch behavior it must preserve, and see how it relates to existing modules (`cli`, `discovery`, `validation`, `workflow`, `tools`).
@@ -13,9 +13,12 @@ This document is the implementation backlog for turning the Rust **scaffold** in
 
 These are required before claiming the Rust binary replaces the batch script.
 
+Line references are against the **V2.98** batch (`GeneratePrevisibines.bat`, gitignored,
+556 lines, header `PJM V2.98 Jun 2026`) — the same file [episodes.md](episodes.md) cites.
+
 | Area | Batch reference | Rust target |
 |------|-----------------|-------------|
-| Tool discovery | Lines 24–41, 57–78 | `discovery` — registry + cwd FO4Edit, Fallout 4 path, CK, Archive2, BSArch |
+| Tool discovery | Lines 24–40 (xEdit), 46–50 (Fallout 4 via registry), 67–88 (CK, Archive2, version display), 513 + 138 (BSArch) | `discovery` — registry + cwd FO4Edit, Fallout 4 path, CK, Archive2, BSArch |
 | CLI / parameters | `:CheckParam`, header comments | `cli` — `-clean`/`-filtered`/`-xbox`, `-bsarch`, `-FO4:dir`, plugin arg |
 | Plugin rules | `:CheckPluginName`, `:SpaceInName` | `validation` — reserved names, clean-mode spaces, seed copy prompts |
 | CKPE validation | `:TestCKPEConfig`, `:CheckCKPEConfig` | `validation` — TOML/INI/legacy ini, log path, handle limit warning |
@@ -117,8 +120,11 @@ Optional once parity exists; must not change batch-compatible defaults:
 
 - GitHub Actions: `cargo build --release`, `cargo test`, `cargo clippy` on Windows runner.
 - Ship `generateprevisibines.exe` with README install instructions.
-- Embed version from `Cargo.toml`; print batch reference version (V2.96) in banner.
-- Version alignment with the local V2.96 batch reference (not tracked in git).
+- Embed version from `Cargo.toml`; print batch reference version (V2.98) in banner.
+- Version alignment with the local V2.98 batch reference (not tracked in git). Note the batch
+  itself is inconsistent: its banner and header say V2.98, but the session-log header it writes
+  is hardcoded `Starting <mode> Build V2.95` (line 260). `logging::build_session_header`
+  reproduces the V2.95 literal deliberately — see the doc comment there.
 
 ---
 

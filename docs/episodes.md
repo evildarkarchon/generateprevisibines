@@ -59,7 +59,7 @@ output-file check (462) → exit-code warning (463).
 Note that the DLLs are *not* restored inside `:RunCK` — restoration happens once, at `:Done`
 (353–358). That covers every exit path that *reaches* `:Done`: success via `:Fin`, `:Failed`
 (366–368), and the three `Goto Done` hard stops (249, 254, 306). It does **not** cover
-`:PauseAndExit` (361), which is entered by `goto` from eleven sites and only falls through
+`:PauseAndExit` (361), which is entered by `goto` from fifteen sites and only falls through
 from `:Done` on the interactive path (360). All but one of those `goto PauseAndExit` sites sit
 before any CK invocation, so nothing is renamed yet; the exception is step 2's precondition
 (275), reachable only when step 1's identical check at 268 already passed — i.e. on a

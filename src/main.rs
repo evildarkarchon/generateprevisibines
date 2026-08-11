@@ -1,4 +1,4 @@
-//! `GeneratePrevisibines` — Rust port (batch V2.96 reference).
+//! `GeneratePrevisibines` — Rust port (batch V2.98 reference).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -104,7 +104,7 @@ fn run_dry_run(cli: &Cli) {
 fn print_banner() {
     println!("============================================================================");
     println!("Automatic Previsbine Builder");
-    println!("Reference: generateprevisibines.bat V2.96");
+    println!("Reference: generateprevisibines.bat V2.98");
     println!("If you use MO2 then tools must be run from within MO2.");
     println!("============================================================================");
     println!();

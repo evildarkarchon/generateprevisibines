@@ -52,7 +52,14 @@ pub fn append_log_line(path: &Path, line: &str, files: &dyn FileSpace) -> Result
     files.append(path, &format!("{line}\n"))
 }
 
-/// Batch-aligned session log header (`:Precomb` line 247, V2.95 reference).
+/// Batch-aligned session log header (`:Precomb2`, batch line 260).
+///
+/// The `V2.95` here is **not** the batch reference version — that is V2.98, as the author
+/// header (line 15) and the banner (line 18) say. It is hardcoded into this one `echo` and never
+/// updated it as the script moved on. This is a literal reproduction of a line the batch writes
+/// to the session log, so it matches the batch's *output*, not the batch's *version*. Anything
+/// parsing or diffing a session log against a batch-produced one depends on that. Bump it only
+/// if the batch's own line 260 changes.
 #[must_use]
 pub fn build_session_header(build_mode: &str, plugin_file: &str) -> String {
     format!("Starting {build_mode} Build V2.95 of {plugin_file}")
@@ -72,7 +79,7 @@ pub fn init_session_log(
     files.write(path, &format!("{header}\n"))
 }
 
-/// Append already-read Creation Kit log contents to the session log (batch `:RunCK` lines 447–448).
+/// Append already-read Creation Kit log contents to the session log (batch `:RunCK` lines 460–461).
 ///
 /// Takes `contents` rather than a path so the Creation Kit adapter reads its log exactly once
 /// and uses that one read for both this append and the content it hands back to the Workflow

@@ -57,7 +57,7 @@ impl ArchiveTool {
     }
 }
 
-/// Eight-step workflow from batch V2.96 (resume menu steps 1–8).
+/// Eight-step workflow from batch V2.98 (resume menu steps 1–8, `:GetStep` lines 208–229).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum WorkflowStep {

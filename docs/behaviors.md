@@ -2,9 +2,12 @@
 
 ## From Original Script
 
-- **Reserved Plugin Names**: "previs", "combinedobjects", "xprevispatch" are forbidden (lines 147-154)
-- **Clean Mode Space Check**: Plugin names cannot contain spaces in clean mode (lines 134-158)
-- **8-Step Resume**: Users can restart from any step 1-8 after failures (lines 186-207)
+Line references are against the **V2.98** batch (`GeneratePrevisibines.bat`, gitignored,
+556 lines, header `PJM V2.98 Jun 2026`) — the same file [episodes.md](episodes.md) cites.
+
+- **Reserved Plugin Names**: "previs", "combinedobjects", "xprevispatch" are forbidden (`:CheckPluginName` lines 168-176)
+- **Clean Mode Space Check**: Plugin names cannot contain spaces in clean mode (lines 155-157, error path `:SpaceInName` 177-180)
+- **8-Step Resume**: Users can restart from any step 1-8 after failures (`:GetStep` lines 208-229)
 - **CKPE Config Checking**: Must validate `bBSPointerHandleExtremly=true` setting exists
 - **Multiple Config Locations**: CKPE may use .toml, .ini, or fallout4_test.ini with different setting names
 - **Version Display**: Show version info for FO4Edit, Fallout4.exe, CreationKit, CKPE
