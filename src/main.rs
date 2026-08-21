@@ -44,7 +44,7 @@ fn run() -> generateprevisibines::Result<()> {
     }
 
     let probe = WorkflowToolchainProbe::discover(&exe_dir, cli.fo4_dir.clone())?;
-    let workflow_run = match WorkflowRequestIntake::interactive().resolve(&cli, &exe_dir, &probe)? {
+    let workflow_run = match WorkflowRequestIntake::production().resolve(&cli, &exe_dir, &probe)? {
         WorkflowIntakeOutcome::Ready(run) => run,
         WorkflowIntakeOutcome::Exited => return Ok(()),
     };
