@@ -39,7 +39,7 @@ cargo clippy             # Lint with pedantic warnings enabled
 
 ### Issue tracker
 
-Issues and PRDs are tracked as local markdown files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+Issues and PRDs are tracked as GitHub issues; run the `gh` CLI outside the sandbox. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
