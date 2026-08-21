@@ -1,0 +1,44 @@
+[package]
+description = "Rust port of GeneratePrevisibines.bat for Fallout 4 precombine/previs automation"
+edition = "2024"
+license = "GPL-3.0-or-later"
+name = "generateprevisibines"
+readme = "README.md"
+version = "0.1.0"
+
+[[bin]]
+name = "generateprevisibines"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.103"
+# Local wall-clock time of day, for the batch's `Start %time%` / `Ended %time%` session-log
+# lines. `std::time` offers no calendar breakdown at all — only a duration since the Unix
+# epoch — and resolving a local time zone needs OS calls this crate cannot make itself under
+# `unsafe_code = "forbid"`.
+chrono = {version = "0.4", default-features = false, features = ["clock", "std"]}
+clap = {version = "4.5", features = ["derive"]}
+dialoguer = "0.12.0"
+thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = {version = "0.3", features = ["env-filter"]}
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+
+[dev-dependencies]
+tempfile = "3.14"
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = {level = "warn", priority = -1}
+doc_markdown = "allow"
+missing_errors_doc = "allow"
+pedantic = {level = "warn", priority = -1}

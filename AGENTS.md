@@ -21,30 +21,6 @@ cargo clippy             # Lint with pedantic warnings enabled
 - DLL renaming (CK crashes with ENB/ReShade DLLs)
 - Archive2 extract-repack (no append functionality)
 
-## Architecture
-
-### Main Components
-
-- **main.rs** - CLI argument parsing (clap), tool discovery, configuration setup, workflow entry point
-- **workflow.rs** - `WorkflowExecutor` orchestrates the 8-step process via `WorkflowStep` enum
-- **config.rs** - `Config` struct holding paths, build mode (`Clean`/`Filtered`/`Xbox`), archive tool selection
-
-### Tool Wrappers (`src/tools/`)
-
-- **creation_kit.rs** - `CreationKitRunner`: generates precombines, compresses PSG, builds CDX, generates previs
-- **fo4edit.rs** - `FO4EditRunner`: merges generated ESPs using Windows SendInput for keystroke automation
-- **archive.rs** - `ArchiveManager`: handles BA2 creation via Archive2 or BSArch
-- **dll_manager.rs** - Disables/restores ENB/ReShade DLLs that crash Creation Kit
-
-### Support Modules
-
-- **registry.rs** - Windows Registry lookups for tool paths (HKCR, HKLM)
-- **ckpe_config.rs** - Parses CKPE `.toml`/`.ini` configs, validates `bBSPointerHandleExtremly=true`
-- **validation.rs** - Plugin name validation (reserved names, space restrictions)
-- **prompts.rs** - Interactive Y/N prompts via dialoguer
-- **filesystem.rs** - Directory creation, file counting, cleanup operations
-- **mo2_helper.rs** + **mo2-mode/** subcrate - Mod Organizer 2 VFS integration
-
 ### Key Types
 
 - `BuildMode`: `Clean` (full workflow), `Filtered` (skip PSG/CDX), `Xbox` (filtered + Xbox compression)
@@ -54,5 +30,34 @@ cargo clippy             # Lint with pedantic warnings enabled
 ## Reference Documentation
 
 - [docs/workarounds.md](docs/workarounds.md) - Required workarounds with batch line references
+- [docs/episodes.md](docs/episodes.md) - Per-step external-tool episodes: commands, checks, log predicates, delays (the parity reference)
 - [docs/behaviors.md](docs/behaviors.md) - Key behaviors and UX expectations to preserve
 - [docs/technical.md](docs/technical.md) - Windows APIs, recommended crates, code style, testing
+- [docs/future-features.md](docs/future-features.md) - Post-scaffold implementation backlog
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked as GitHub issues; run the `gh` CLI outside the sandbox. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The canonical triage roles use their default same-name GitHub labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses a single-context domain documentation layout. See `docs/agents/domain.md`.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
