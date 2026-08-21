@@ -70,8 +70,9 @@ pub fn copy_seed_plugin(data_dir: &Path, plugin_path: &Path) -> Result<()> {
     SystemFileSpace.copy(&seed, plugin_path)?;
 
     if !plugin_path.is_file() {
-        // Left on a direct `SystemWait` deliberately: routing intake through the port is a
-        // separate change from raising the seam around the Creation Kit episode.
+        // This legacy compatibility helper retains its direct production wait until its
+        // policy-bearing surface is removed; Workflow Request Intake now owns the active seed
+        // copy episode through its injected Wait port.
         SystemWait.sync_delay(MO2_DELAY_AFTER_SEED_COPY_SECS);
     }
 
@@ -105,6 +106,31 @@ pub fn prompt_plugin_name(build_mode: BuildMode) -> Result<Option<PluginIdentity
             Err(err) => eprintln!("ERROR - {err}"),
         }
     }
+}
+
+/// Report the candidate plugin that Workflow Request Intake found missing.
+pub fn report_missing_plugin(plugin_file: &str) {
+    println!("Plugin {plugin_file} does not exist.");
+}
+
+/// Ask whether the missing plugin should be copied from `xPrevisPatch.esp`.
+///
+/// This adapter owns only terminal presentation and answer conversion; Intake establishes that
+/// the seed exists and performs any accepted copy through its File Space.
+///
+/// # Errors
+///
+/// Returns [`Error::Prompt`] when the terminal confirmation cannot be completed.
+pub fn prompt_seed_copy_confirmation(_plugin_file: &str) -> Result<bool> {
+    Ok(Confirm::new()
+        .with_prompt("Copy xPrevisPatch.esp as a starting plugin?")
+        .default(false)
+        .interact()?)
+}
+
+/// Report that the seed plugin was copied and became visible to Intake.
+pub fn report_seed_copy_success() {
+    println!("Seed plugin copied.");
 }
 
 /// Y/N seed copy prompt (batch `:TryCopySeed`).

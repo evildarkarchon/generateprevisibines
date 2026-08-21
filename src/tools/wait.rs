@@ -1,6 +1,7 @@
 //! The `Wait` seam: the MO2 virtual-filesystem sync delays.
 //!
-//! An internal seam, private to the tools layer, holding the delays that were `src/timing.rs`.
+//! An internal crate seam, defined in the tools layer and shared by the external-tool and Intake
+//! episodes that must preserve MO2 delays. It holds the delays that were `src/timing.rs`.
 //!
 //! The delays are required, not incidental — see `docs/workarounds.md` §2. That is exactly why
 //! they sit behind a port rather than behind a `#[cfg(test)]` constant of zero: the batch has

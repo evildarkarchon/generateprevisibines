@@ -13,6 +13,7 @@ use crate::files::{FileSpace, SystemFileSpace};
 use crate::interactive::{self, ExistingPluginAction};
 use crate::run::{WorkflowRequest, WorkflowRun};
 use crate::toolchain::{PluginReadiness, WorkflowToolchainProbe};
+use crate::tools::wait::{MO2_DELAY_AFTER_SEED_COPY_SECS, SystemWait, Wait};
 
 /// Result of Workflow Request Intake.
 #[derive(Debug, Clone)]
@@ -28,6 +29,18 @@ pub trait WorkflowIntakePrompts {
     /// Prompt for the plugin identity, or return `None` when the user exits.
     fn prompt_plugin_name(&self, build_mode: BuildMode) -> Result<Option<PluginIdentity>>;
 
+    /// Report that the candidate plugin is missing before Intake evaluates the seed.
+    fn report_missing_plugin(&self, plugin_file: &str);
+
+    /// Ask whether a missing target should be copied from the seed plugin.
+    ///
+    /// Returns `true` when the user accepts the copy and `false` for a deliberate refusal.
+    /// Prompt adapter failures propagate through Workflow Request Intake resolution.
+    fn confirm_seed_copy(&self, plugin_file: &str) -> Result<bool>;
+
+    /// Report that the accepted seed copy became visible and is ready to use.
+    fn report_seed_copy_success(&self);
+
     /// Ensure the plugin is ready before full Workflow Run preparation.
     fn ensure_plugin_ready(&self, readiness: &PluginReadiness) -> Result<ExistingPluginAction>;
 
@@ -42,6 +55,18 @@ pub struct InteractiveWorkflowIntakePrompts;
 impl WorkflowIntakePrompts for InteractiveWorkflowIntakePrompts {
     fn prompt_plugin_name(&self, build_mode: BuildMode) -> Result<Option<PluginIdentity>> {
         interactive::prompt_plugin_name(build_mode)
+    }
+
+    fn report_missing_plugin(&self, plugin_file: &str) {
+        interactive::report_missing_plugin(plugin_file);
+    }
+
+    fn confirm_seed_copy(&self, plugin_file: &str) -> Result<bool> {
+        interactive::prompt_seed_copy_confirmation(plugin_file)
+    }
+
+    fn report_seed_copy_success(&self) {
+        interactive::report_seed_copy_success();
     }
 
     fn ensure_plugin_ready(&self, readiness: &PluginReadiness) -> Result<ExistingPluginAction> {
@@ -60,6 +85,7 @@ struct IntakePorts {
     // concrete recording handles for assertions after resolution.
     prompts: Rc<dyn WorkflowIntakePrompts>,
     files: Rc<dyn FileSpace>,
+    wait: Rc<dyn Wait>,
 }
 
 impl std::fmt::Debug for IntakePorts {
@@ -68,6 +94,7 @@ impl std::fmt::Debug for IntakePorts {
             .debug_struct("IntakePorts")
             .field("prompts", &"shared WorkflowIntakePrompts")
             .field("files", &self.files)
+            .field("wait", &self.wait)
             .finish()
     }
 }
@@ -88,15 +115,30 @@ impl WorkflowRequestIntake {
         )
     }
 
-    /// Create Intake from owned shared adapters while allowing tests to retain typed handles.
+    /// Create Intake from shared prompt and File Space adapters with the production wait.
     #[must_use]
     pub(crate) fn new<P, F>(prompts: Rc<P>, files: Rc<F>) -> Self
     where
         P: WorkflowIntakePrompts + 'static,
         F: FileSpace + 'static,
     {
+        Self::new_with_wait(prompts, files, Rc::new(SystemWait))
+    }
+
+    /// Create Intake from owned shared adapters while allowing tests to retain typed handles.
+    #[must_use]
+    pub(crate) fn new_with_wait<P, F, W>(prompts: Rc<P>, files: Rc<F>, wait: Rc<W>) -> Self
+    where
+        P: WorkflowIntakePrompts + 'static,
+        F: FileSpace + 'static,
+        W: Wait + 'static,
+    {
         Self {
-            ports: IntakePorts { prompts, files },
+            ports: IntakePorts {
+                prompts,
+                files,
+                wait,
+            },
         }
     }
 
@@ -154,10 +196,11 @@ impl WorkflowRequestIntake {
         Ok(request)
     }
 
-    /// Resolve prompt-driven candidates through the existing interactive readiness adapter.
+    /// Resolve prompt-driven candidates through Intake-owned readiness and compatibility prompts.
     ///
     /// Returns `None` when the user deliberately exits and otherwise returns the request after
-    /// plugin readiness and resume intent have been resolved.
+    /// plugin readiness and resume intent have been resolved. Validation, readiness, prompt,
+    /// copying, and wait failures propagate without preparing a Workflow Run.
     fn resolve_interactive_request(
         &self,
         cli: &Cli,
@@ -180,8 +223,56 @@ impl WorkflowRequestIntake {
                 resume_from,
                 cli.fo4_dir.clone(),
             );
-            let readiness = Self::plugin_readiness(&request, probe)?;
+            crate::validation::validate_plugin(&request.plugin, request.build_mode)?;
 
+            let data_dir = probe.data_dir();
+            let archive_path = data_dir.join(request.plugin.archive_name());
+            let plugin_path = data_dir.join(&request.plugin.file_name);
+            let seed_path = data_dir.join("xPrevisPatch.esp");
+
+            // Archive rejection must precede target and seed observations so the actionable
+            // conflict keeps the batch's established failure precedence.
+            if self.ports.files.is_file(&archive_path) {
+                return Err(Error::PluginAlreadyHasArchive);
+            }
+
+            if !self.ports.files.is_file(&plugin_path) {
+                self.ports
+                    .prompts
+                    .report_missing_plugin(&request.plugin.file_name);
+
+                // Check that copying is possible before offering it; asking first would leave a
+                // user approving an action Intake already knows cannot succeed.
+                if !self.ports.files.is_file(&seed_path) {
+                    return Err(Error::SeedPluginMissing);
+                }
+
+                if !self
+                    .ports
+                    .prompts
+                    .confirm_seed_copy(&request.plugin.file_name)?
+                {
+                    return Ok(None);
+                }
+
+                self.ports.files.copy(&seed_path, &plugin_path)?;
+                if !self.ports.files.is_file(&plugin_path) {
+                    // MO2 may acknowledge the copy before its VFS exposes the target. Wait only
+                    // for that state, then make one final observation to preserve the required
+                    // copy-observe-wait-observe episode without delaying immediate copies.
+                    self.ports.wait.sync_delay(MO2_DELAY_AFTER_SEED_COPY_SECS);
+                    if !self.ports.files.is_file(&plugin_path) {
+                        return Err(Error::SeedCopyFailed);
+                    }
+                }
+
+                self.ports.prompts.report_seed_copy_success();
+                return Ok(Some(request));
+            }
+
+            // Existing-plugin decisions remain on the compatibility surface until issue #21;
+            // construct its carrier only after Intake has established the initial file state.
+            let readiness = probe.plugin_readiness(&request.plugin, request.non_interactive);
             match self.ports.prompts.ensure_plugin_ready(&readiness)? {
                 ExistingPluginAction::Exit => return Ok(None),
                 ExistingPluginAction::ChooseResumeStep => {
@@ -243,13 +334,42 @@ mod tests {
     use super::*;
     use crate::config::{ArchiveTool, WorkflowStep};
     use crate::files::InMemoryFileSpace;
+    use crate::tools::wait::RecordingWait;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum RecordedQuestion {
+        PluginName(BuildMode),
+        SeedCopy(String),
+        ExistingPlugin(String),
+        ResumeStep(BuildMode),
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum ReadinessEvent {
+        Observed(PathBuf),
+        Copied(PathBuf, PathBuf),
+        Waited(u64),
+        Revealed(PathBuf),
+    }
+
+    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+    enum CopyBehavior {
+        #[default]
+        Immediate,
+        Pending,
+        Invisible,
+        Fail,
+    }
 
     #[derive(Debug, Default)]
     struct RecordingPrompts {
         plugin_names: RefCell<Vec<Option<PluginIdentity>>>,
+        seed_copy_confirmations: RefCell<Vec<bool>>,
+        fail_seed_copy_confirmation: Cell<bool>,
         ready_actions: RefCell<Vec<ExistingPluginAction>>,
         resume_steps: RefCell<Vec<Option<WorkflowStep>>>,
         call_count: Cell<usize>,
+        questions: RefCell<Vec<RecordedQuestion>>,
     }
 
     impl RecordingPrompts {
@@ -263,6 +383,16 @@ mod tests {
             self
         }
 
+        fn with_seed_copy_confirmations(self, confirmations: Vec<bool>) -> Self {
+            self.seed_copy_confirmations.replace(confirmations);
+            self
+        }
+
+        fn with_failing_seed_copy_confirmation(self) -> Self {
+            self.fail_seed_copy_confirmation.set(true);
+            self
+        }
+
         fn with_resume_steps(self, steps: Vec<Option<WorkflowStep>>) -> Self {
             self.resume_steps.replace(steps);
             self
@@ -271,24 +401,51 @@ mod tests {
         fn call_count(&self) -> usize {
             self.call_count.get()
         }
+
+        fn questions(&self) -> Vec<RecordedQuestion> {
+            self.questions.borrow().clone()
+        }
     }
 
     impl WorkflowIntakePrompts for RecordingPrompts {
-        fn prompt_plugin_name(&self, _build_mode: BuildMode) -> Result<Option<PluginIdentity>> {
+        fn prompt_plugin_name(&self, build_mode: BuildMode) -> Result<Option<PluginIdentity>> {
             self.call_count.set(self.call_count.get() + 1);
+            self.questions
+                .borrow_mut()
+                .push(RecordedQuestion::PluginName(build_mode));
             Ok(self.plugin_names.borrow_mut().remove(0))
         }
 
-        fn ensure_plugin_ready(
-            &self,
-            _readiness: &PluginReadiness,
-        ) -> Result<ExistingPluginAction> {
+        fn confirm_seed_copy(&self, plugin_file: &str) -> Result<bool> {
             self.call_count.set(self.call_count.get() + 1);
+            self.questions
+                .borrow_mut()
+                .push(RecordedQuestion::SeedCopy(plugin_file.to_owned()));
+            if self.fail_seed_copy_confirmation.get() {
+                return Err(Error::Other("recorded seed-copy prompt failure".to_owned()));
+            }
+            Ok(self.seed_copy_confirmations.borrow_mut().remove(0))
+        }
+
+        fn report_missing_plugin(&self, _plugin_file: &str) {}
+
+        fn report_seed_copy_success(&self) {}
+
+        fn ensure_plugin_ready(&self, readiness: &PluginReadiness) -> Result<ExistingPluginAction> {
+            self.call_count.set(self.call_count.get() + 1);
+            self.questions
+                .borrow_mut()
+                .push(RecordedQuestion::ExistingPlugin(
+                    readiness.plugin_file_name().to_owned(),
+                ));
             Ok(self.ready_actions.borrow_mut().remove(0))
         }
 
-        fn prompt_resume_step(&self, _build_mode: BuildMode) -> Result<Option<WorkflowStep>> {
+        fn prompt_resume_step(&self, build_mode: BuildMode) -> Result<Option<WorkflowStep>> {
             self.call_count.set(self.call_count.get() + 1);
+            self.questions
+                .borrow_mut()
+                .push(RecordedQuestion::ResumeStep(build_mode));
             Ok(self.resume_steps.borrow_mut().remove(0))
         }
     }
@@ -299,15 +456,45 @@ mod tests {
     struct RecordingFileSpace {
         inner: InMemoryFileSpace,
         observed_paths: RefCell<Vec<PathBuf>>,
+        copied_paths: RefCell<Vec<(PathBuf, PathBuf)>>,
+        copy_behavior: Cell<CopyBehavior>,
+        fail_writes: Cell<bool>,
+        pending_copy: RefCell<Option<(PathBuf, Option<Vec<u8>>)>>,
+        events: Rc<RefCell<Vec<ReadinessEvent>>>,
     }
 
     impl RecordingFileSpace {
+        /// Create a recording File Space whose copy visibility follows `copy_behavior`.
+        fn with_copy_behavior(
+            copy_behavior: CopyBehavior,
+            events: Rc<RefCell<Vec<ReadinessEvent>>>,
+        ) -> Self {
+            Self {
+                copy_behavior: Cell::new(copy_behavior),
+                events,
+                ..Self::default()
+            }
+        }
+
         fn add_file(&self, path: impl Into<PathBuf>) {
             self.inner.add_file(path);
         }
 
+        /// Make session-log writes fail while leaving other File Space operations available.
+        fn fail_writes(&self) {
+            self.fail_writes.set(true);
+        }
+
+        fn add_file_with_bytes(&self, path: impl Into<PathBuf>, contents: impl Into<Vec<u8>>) {
+            self.inner.add_file_with_bytes(path, contents);
+        }
+
         fn observed_paths(&self) -> Vec<PathBuf> {
             self.observed_paths.borrow().clone()
+        }
+
+        fn copied_paths(&self) -> Vec<(PathBuf, PathBuf)> {
+            self.copied_paths.borrow().clone()
         }
 
         fn contains_file(&self, path: &Path) -> bool {
@@ -317,11 +504,34 @@ mod tests {
         fn contents(&self, path: &Path) -> String {
             self.inner.read_lossy(path).unwrap()
         }
+
+        fn bytes(&self, path: &Path) -> Option<Vec<u8>> {
+            self.inner.contents(path)
+        }
+
+        /// Publish the pending opaque copy and record the simulated VFS reveal.
+        fn reveal_pending_copy(&self) {
+            let Some((path, contents)) = self.pending_copy.borrow_mut().take() else {
+                return;
+            };
+
+            if let Some(contents) = contents {
+                self.inner.add_file_with_bytes(&path, contents);
+            } else {
+                self.inner.add_file(&path);
+            }
+            self.events
+                .borrow_mut()
+                .push(ReadinessEvent::Revealed(path));
+        }
     }
 
     impl FileSpace for RecordingFileSpace {
         fn is_file(&self, path: &Path) -> bool {
             self.observed_paths.borrow_mut().push(path.to_path_buf());
+            self.events
+                .borrow_mut()
+                .push(ReadinessEvent::Observed(path.to_path_buf()));
             self.inner.is_file(path)
         }
 
@@ -347,7 +557,27 @@ mod tests {
         }
 
         fn copy(&self, from: &Path, to: &Path) -> Result<()> {
-            self.inner.copy(from, to)
+            self.copied_paths
+                .borrow_mut()
+                .push((from.to_path_buf(), to.to_path_buf()));
+            self.events
+                .borrow_mut()
+                .push(ReadinessEvent::Copied(from.to_path_buf(), to.to_path_buf()));
+
+            match self.copy_behavior.get() {
+                CopyBehavior::Immediate => self.inner.copy(from, to),
+                CopyBehavior::Pending | CopyBehavior::Invisible => {
+                    if !self.inner.is_file(from) {
+                        return self.inner.copy(from, to);
+                    }
+                    self.pending_copy
+                        .replace(Some((to.to_path_buf(), self.inner.contents(from))));
+                    Ok(())
+                }
+                CopyBehavior::Fail => {
+                    Err(std::io::Error::other("recorded seed copy failure").into())
+                }
+            }
         }
 
         fn rename(&self, from: &Path, to: &Path) -> Result<()> {
@@ -359,6 +589,9 @@ mod tests {
         }
 
         fn write(&self, path: &Path, contents: &str) -> Result<()> {
+            if self.fail_writes.get() {
+                return Err(std::io::Error::other("recorded session log write failure").into());
+            }
             self.inner.write(path, contents)
         }
 
@@ -428,6 +661,42 @@ mod tests {
         assert_eq!(prompts.call_count(), 0);
     }
 
+    /// Recording prompts cannot bypass Intake validation: a prompted invalid candidate fails
+    /// before archive, target, or seed observations and before any mutation.
+    #[test]
+    fn invalid_interactive_candidate_fails_before_readiness_observations() {
+        let directory = tempfile::tempdir().unwrap();
+        let fallout4_dir = directory.path().join("Fallout4");
+        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(fallout4_dir),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("previs"))]),
+        );
+        let files = Rc::new(RecordingFileSpace::default());
+        let wait = Rc::new(RecordingWait::new());
+        let intake = WorkflowRequestIntake::new_with_wait(
+            Rc::clone(&prompts),
+            Rc::clone(&files),
+            Rc::clone(&wait),
+        );
+
+        let err = intake.resolve(&cli, directory.path(), &probe).unwrap_err();
+
+        assert!(matches!(err, Error::ReservedPluginName { name } if name == "previs"));
+        assert_eq!(
+            prompts.questions(),
+            vec![RecordedQuestion::PluginName(BuildMode::Clean)]
+        );
+        assert!(files.observed_paths().is_empty());
+        assert!(files.copied_paths().is_empty());
+        assert!(wait.delays().is_empty());
+    }
+
     /// The archive guard is intentionally evaluated before target-plugin existence.
     #[test]
     fn existing_plugin_archive_is_rejected_before_target_plugin_observation() {
@@ -452,6 +721,45 @@ mod tests {
         assert_eq!(files.observed_paths(), vec![archive_path]);
         assert_eq!(prompts.call_count(), 0);
         assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
+    }
+
+    /// Prompted candidates keep archive precedence inside Intake rather than delegating it to a
+    /// policy-bearing prompt adapter.
+    #[test]
+    fn interactive_archive_is_rejected_before_target_or_seed_observation() {
+        let directory = tempfile::tempdir().unwrap();
+        let fallout4_dir = directory.path().join("Fallout4");
+        let data_dir = fallout4_dir.join("Data");
+        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(fallout4_dir),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))]),
+        );
+        let files = Rc::new(RecordingFileSpace::default());
+        let archive_path = data_dir.join("MyMod - Main.ba2");
+        files.add_file(&archive_path);
+        let wait = Rc::new(RecordingWait::new());
+        let intake = WorkflowRequestIntake::new_with_wait(
+            Rc::clone(&prompts),
+            Rc::clone(&files),
+            Rc::clone(&wait),
+        );
+
+        let err = intake.resolve(&cli, directory.path(), &probe).unwrap_err();
+
+        assert!(matches!(err, Error::PluginAlreadyHasArchive));
+        assert_eq!(files.observed_paths(), vec![archive_path]);
+        assert!(files.copied_paths().is_empty());
+        assert!(wait.delays().is_empty());
+        assert_eq!(
+            prompts.questions(),
+            vec![RecordedQuestion::PluginName(BuildMode::Clean)]
+        );
     }
 
     /// A missing unattended plugin fails at Intake instead of consulting the compatibility
@@ -560,10 +868,479 @@ mod tests {
         assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
     }
 
+    /// A missing seed is an Intake failure discovered before asking whether an impossible copy
+    /// should be attempted, and before Workflow Run preparation creates a session log.
+    #[test]
+    fn missing_interactive_seed_fails_before_copy_confirmation() {
+        let directory = tempfile::tempdir().unwrap();
+        let fallout4_dir = directory.path().join("Fallout4");
+        let data_dir = fallout4_dir.join("Data");
+        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(fallout4_dir),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))]),
+        );
+        let files = Rc::new(RecordingFileSpace::default());
+        let intake = WorkflowRequestIntake::new(Rc::clone(&prompts), Rc::clone(&files));
+
+        let err = intake.resolve(&cli, directory.path(), &probe).unwrap_err();
+
+        assert!(matches!(err, Error::SeedPluginMissing));
+        assert_eq!(
+            files.observed_paths(),
+            vec![
+                data_dir.join("MyMod - Main.ba2"),
+                data_dir.join("MyMod.esp"),
+                data_dir.join("xPrevisPatch.esp"),
+            ]
+        );
+        assert_eq!(prompts.call_count(), 1);
+        assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
+    }
+
+    /// A typed prompt failure propagates unchanged and prevents copying, waiting, and run
+    /// preparation.
+    #[test]
+    fn seed_copy_prompt_failure_remains_visible_through_resolution() {
+        let directory = tempfile::tempdir().unwrap();
+        let fallout4_dir = directory.path().join("Fallout4");
+        let data_dir = fallout4_dir.join("Data");
+        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(fallout4_dir),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
+                .with_failing_seed_copy_confirmation(),
+        );
+        let files = Rc::new(RecordingFileSpace::default());
+        files.add_file_with_bytes(data_dir.join("xPrevisPatch.esp"), [0x00, 0xFF, 0x80]);
+        let wait = Rc::new(RecordingWait::new());
+        let intake = WorkflowRequestIntake::new_with_wait(
+            Rc::clone(&prompts),
+            Rc::clone(&files),
+            Rc::clone(&wait),
+        );
+
+        let err = intake.resolve(&cli, directory.path(), &probe).unwrap_err();
+
+        assert!(
+            matches!(err, Error::Other(message) if message == "recorded seed-copy prompt failure")
+        );
+        assert_eq!(
+            prompts.questions(),
+            vec![
+                RecordedQuestion::PluginName(BuildMode::Clean),
+                RecordedQuestion::SeedCopy("MyMod.esp".into()),
+            ]
+        );
+        assert!(files.copied_paths().is_empty());
+        assert!(wait.delays().is_empty());
+        assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
+    }
+
+    /// Declining the typed seed-copy question is a deliberate exit, not an operational error.
+    #[test]
+    fn declining_interactive_seed_copy_exits_without_preparing_a_run() {
+        let directory = tempfile::tempdir().unwrap();
+        let fallout4_dir = directory.path().join("Fallout4");
+        let data_dir = fallout4_dir.join("Data");
+        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(fallout4_dir),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
+                .with_seed_copy_confirmations(vec![false]),
+        );
+        let files = Rc::new(RecordingFileSpace::default());
+        files.add_file_with_bytes(data_dir.join("xPrevisPatch.esp"), [0x00, 0xFF, 0x80]);
+        let intake = WorkflowRequestIntake::new(Rc::clone(&prompts), Rc::clone(&files));
+
+        let outcome = intake.resolve(&cli, directory.path(), &probe).unwrap();
+
+        assert!(matches!(outcome, WorkflowIntakeOutcome::Exited));
+        assert_eq!(
+            prompts.questions(),
+            vec![
+                RecordedQuestion::PluginName(BuildMode::Clean),
+                RecordedQuestion::SeedCopy("MyMod.esp".into()),
+            ]
+        );
+        assert_eq!(
+            files.observed_paths(),
+            vec![
+                data_dir.join("MyMod - Main.ba2"),
+                data_dir.join("MyMod.esp"),
+                data_dir.join("xPrevisPatch.esp"),
+            ]
+        );
+        assert!(!files.contains_file(&data_dir.join("MyMod.esp")));
+        assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
+    }
+
+    /// An immediately visible opaque copy proceeds directly to Workflow Run preparation without
+    /// the MO2 delay or the existing-plugin compatibility question.
+    #[test]
+    fn immediately_visible_seed_copy_preserves_bytes_and_prepares_a_run_without_waiting() {
+        let directory = tempfile::tempdir().unwrap();
+        let fallout4_dir = directory.path().join("Fallout4");
+        let data_dir = fallout4_dir.join("Data");
+        std::fs::create_dir_all(&fallout4_dir).unwrap();
+        std::fs::write(fallout4_dir.join("CreationKit.exe"), b"").unwrap();
+        std::fs::write(
+            fallout4_dir.join("fallout4_test.ini"),
+            "[CreationKit]\nBSHandleRefObjectPatch=true\n[CreationKit_Log]\nOutputFile=CK.log\n",
+        )
+        .unwrap();
+
+        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(fallout4_dir.clone()),
+            creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
+                .with_seed_copy_confirmations(vec![true]),
+        );
+        let files = Rc::new(RecordingFileSpace::default());
+        let wait = Rc::new(RecordingWait::new());
+        let seed_path = data_dir.join("xPrevisPatch.esp");
+        let plugin_path = data_dir.join("MyMod.esp");
+        let seed_bytes = vec![0x00, 0xFF, 0x80, b'E', b'S', b'P'];
+        files.add_file_with_bytes(&seed_path, seed_bytes.clone());
+        let intake = WorkflowRequestIntake::new_with_wait(
+            Rc::clone(&prompts),
+            Rc::clone(&files),
+            Rc::clone(&wait),
+        );
+
+        let outcome = intake.resolve(&cli, directory.path(), &probe).unwrap();
+        let WorkflowIntakeOutcome::Ready(run) = outcome else {
+            panic!("a visible copied plugin should prepare a Workflow Run");
+        };
+
+        assert_eq!(run.config().plugin.file_name, "MyMod.esp");
+        assert_eq!(files.bytes(&plugin_path), Some(seed_bytes));
+        assert_eq!(
+            files.copied_paths(),
+            vec![(seed_path.clone(), plugin_path.clone())]
+        );
+        assert_eq!(
+            files.observed_paths(),
+            vec![
+                data_dir.join("MyMod - Main.ba2"),
+                plugin_path.clone(),
+                seed_path,
+                plugin_path,
+            ]
+        );
+        assert_eq!(
+            prompts.questions(),
+            vec![
+                RecordedQuestion::PluginName(BuildMode::Clean),
+                RecordedQuestion::SeedCopy("MyMod.esp".into()),
+            ]
+        );
+        assert!(wait.delays().is_empty());
+        assert!(files.contains_file(run.log_path()));
+    }
+
+    /// Toolchain preparation errors after successful readiness propagate through Intake and do
+    /// not leave a session log behind.
+    #[test]
+    fn copied_plugin_toolchain_failure_remains_visible_without_creating_a_log() {
+        let directory = tempfile::tempdir().unwrap();
+        let fallout4_dir = directory.path().join("Fallout4");
+        let data_dir = fallout4_dir.join("Data");
+        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(fallout4_dir),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
+                .with_seed_copy_confirmations(vec![true]),
+        );
+        let files = Rc::new(RecordingFileSpace::default());
+        let wait = Rc::new(RecordingWait::new());
+        let seed_path = data_dir.join("xPrevisPatch.esp");
+        let plugin_path = data_dir.join("MyMod.esp");
+        files.add_file_with_bytes(&seed_path, [0x00, 0xFF, 0x80]);
+        let intake = WorkflowRequestIntake::new_with_wait(
+            Rc::clone(&prompts),
+            Rc::clone(&files),
+            Rc::clone(&wait),
+        );
+
+        let err = intake.resolve(&cli, directory.path(), &probe).unwrap_err();
+
+        assert!(matches!(err, Error::Other(message) if message
+                == format!("CreationKit.exe not found in {}", data_dir.parent().unwrap().display())));
+        assert_eq!(files.bytes(&plugin_path), Some(vec![0x00, 0xFF, 0x80]));
+        assert!(wait.delays().is_empty());
+        assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
+    }
+
+    /// Session-log initialization errors remain Workflow Run preparation failures after the
+    /// copied plugin is ready; Intake does not turn them into a ready or exited outcome.
+    #[test]
+    fn copied_plugin_log_write_failure_remains_visible_through_resolution() {
+        let directory = tempfile::tempdir().unwrap();
+        let fallout4_dir = directory.path().join("Fallout4");
+        let data_dir = fallout4_dir.join("Data");
+        std::fs::create_dir_all(&fallout4_dir).unwrap();
+        std::fs::write(fallout4_dir.join("CreationKit.exe"), b"").unwrap();
+        std::fs::write(
+            fallout4_dir.join("fallout4_test.ini"),
+            "[CreationKit]\nBSHandleRefObjectPatch=true\n[CreationKit_Log]\nOutputFile=CK.log\n",
+        )
+        .unwrap();
+
+        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(fallout4_dir.clone()),
+            creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
+                .with_seed_copy_confirmations(vec![true]),
+        );
+        let files = Rc::new(RecordingFileSpace::default());
+        let wait = Rc::new(RecordingWait::new());
+        let seed_path = data_dir.join("xPrevisPatch.esp");
+        let plugin_path = data_dir.join("MyMod.esp");
+        files.add_file_with_bytes(&seed_path, [0x00, 0xFF, 0x80]);
+        files.fail_writes();
+        let intake = WorkflowRequestIntake::new_with_wait(
+            Rc::clone(&prompts),
+            Rc::clone(&files),
+            Rc::clone(&wait),
+        );
+
+        let err = intake.resolve(&cli, directory.path(), &probe).unwrap_err();
+
+        assert!(matches!(err, Error::Io(error) if error.to_string()
+                == "recorded session log write failure"));
+        assert_eq!(files.bytes(&plugin_path), Some(vec![0x00, 0xFF, 0x80]));
+        assert!(wait.delays().is_empty());
+        assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
+    }
+
+    /// A copied plugin remains pending until the Recording Wait effect exposes it, pinning the
+    /// required MO2 copy-observe-wait-reveal-observe ordering without a real sleep.
+    #[test]
+    fn delayed_seed_copy_waits_once_then_observes_the_revealed_plugin() {
+        let directory = tempfile::tempdir().unwrap();
+        let fallout4_dir = directory.path().join("Fallout4");
+        let data_dir = fallout4_dir.join("Data");
+        std::fs::create_dir_all(&fallout4_dir).unwrap();
+        std::fs::write(fallout4_dir.join("CreationKit.exe"), b"").unwrap();
+        std::fs::write(
+            fallout4_dir.join("fallout4_test.ini"),
+            "[CreationKit]\nBSHandleRefObjectPatch=true\n[CreationKit_Log]\nOutputFile=CK.log\n",
+        )
+        .unwrap();
+
+        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(fallout4_dir.clone()),
+            creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
+                .with_seed_copy_confirmations(vec![true]),
+        );
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let files = Rc::new(RecordingFileSpace::with_copy_behavior(
+            CopyBehavior::Pending,
+            Rc::clone(&events),
+        ));
+        let seed_path = data_dir.join("xPrevisPatch.esp");
+        let plugin_path = data_dir.join("MyMod.esp");
+        let seed_bytes = vec![0x00, 0xFF, 0x80, b'E', b'S', b'P'];
+        files.add_file_with_bytes(&seed_path, seed_bytes.clone());
+        let effect_events = Rc::clone(&events);
+        let effect_files = Rc::clone(&files);
+        let wait = Rc::new(RecordingWait::with_effect(move |seconds| {
+            effect_events
+                .borrow_mut()
+                .push(ReadinessEvent::Waited(seconds));
+            effect_files.reveal_pending_copy();
+        }));
+        let intake = WorkflowRequestIntake::new_with_wait(
+            Rc::clone(&prompts),
+            Rc::clone(&files),
+            Rc::clone(&wait),
+        );
+
+        let outcome = intake.resolve(&cli, directory.path(), &probe).unwrap();
+        let WorkflowIntakeOutcome::Ready(run) = outcome else {
+            panic!("a plugin revealed by the MO2 wait should prepare a Workflow Run");
+        };
+
+        assert_eq!(wait.delays(), vec![MO2_DELAY_AFTER_SEED_COPY_SECS]);
+        assert_eq!(files.bytes(&plugin_path), Some(seed_bytes));
+        assert_eq!(
+            *events.borrow(),
+            vec![
+                ReadinessEvent::Observed(data_dir.join("MyMod - Main.ba2")),
+                ReadinessEvent::Observed(plugin_path.clone()),
+                ReadinessEvent::Observed(seed_path.clone()),
+                ReadinessEvent::Copied(seed_path, plugin_path.clone()),
+                ReadinessEvent::Observed(plugin_path.clone()),
+                ReadinessEvent::Waited(MO2_DELAY_AFTER_SEED_COPY_SECS),
+                ReadinessEvent::Revealed(plugin_path.clone()),
+                ReadinessEvent::Observed(plugin_path),
+            ]
+        );
+        assert_eq!(
+            prompts.questions(),
+            vec![
+                RecordedQuestion::PluginName(BuildMode::Clean),
+                RecordedQuestion::SeedCopy("MyMod.esp".into()),
+            ]
+        );
+        assert!(files.contains_file(run.log_path()));
+    }
+
+    /// A copied target that remains invisible after the one mandated wait fails readiness and
+    /// never reaches Workflow Run preparation.
+    #[test]
+    fn invisible_seed_copy_fails_after_one_wait_and_one_post_wait_observation() {
+        let directory = tempfile::tempdir().unwrap();
+        let fallout4_dir = directory.path().join("Fallout4");
+        let data_dir = fallout4_dir.join("Data");
+        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(fallout4_dir),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
+                .with_seed_copy_confirmations(vec![true]),
+        );
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let files = Rc::new(RecordingFileSpace::with_copy_behavior(
+            CopyBehavior::Invisible,
+            Rc::clone(&events),
+        ));
+        let seed_path = data_dir.join("xPrevisPatch.esp");
+        let plugin_path = data_dir.join("MyMod.esp");
+        files.add_file_with_bytes(&seed_path, [0x00, 0xFF, 0x80]);
+        let effect_events = Rc::clone(&events);
+        let wait = Rc::new(RecordingWait::with_effect(move |seconds| {
+            effect_events
+                .borrow_mut()
+                .push(ReadinessEvent::Waited(seconds));
+        }));
+        let intake = WorkflowRequestIntake::new_with_wait(
+            Rc::clone(&prompts),
+            Rc::clone(&files),
+            Rc::clone(&wait),
+        );
+
+        let err = intake.resolve(&cli, directory.path(), &probe).unwrap_err();
+
+        assert!(matches!(err, Error::SeedCopyFailed));
+        assert_eq!(wait.delays(), vec![MO2_DELAY_AFTER_SEED_COPY_SECS]);
+        assert_eq!(
+            *events.borrow(),
+            vec![
+                ReadinessEvent::Observed(data_dir.join("MyMod - Main.ba2")),
+                ReadinessEvent::Observed(plugin_path.clone()),
+                ReadinessEvent::Observed(seed_path.clone()),
+                ReadinessEvent::Copied(seed_path, plugin_path.clone()),
+                ReadinessEvent::Observed(plugin_path.clone()),
+                ReadinessEvent::Waited(MO2_DELAY_AFTER_SEED_COPY_SECS),
+                ReadinessEvent::Observed(plugin_path),
+            ]
+        );
+        assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
+    }
+
+    /// File Space copy failures remain the original I/O error and short-circuit visibility and
+    /// wait behavior.
+    #[test]
+    fn seed_copy_failure_propagates_without_observing_or_waiting_again() {
+        let directory = tempfile::tempdir().unwrap();
+        let fallout4_dir = directory.path().join("Fallout4");
+        let data_dir = fallout4_dir.join("Data");
+        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(fallout4_dir),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
+                .with_seed_copy_confirmations(vec![true]),
+        );
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let files = Rc::new(RecordingFileSpace::with_copy_behavior(
+            CopyBehavior::Fail,
+            Rc::clone(&events),
+        ));
+        let seed_path = data_dir.join("xPrevisPatch.esp");
+        let plugin_path = data_dir.join("MyMod.esp");
+        files.add_file_with_bytes(&seed_path, [0x00, 0xFF, 0x80]);
+        let wait = Rc::new(RecordingWait::new());
+        let intake = WorkflowRequestIntake::new_with_wait(
+            Rc::clone(&prompts),
+            Rc::clone(&files),
+            Rc::clone(&wait),
+        );
+
+        let err = intake.resolve(&cli, directory.path(), &probe).unwrap_err();
+
+        assert!(
+            matches!(err, Error::Io(error) if error.to_string() == "recorded seed copy failure")
+        );
+        assert!(wait.delays().is_empty());
+        assert_eq!(
+            *events.borrow(),
+            vec![
+                ReadinessEvent::Observed(data_dir.join("MyMod - Main.ba2")),
+                ReadinessEvent::Observed(plugin_path.clone()),
+                ReadinessEvent::Observed(seed_path.clone()),
+                ReadinessEvent::Copied(seed_path, plugin_path),
+            ]
+        );
+        assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
+    }
+
     #[test]
     fn interactive_resume_reprompt_clears_initial_resume_choice() {
         let cli = Cli::try_parse_from(["generateprevisibines", "--resume-from", "6", "--filtered"])
             .unwrap();
+        let files = Rc::new(InMemoryFileSpace::new());
+        files.add_file(PathBuf::from(r"C:\Fallout4\Data\FirstMod.esp"));
+        files.add_file(PathBuf::from(r"C:\Fallout4\Data\SecondMod.esp"));
         let intake = WorkflowRequestIntake::new(
             Rc::new(
                 RecordingPrompts::default()
@@ -577,7 +1354,7 @@ mod tests {
                     ])
                     .with_resume_steps(vec![None]),
             ),
-            Rc::new(InMemoryFileSpace::new()),
+            files,
         );
         let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
             fallout4_dir: Some(PathBuf::from(r"C:\Fallout4")),
@@ -595,6 +1372,8 @@ mod tests {
     #[test]
     fn interactive_resume_choice_updates_request() {
         let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
+        let files = Rc::new(InMemoryFileSpace::new());
+        files.add_file(PathBuf::from(r"C:\Fallout4\Data\MyMod.esp"));
         let intake = WorkflowRequestIntake::new(
             Rc::new(
                 RecordingPrompts::default()
@@ -602,7 +1381,7 @@ mod tests {
                     .with_ready_actions(vec![ExistingPluginAction::ChooseResumeStep])
                     .with_resume_steps(vec![Some(WorkflowStep::GeneratePrevis)]),
             ),
-            Rc::new(InMemoryFileSpace::new()),
+            files,
         );
         let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
             fallout4_dir: Some(PathBuf::from(r"C:\Fallout4")),

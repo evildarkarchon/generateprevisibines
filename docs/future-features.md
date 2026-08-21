@@ -20,7 +20,7 @@ Line references are against the **V2.98** batch (`GeneratePrevisibines.bat`, git
 |------|-----------------|-------------|
 | Tool discovery | Lines 24–40 (xEdit), 46–50 (Fallout 4 via registry), 67–88 (CK, Archive2, version display), 513 + 138 (BSArch) | `discovery` — registry + cwd FO4Edit, Fallout 4 path, CK, Archive2, BSArch |
 | CLI / parameters | `:CheckParam`, header comments | `cli` — `-clean`/`-filtered`/`-xbox`, `-bsarch`, `-FO4:dir`, plugin arg |
-| Plugin rules | `:CheckPluginName`, `:SpaceInName` | `validation` — reserved names, clean-mode spaces, seed copy prompts |
+| Plugin rules | `:CheckPluginName`, `:SpaceInName`, `:TryCopySeed` | `validation` — reserved names and clean-mode spaces; `intake` — seed readiness and copy ordering |
 | CKPE validation | `:TestCKPEConfig`, `:CheckCKPEConfig` | `validation` — TOML/INI/legacy ini, log path, handle limit warning |
 | xEdit script versions | `:CheckScripts` | `validation` — script presence + version markers |
 | 8-step workflow | `:Precomb` … `:Fin`, `:GetStep` | `workflow` — correct step list per build mode, resume from step N |
@@ -37,7 +37,7 @@ Line references are against the **V2.98** batch (`GeneratePrevisibines.bat`, git
 
 Ordered slices recommended for parity work:
 
-1. ~~**Interactive plugin flow**~~ — implemented in `interactive` (`dialoguer` prompts, seed copy + 5s MO2 delay, Y/N/C, `:GetStep` resume).
+1. ~~**Interactive plugin flow**~~ — seed readiness and its conditional 5s MO2 delay are owned by `intake`; `interactive` retains the terminal prompts and existing-plugin/resume compatibility flow.
 2. ~~**Step 1 — Generate precombines**~~ — implemented through the Workflow Operation seam with `tools/creation_kit` and `checks` (preamble/post, CK run + 10s delay). Steps 2–8 stop the runnable sequence at the first missing registered operation.
 3. **Step 2 — Merge CombinedObjects** — FO4Edit `Batch_FO4MergeCombinedObjectsAndCheck.pas`, warning on `Error:` in unattended log.
    The flag set, the `%TEMP%\Plugins.txt` layout, the `-D:<dir>\Data` rule, the Module Selection
@@ -148,7 +148,8 @@ src/
   lib.rs
   cli.rs            # native legacy normalization + private Clap grammar
   config.rs         # BuildMode, ArchiveTool, WorkflowStep, ProjectConfig
-  interactive.rs    # plugin prompts, seed copy, resume menu
+  intake.rs         # Workflow Request Intake, seed readiness + copy episode
+  interactive.rs    # terminal prompts + existing-plugin/resume compatibility
   checks.rs         # Step 1 preamble/post path checks
   discovery.rs      # tool paths (partial)
   validation.rs     # plugin + CKPE + xEdit scripts
