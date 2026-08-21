@@ -25,10 +25,7 @@ pub(crate) mod logging;
 pub use cli::Cli;
 pub use config::{ArchiveTool, BuildMode, ProjectConfig, WorkflowStep};
 pub use error::{Error, Result};
-pub use intake::{
-    InteractiveWorkflowIntakePrompts, WorkflowIntakeOutcome, WorkflowIntakePrompts,
-    WorkflowRequestIntake,
-};
+pub use intake::{InteractiveWorkflowIntakePrompts, WorkflowIntakeOutcome, WorkflowRequestIntake};
 pub use run::{RunDiagnostic, WorkflowRequest, WorkflowRun};
 pub use toolchain::{
     PluginReadiness, ToolchainDiagnostic, ToolchainRequirements, WorkflowToolchain,

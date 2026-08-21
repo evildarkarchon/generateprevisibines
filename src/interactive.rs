@@ -162,17 +162,32 @@ pub fn prompt_seed_copy(data_dir: &Path, plugin_path: &Path) -> Result<bool> {
 
 /// Y/N/C when plugin file already exists.
 pub fn prompt_existing_plugin_action(plugin_file: &str) -> Result<ExistingPluginAction> {
-    loop {
-        let raw: String = Input::new()
-            .with_prompt(format!(
-                "Plugin {plugin_file} already exists. Continue (Y), Exit (N), or Choose resume step (C)?"
-            ))
-            .interact_text()?;
+    read_existing_plugin_action(
+        || {
+            Ok(Input::new()
+                .with_prompt(format!(
+                    "Plugin {plugin_file} already exists. Continue (Y), Exit (N), or Choose resume step (C)?"
+                ))
+                .interact_text()?)
+        },
+        || eprintln!("Enter Y, N, or C"),
+    )
+}
 
+/// Read existing-plugin answers until the terminal input converts to a typed Intake action.
+///
+/// The injected reader and invalid-answer reporter keep repetition testable without a real
+/// terminal. Reader failures propagate unchanged to the caller.
+fn read_existing_plugin_action(
+    mut read_answer: impl FnMut() -> Result<String>,
+    mut report_invalid: impl FnMut(),
+) -> Result<ExistingPluginAction> {
+    loop {
+        let raw = read_answer()?;
         if let Some(action) = parse_existing_plugin_choice(&raw) {
             return Ok(action);
         }
-        eprintln!("Enter Y, N, or C");
+        report_invalid();
     }
 }
 
@@ -183,13 +198,29 @@ pub fn prompt_resume_step(build_mode: BuildMode) -> Result<Option<WorkflowStep>>
     workflow::print_resume_menu(build_mode);
     println!("[0] Re-enter plugin name");
 
+    read_resume_step(
+        build_mode,
+        || Ok(Input::new().with_prompt("Step number").interact_text()?),
+        || eprintln!("Invalid step for this build mode."),
+    )
+}
+
+/// Read resume answers until the terminal input converts to an allowed Workflow Step or re-entry.
+///
+/// The injected reader and invalid-answer reporter keep repetition testable without a real
+/// terminal. Reader failures propagate unchanged to the caller.
+fn read_resume_step(
+    build_mode: BuildMode,
+    mut read_answer: impl FnMut() -> Result<String>,
+    mut report_invalid: impl FnMut(),
+) -> Result<Option<WorkflowStep>> {
     loop {
-        let raw: String = Input::new().with_prompt("Step number").interact_text()?;
+        let raw = read_answer()?;
 
         match parse_resume_step_choice(&raw, build_mode) {
             Some(ResumeStepChoice::RePromptPlugin) => return Ok(None),
             Some(ResumeStepChoice::Step(step)) => return Ok(Some(step)),
-            None => eprintln!("Invalid step for this build mode."),
+            None => report_invalid(),
         }
     }
 }
@@ -250,6 +281,8 @@ pub fn ensure_plugin_ready(readiness: &PluginReadiness) -> Result<ExistingPlugin
 mod tests {
     use super::*;
     use crate::config::BuildMode;
+    use std::cell::Cell;
+    use std::collections::VecDeque;
     use std::fs;
     use tempfile::tempdir;
 
@@ -289,6 +322,39 @@ mod tests {
     #[test]
     fn resume_step_four_filtered_invalid() {
         assert!(parse_resume_step_choice("4", BuildMode::Filtered).is_none());
+    }
+
+    /// Existing-plugin input remains inside the terminal adapter until a typed action is parsed.
+    #[test]
+    fn existing_plugin_prompt_repeats_invalid_input_inside_the_terminal_adapter() {
+        let mut answers = VecDeque::from(["x".to_owned(), "?".to_owned(), "c".to_owned()]);
+        let invalid_answers = Cell::new(0);
+
+        let action = read_existing_plugin_action(
+            || Ok(answers.pop_front().unwrap()),
+            || invalid_answers.set(invalid_answers.get() + 1),
+        )
+        .unwrap();
+
+        assert_eq!(action, ExistingPluginAction::ChooseResumeStep);
+        assert_eq!(invalid_answers.get(), 2);
+    }
+
+    /// Resume input remains inside the terminal adapter until the build mode permits the step.
+    #[test]
+    fn resume_prompt_repeats_build_mode_incompatible_input_inside_the_terminal_adapter() {
+        let mut answers = VecDeque::from(["4".to_owned(), "3".to_owned()]);
+        let invalid_answers = Cell::new(0);
+
+        let step = read_resume_step(
+            BuildMode::Filtered,
+            || Ok(answers.pop_front().unwrap()),
+            || invalid_answers.set(invalid_answers.get() + 1),
+        )
+        .unwrap();
+
+        assert_eq!(step, Some(WorkflowStep::CreateBa2FromPrecombines));
+        assert_eq!(invalid_answers.get(), 1);
     }
 
     #[test]

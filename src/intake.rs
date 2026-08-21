@@ -24,8 +24,8 @@ pub enum WorkflowIntakeOutcome {
     Exited,
 }
 
-/// Prompt adapter used by Workflow Request Intake.
-pub trait WorkflowIntakePrompts {
+/// Crate-private typed prompt seam used by Workflow Request Intake.
+pub(crate) trait WorkflowIntakePrompts {
     /// Prompt for the plugin identity, or return `None` when the user exits.
     fn prompt_plugin_name(&self, build_mode: BuildMode) -> Result<Option<PluginIdentity>>;
 
@@ -41,8 +41,11 @@ pub trait WorkflowIntakePrompts {
     /// Report that the accepted seed copy became visible and is ready to use.
     fn report_seed_copy_success(&self);
 
-    /// Ensure the plugin is ready before full Workflow Run preparation.
-    fn ensure_plugin_ready(&self, readiness: &PluginReadiness) -> Result<ExistingPluginAction>;
+    /// Ask what Intake should do with a plugin it has already established exists.
+    ///
+    /// Returns the typed action selected by the user. Prompt adapter failures propagate through
+    /// Workflow Request Intake resolution.
+    fn prompt_existing_plugin_action(&self, plugin_file: &str) -> Result<ExistingPluginAction>;
 
     /// Prompt for the Workflow Step to resume from, or return `None` to re-prompt plugin intake.
     fn prompt_resume_step(&self, build_mode: BuildMode) -> Result<Option<WorkflowStep>>;
@@ -69,8 +72,8 @@ impl WorkflowIntakePrompts for InteractiveWorkflowIntakePrompts {
         interactive::report_seed_copy_success();
     }
 
-    fn ensure_plugin_ready(&self, readiness: &PluginReadiness) -> Result<ExistingPluginAction> {
-        interactive::ensure_plugin_ready(readiness)
+    fn prompt_existing_plugin_action(&self, plugin_file: &str) -> Result<ExistingPluginAction> {
+        interactive::prompt_existing_plugin_action(plugin_file)
     }
 
     fn prompt_resume_step(&self, build_mode: BuildMode) -> Result<Option<WorkflowStep>> {
@@ -270,15 +273,20 @@ impl WorkflowRequestIntake {
                 return Ok(Some(request));
             }
 
-            // Existing-plugin decisions remain on the compatibility surface until issue #21;
-            // construct its carrier only after Intake has established the initial file state.
-            let readiness = probe.plugin_readiness(&request.plugin, request.non_interactive);
-            match self.ports.prompts.ensure_plugin_ready(&readiness)? {
+            // Intake establishes readiness before asking a domain-shaped question, so prompt
+            // adapters cannot inspect files or replace readiness policy with a canned result.
+            match self
+                .ports
+                .prompts
+                .prompt_existing_plugin_action(&request.plugin.file_name)?
+            {
                 ExistingPluginAction::Exit => return Ok(None),
                 ExistingPluginAction::ChooseResumeStep => {
                     if let Some(step) = self.ports.prompts.prompt_resume_step(build_mode)? {
                         request.resume_from = Some(step);
                     } else {
+                        // A newly selected plugin must not inherit resume intent chosen for the
+                        // abandoned candidate; restarting Intake resets that decision to default.
                         resume_from = None;
                         continue;
                     }
@@ -431,13 +439,11 @@ mod tests {
 
         fn report_seed_copy_success(&self) {}
 
-        fn ensure_plugin_ready(&self, readiness: &PluginReadiness) -> Result<ExistingPluginAction> {
+        fn prompt_existing_plugin_action(&self, plugin_file: &str) -> Result<ExistingPluginAction> {
             self.call_count.set(self.call_count.get() + 1);
             self.questions
                 .borrow_mut()
-                .push(RecordedQuestion::ExistingPlugin(
-                    readiness.plugin_file_name().to_owned(),
-                ));
+                .push(RecordedQuestion::ExistingPlugin(plugin_file.to_owned()));
             Ok(self.ready_actions.borrow_mut().remove(0))
         }
 
@@ -602,6 +608,19 @@ mod tests {
         fn temp_dir(&self) -> PathBuf {
             self.inner.temp_dir()
         }
+    }
+
+    /// Create the minimal real Creation Kit installation needed for ready-run preparation tests.
+    fn create_ck_ready_fallout4(root: &Path) -> PathBuf {
+        let fallout4_dir = root.join("Fallout4");
+        std::fs::create_dir_all(&fallout4_dir).unwrap();
+        std::fs::write(fallout4_dir.join("CreationKit.exe"), b"").unwrap();
+        std::fs::write(
+            fallout4_dir.join("fallout4_test.ini"),
+            "[CreationKit]\nBSHandleRefObjectPatch=true\n[CreationKit_Log]\nOutputFile=CK.log\n",
+        )
+        .unwrap();
+        fallout4_dir
     }
 
     #[test]
@@ -845,9 +864,89 @@ mod tests {
         );
     }
 
-    /// Leaving the interactive plugin prompt produces the named exit outcome without a log.
+    /// Continuing with an existing prompted plugin preserves the caller's current resume intent
+    /// and prepares the Workflow Run through the Intake resolution seam.
     #[test]
-    fn interactive_plugin_exit_remains_named_and_does_not_prepare_a_run() {
+    fn existing_interactive_plugin_continues_with_supplied_resume_intent() {
+        let directory = tempfile::tempdir().unwrap();
+        let fallout4_dir = create_ck_ready_fallout4(directory.path());
+        let data_dir = fallout4_dir.join("Data");
+
+        let cli = Cli::try_parse_from(["generateprevisibines", "--resume-from", "1"]).unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(fallout4_dir.clone()),
+            creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
+                .with_ready_actions(vec![ExistingPluginAction::Continue]),
+        );
+        let files = Rc::new(RecordingFileSpace::default());
+        files.add_file(data_dir.join("MyMod.esp"));
+        let intake = WorkflowRequestIntake::new(Rc::clone(&prompts), Rc::clone(&files));
+
+        let outcome = intake.resolve(&cli, directory.path(), &probe).unwrap();
+        let WorkflowIntakeOutcome::Ready(run) = outcome else {
+            panic!("continuing with an existing plugin should prepare a Workflow Run");
+        };
+
+        assert_eq!(
+            run.config().resume_from,
+            Some(WorkflowStep::GeneratePrecombines)
+        );
+        assert_eq!(
+            prompts.questions(),
+            vec![
+                RecordedQuestion::PluginName(BuildMode::Clean),
+                RecordedQuestion::ExistingPlugin("MyMod.esp".into()),
+            ]
+        );
+        assert!(files.contains_file(run.log_path()));
+    }
+
+    /// Exiting from the existing-plugin question remains a deliberate Intake outcome and never
+    /// reaches Workflow Run preparation or session-log creation.
+    #[test]
+    fn exiting_existing_interactive_plugin_returns_named_exit_without_preparing_run() {
+        let directory = tempfile::tempdir().unwrap();
+        let fallout4_dir = directory.path().join("Fallout4");
+        let data_dir = fallout4_dir.join("Data");
+        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+            fallout4_dir: Some(fallout4_dir),
+            ..crate::discovery::ToolPaths::default()
+        })
+        .unwrap();
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
+                .with_ready_actions(vec![ExistingPluginAction::Exit]),
+        );
+        let files = Rc::new(RecordingFileSpace::default());
+        files.add_file(data_dir.join("MyMod.esp"));
+        files.fail_writes();
+        let intake = WorkflowRequestIntake::new(Rc::clone(&prompts), Rc::clone(&files));
+
+        let outcome = intake.resolve(&cli, directory.path(), &probe).unwrap();
+
+        assert!(matches!(outcome, WorkflowIntakeOutcome::Exited));
+        assert_eq!(
+            prompts.questions(),
+            vec![
+                RecordedQuestion::PluginName(BuildMode::Clean),
+                RecordedQuestion::ExistingPlugin("MyMod.esp".into()),
+            ]
+        );
+        assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
+    }
+
+    /// An empty plugin-name answer produces the named exit outcome without attempting Workflow
+    /// Run preparation or creating a session log.
+    #[test]
+    fn empty_plugin_name_answer_returns_named_exit_without_preparing_run() {
         let directory = tempfile::tempdir().unwrap();
         let fallout4_dir = directory.path().join("Fallout4");
         let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
@@ -858,12 +957,16 @@ mod tests {
         .unwrap();
         let prompts = Rc::new(RecordingPrompts::default().with_plugin_names(vec![None]));
         let files = Rc::new(RecordingFileSpace::default());
+        files.fail_writes();
         let intake = WorkflowRequestIntake::new(Rc::clone(&prompts), Rc::clone(&files));
 
         let outcome = intake.resolve(&cli, directory.path(), &probe).unwrap();
 
         assert!(matches!(outcome, WorkflowIntakeOutcome::Exited));
-        assert_eq!(prompts.call_count(), 1);
+        assert_eq!(
+            prompts.questions(),
+            vec![RecordedQuestion::PluginName(BuildMode::Clean)]
+        );
         assert!(files.observed_paths().is_empty());
         assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
     }
@@ -1334,65 +1437,106 @@ mod tests {
         assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
     }
 
+    /// Re-entering the plugin name clears inherited resume intent before Intake resolves and
+    /// prepares the next candidate.
     #[test]
-    fn interactive_resume_reprompt_clears_initial_resume_choice() {
+    fn reentering_plugin_name_clears_inherited_resume_before_next_candidate() {
+        let directory = tempfile::tempdir().unwrap();
+        let fallout4_dir = create_ck_ready_fallout4(directory.path());
         let cli = Cli::try_parse_from(["generateprevisibines", "--resume-from", "6", "--filtered"])
             .unwrap();
         let files = Rc::new(InMemoryFileSpace::new());
-        files.add_file(PathBuf::from(r"C:\Fallout4\Data\FirstMod.esp"));
-        files.add_file(PathBuf::from(r"C:\Fallout4\Data\SecondMod.esp"));
-        let intake = WorkflowRequestIntake::new(
-            Rc::new(
-                RecordingPrompts::default()
-                    .with_plugin_names(vec![
-                        Some(PluginIdentity::parse("FirstMod")),
-                        Some(PluginIdentity::parse("SecondMod")),
-                    ])
-                    .with_ready_actions(vec![
-                        ExistingPluginAction::ChooseResumeStep,
-                        ExistingPluginAction::Continue,
-                    ])
-                    .with_resume_steps(vec![None]),
-            ),
-            files,
+        files.add_file(fallout4_dir.join("Data").join("FirstMod.esp"));
+        files.add_file(fallout4_dir.join("Data").join("SecondMod.esp"));
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![
+                    Some(PluginIdentity::parse("FirstMod")),
+                    Some(PluginIdentity::parse("SecondMod")),
+                ])
+                .with_ready_actions(vec![
+                    ExistingPluginAction::ChooseResumeStep,
+                    ExistingPluginAction::Continue,
+                ])
+                .with_resume_steps(vec![None]),
         );
+        let intake = WorkflowRequestIntake::new(Rc::clone(&prompts), Rc::clone(&files));
         let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
-            fallout4_dir: Some(PathBuf::from(r"C:\Fallout4")),
+            fallout4_dir: Some(fallout4_dir.clone()),
+            creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
             ..crate::discovery::ToolPaths::default()
         })
         .unwrap();
 
-        let request = intake.resolve_request(&cli, &probe).unwrap().unwrap();
+        let outcome = intake.resolve(&cli, directory.path(), &probe).unwrap();
+        let WorkflowIntakeOutcome::Ready(run) = outcome else {
+            panic!("the replacement plugin should prepare a Workflow Run");
+        };
 
-        assert_eq!(request.plugin.file_name, "SecondMod.esp");
-        assert_eq!(request.resume_from, None);
-        assert!(!request.non_interactive);
+        assert_eq!(run.config().plugin.file_name, "SecondMod.esp");
+        assert_eq!(run.config().resume_from, None);
+        assert_eq!(
+            run.planned_steps().first(),
+            Some(&WorkflowStep::GeneratePrecombines)
+        );
+        assert_eq!(
+            prompts.questions(),
+            vec![
+                RecordedQuestion::PluginName(BuildMode::Filtered),
+                RecordedQuestion::ExistingPlugin("FirstMod.esp".into()),
+                RecordedQuestion::ResumeStep(BuildMode::Filtered),
+                RecordedQuestion::PluginName(BuildMode::Filtered),
+                RecordedQuestion::ExistingPlugin("SecondMod.esp".into()),
+            ]
+        );
+        assert!(files.is_file(run.log_path()));
     }
 
+    /// Choosing a resume step updates the Workflow Request before Intake prepares the Workflow
+    /// Run, so both its configuration and Workflow Plan begin at the selected step.
     #[test]
-    fn interactive_resume_choice_updates_request() {
-        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
+    fn choosing_interactive_resume_step_updates_prepared_run() {
+        let directory = tempfile::tempdir().unwrap();
+        let fallout4_dir = create_ck_ready_fallout4(directory.path());
+        let cli = Cli::try_parse_from(["generateprevisibines", "--resume-from", "6"]).unwrap();
         let files = Rc::new(InMemoryFileSpace::new());
-        files.add_file(PathBuf::from(r"C:\Fallout4\Data\MyMod.esp"));
-        let intake = WorkflowRequestIntake::new(
-            Rc::new(
-                RecordingPrompts::default()
-                    .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
-                    .with_ready_actions(vec![ExistingPluginAction::ChooseResumeStep])
-                    .with_resume_steps(vec![Some(WorkflowStep::GeneratePrevis)]),
-            ),
-            files,
+        files.add_file(fallout4_dir.join("Data").join("MyMod.esp"));
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
+                .with_ready_actions(vec![ExistingPluginAction::ChooseResumeStep])
+                .with_resume_steps(vec![Some(WorkflowStep::GeneratePrecombines)]),
         );
+        let intake = WorkflowRequestIntake::new(Rc::clone(&prompts), Rc::clone(&files));
         let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
-            fallout4_dir: Some(PathBuf::from(r"C:\Fallout4")),
+            fallout4_dir: Some(fallout4_dir.clone()),
+            creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
             ..crate::discovery::ToolPaths::default()
         })
         .unwrap();
 
-        let request = intake.resolve_request(&cli, &probe).unwrap().unwrap();
+        let outcome = intake.resolve(&cli, directory.path(), &probe).unwrap();
+        let WorkflowIntakeOutcome::Ready(run) = outcome else {
+            panic!("choosing a supported resume step should prepare a Workflow Run");
+        };
 
-        assert_eq!(request.plugin.file_name, "MyMod.esp");
-        assert_eq!(request.resume_from, Some(WorkflowStep::GeneratePrevis));
-        assert!(!request.non_interactive);
+        assert_eq!(run.config().plugin.file_name, "MyMod.esp");
+        assert_eq!(
+            run.config().resume_from,
+            Some(WorkflowStep::GeneratePrecombines)
+        );
+        assert_eq!(
+            run.planned_steps().first(),
+            Some(&WorkflowStep::GeneratePrecombines)
+        );
+        assert_eq!(
+            prompts.questions(),
+            vec![
+                RecordedQuestion::PluginName(BuildMode::Clean),
+                RecordedQuestion::ExistingPlugin("MyMod.esp".into()),
+                RecordedQuestion::ResumeStep(BuildMode::Clean),
+            ]
+        );
+        assert!(files.is_file(run.log_path()));
     }
 }
