@@ -469,7 +469,10 @@ mod tests {
         let err = WorkflowToolchainProbe::from_tool_paths(ToolPaths::default()).unwrap_err();
         let message = err.to_string();
 
-        assert!(matches!(err, Error::Other(_)), "unexpected variant: {err:?}");
+        assert!(
+            matches!(err, Error::Other(_)),
+            "unexpected variant: {err:?}"
+        );
         assert!(
             message.contains("Fallout 4 directory"),
             "missing the condition actually tested: {message}"
