@@ -346,6 +346,10 @@ mod tests {
             self.inner.read_lossy(path)
         }
 
+        fn copy(&self, from: &Path, to: &Path) -> Result<()> {
+            self.inner.copy(from, to)
+        }
+
         fn rename(&self, from: &Path, to: &Path) -> Result<()> {
             self.inner.rename(from, to)
         }

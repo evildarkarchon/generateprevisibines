@@ -6,6 +6,7 @@ use dialoguer::{Confirm, Input};
 
 use crate::config::{BuildMode, PluginIdentity, WorkflowStep};
 use crate::error::{Error, Result};
+use crate::files::{FileSpace, SystemFileSpace};
 use crate::toolchain::PluginReadiness;
 use crate::tools::wait::{MO2_DELAY_AFTER_SEED_COPY_SECS, SystemWait, Wait};
 use crate::validation;
@@ -52,18 +53,21 @@ pub fn parse_resume_step_choice(input: &str, build_mode: BuildMode) -> Option<Re
         .then_some(ResumeStepChoice::Step(step))
 }
 
-/// Copy seed plugin `xPrevisPatch.esp` and wait for MO2 VFS if needed.
+/// Copy seed plugin `xPrevisPatch.esp` as opaque bytes and wait for MO2 VFS if needed.
+///
+/// # Errors
+///
+/// Returns [`Error::SeedPluginMissing`] when the seed is absent and [`Error::SeedCopyFailed`]
+/// when the copied plugin remains invisible after the conditional wait. Destination-parent
+/// creation and operating-system copy failures propagate as [`Error::Io`].
 pub fn copy_seed_plugin(data_dir: &Path, plugin_path: &Path) -> Result<()> {
     let seed = data_dir.join("xPrevisPatch.esp");
     if !seed.is_file() {
         return Err(Error::SeedPluginMissing);
     }
 
-    if let Some(parent) = plugin_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    std::fs::copy(&seed, plugin_path)?;
+    // ESP payloads are binary; the File Space copy keeps them out of tolerant text reads.
+    SystemFileSpace.copy(&seed, plugin_path)?;
 
     if !plugin_path.is_file() {
         // Left on a direct `SystemWait` deliberately: routing intake through the port is a
@@ -262,13 +266,22 @@ mod tests {
     }
 
     #[test]
-    fn seed_copy_writes_plugin() {
+    fn seed_copy_preserves_binary_bytes_creates_parents_and_replaces_the_plugin() {
         let dir = tempdir().unwrap();
         let data = dir.path();
-        fs::write(data.join("xPrevisPatch.esp"), b"seed").unwrap();
-        let dest = data.join("MyMod.esp");
+        let seed = data.join("xPrevisPatch.esp");
+        let dest = data.join("nested").join("MyMod.esp");
+        let plugin_bytes = [0x00, 0xFF, 0x80, b'E', b'S', b'P'];
+        fs::write(&seed, plugin_bytes).unwrap();
+
         copy_seed_plugin(data, &dest).unwrap();
-        assert!(dest.is_file());
+
+        assert_eq!(fs::read(&dest).unwrap(), plugin_bytes);
+
+        fs::write(&dest, b"stale").unwrap();
+        copy_seed_plugin(data, &dest).unwrap();
+
+        assert_eq!(fs::read(dest).unwrap(), plugin_bytes);
     }
 
     #[test]

@@ -7,12 +7,9 @@
 //! visible in one place.
 //!
 //! The interface long had no create or write operation, because no production rule creates
-//! an *artifact* — only the external tools do. That reasoning still holds for artifacts, and
-//! is why nothing here writes a mesh, a `.uvd` or a plugin. Write operations exist now for a
-//! different class of file the crate does author itself: the session log and the disabled-DLL
-//! placeholders. Those went straight to `std::fs`, which put the machine's real `%TEMP%` and
-//! the real Fallout 4 directory in the path of a unit test, and hid *when* the DLL guard
-//! renames relative to the tool spawn.
+//! an *artifact* — only the external tools do. That reasoning still holds for generated
+//! meshes and `.uvd` files. The crate does author session logs and disabled-DLL placeholders,
+//! while seed plugins require a separate opaque copy that never interprets their bytes.
 
 use std::path::{Path, PathBuf};
 
@@ -27,10 +24,10 @@ use crate::error::Result;
 /// Implementors must be `Debug` so the domain types that hold a `FileSpace` — the
 /// Precombine Workspace among them — can keep deriving `Debug`.
 // Every operation here has a production caller: `logging` routes the session log through
-// `write`, `append` and `temp_dir`, and `DllGuard` renames through `rename`, `exists`,
-// `is_file` and `remove_file`. The `dead_code` allow that once covered the unadopted half of
-// the trait is gone with them; if one of these goes quiet again, delete it rather than
-// re-adding the allow.
+// `write`, `append` and `temp_dir`, `DllGuard` renames through `rename`, `exists`, `is_file`
+// and `remove_file`, and seed-plugin setup uses `copy`. The `dead_code` allow that once
+// covered the unadopted half of the trait is gone with them; if one of these goes quiet again,
+// delete it rather than re-adding the allow.
 pub(crate) trait FileSpace: std::fmt::Debug {
     /// Whether `path` names an existing file (not a directory).
     fn is_file(&self, path: &Path) -> bool;
@@ -59,6 +56,12 @@ pub(crate) trait FileSpace: std::fmt::Debug {
     /// External tool logs are not guaranteed to be valid UTF-8. Returns
     /// [`crate::error::Error::Io`] when the file cannot be read at all.
     fn read_lossy(&self, path: &Path) -> Result<String>;
+
+    /// Copy `from` to `to` without interpreting the file's bytes.
+    ///
+    /// Creates missing destination parent directories and replaces an existing destination.
+    /// Returns [`crate::error::Error::Io`] when directory creation or copying fails.
+    fn copy(&self, from: &Path, to: &Path) -> Result<()>;
 
     /// Rename `from` to `to`, replacing any existing file at `to`.
     ///
@@ -125,6 +128,14 @@ impl FileSpace for SystemFileSpace {
         // The crate's lossy-read helper stays the single definition of tolerant reading;
         // it still serves the logging, toolchain and validation modules directly.
         crate::text::read_lossy(path)
+    }
+
+    fn copy(&self, from: &Path, to: &Path) -> Result<()> {
+        create_parent_directories(to)?;
+        // Plugin files are opaque binary artifacts; routing them through a text read would
+        // silently replace invalid UTF-8 and corrupt the destination.
+        std::fs::copy(from, to)?;
+        Ok(())
     }
 
     fn rename(&self, from: &Path, to: &Path) -> Result<()> {
@@ -218,7 +229,7 @@ mod in_memory {
     /// observations a Workflow Operation makes.
     #[derive(Debug, Default)]
     pub(crate) struct InMemoryFileSpace {
-        files: RefCell<BTreeMap<PathBuf, Option<String>>>,
+        files: RefCell<BTreeMap<PathBuf, Option<Vec<u8>>>>,
     }
 
     impl InMemoryFileSpace {
@@ -241,7 +252,24 @@ mod in_memory {
         ) {
             self.files
                 .borrow_mut()
+                .insert(path.into(), Some(contents.into().into_bytes()));
+        }
+
+        /// Record `path` as an existing file with an opaque byte payload.
+        pub(crate) fn add_file_with_bytes(
+            &self,
+            path: impl Into<PathBuf>,
+            contents: impl Into<Vec<u8>>,
+        ) {
+            self.files
+                .borrow_mut()
                 .insert(path.into(), Some(contents.into()));
+        }
+
+        /// Return a copy of `path`'s byte payload, or `None` when it is absent or contentless.
+        #[must_use]
+        pub(crate) fn contents(&self, path: &Path) -> Option<Vec<u8>> {
+            self.files.borrow().get(path).cloned().flatten()
         }
     }
 
@@ -289,7 +317,7 @@ mod in_memory {
 
         fn read_lossy(&self, path: &Path) -> Result<String> {
             match self.files.borrow().get(path) {
-                Some(Some(contents)) => Ok(contents.clone()),
+                Some(Some(contents)) => Ok(String::from_utf8_lossy(contents).into_owned()),
                 // A recorded file with no contents reads like an unreadable file, which is
                 // what lets a test say "the log exists but says nothing useful".
                 Some(None) | None => Err(std::io::Error::new(
@@ -298,6 +326,22 @@ mod in_memory {
                 )
                 .into()),
             }
+        }
+
+        fn copy(&self, from: &Path, to: &Path) -> Result<()> {
+            let mut files = self.files.borrow_mut();
+            let Some(contents) = files.get(from).cloned() else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("no such file in space: {}", from.display()),
+                )
+                .into());
+            };
+
+            // Clone the optional bytes as-is: `None` is a present contentless file, while a
+            // lossy text round-trip would both collapse that state and corrupt plugin bytes.
+            files.insert(to.to_path_buf(), contents);
+            Ok(())
         }
 
         fn rename(&self, from: &Path, to: &Path) -> Result<()> {
@@ -336,7 +380,7 @@ mod in_memory {
             // the contract is vacuously satisfied here and pinned on `SystemFileSpace`.
             self.files
                 .borrow_mut()
-                .insert(path.to_path_buf(), Some(contents.to_owned()));
+                .insert(path.to_path_buf(), Some(contents.as_bytes().to_vec()));
 
             Ok(())
         }
@@ -346,10 +390,10 @@ mod in_memory {
             let mut files = self.files.borrow_mut();
             let entry = files.entry(path.to_path_buf()).or_default();
             match entry {
-                Some(existing) => existing.push_str(contents),
+                Some(existing) => existing.extend_from_slice(contents.as_bytes()),
                 // A recorded-but-contentless file means "unreadable", so an appender has
                 // nothing to preserve and starts from empty rather than failing.
-                None => *entry = Some(contents.to_owned()),
+                None => *entry = Some(contents.as_bytes().to_vec()),
             }
 
             Ok(())
@@ -425,6 +469,61 @@ mod tests {
 
         assert!(!space.is_file(&from));
         assert_eq!(space.read_lossy(&to).unwrap(), "enb");
+    }
+
+    #[test]
+    fn in_memory_space_opaque_copy_preserves_binary_bytes_and_replaces_the_destination() {
+        let space = InMemoryFileSpace::new();
+        let seed = PathBuf::from("Data").join("xPrevisPatch.esp");
+        let plugin = PathBuf::from("Data").join("MyMod.esp");
+        let plugin_bytes = vec![0x00, 0xFF, 0x80, b'E', b'S', b'P'];
+        space.add_file_with_bytes(&seed, plugin_bytes.clone());
+        space.add_file_with_contents(&plugin, "stale");
+
+        space.copy(&seed, &plugin).unwrap();
+
+        assert_eq!(space.contents(&plugin), Some(plugin_bytes));
+        assert!(space.is_file(&seed));
+    }
+
+    #[test]
+    fn in_memory_space_opaque_copy_preserves_a_contentless_file() {
+        let space = InMemoryFileSpace::new();
+        let seed = PathBuf::from("Data").join("xPrevisPatch.esp");
+        let plugin = PathBuf::from("Data").join("MyMod.esp");
+        space.add_file(&seed);
+        space.add_file_with_contents(&plugin, "stale");
+
+        space.copy(&seed, &plugin).unwrap();
+
+        assert!(space.is_file(&plugin));
+        assert!(space.read_lossy(&plugin).is_err());
+    }
+
+    #[test]
+    fn in_memory_space_opaque_copy_of_a_missing_source_errors() {
+        let space = InMemoryFileSpace::new();
+
+        assert!(matches!(
+            space
+                .copy(Path::new("absent.esp"), Path::new("MyMod.esp"))
+                .unwrap_err(),
+            crate::error::Error::Io(_)
+        ));
+        assert!(!space.is_file(Path::new("MyMod.esp")));
+    }
+
+    #[test]
+    fn in_memory_space_decodes_bytes_only_for_a_lossy_text_read() {
+        let space = InMemoryFileSpace::new();
+        let log = PathBuf::from("Data").join("CK.log");
+        space.add_file_with_bytes(&log, [0xFF, b'D', b'E', b'F', b'A', b'U', b'L', b'T']);
+
+        assert_eq!(
+            space.contents(&log),
+            Some(vec![0xFF, b'D', b'E', b'F', b'A', b'U', b'L', b'T'])
+        );
+        assert_eq!(space.read_lossy(&log).unwrap(), "�DEFAULT");
     }
 
     #[test]
@@ -510,6 +609,41 @@ mod tests {
 
         assert!(!from.exists());
         assert_eq!(fs::read(&to).unwrap(), b"enb");
+    }
+
+    #[test]
+    fn system_space_opaque_copy_creates_parents_preserves_bytes_and_replaces_destination() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let seed = dir.path().join("xPrevisPatch.esp");
+        let plugin = dir.path().join("nested").join("MyMod.esp");
+        let first_bytes = [0x00, 0xFF, 0x80, b'E', b'S', b'P'];
+        fs::write(&seed, first_bytes).unwrap();
+
+        space.copy(&seed, &plugin).unwrap();
+
+        assert_eq!(fs::read(&plugin).unwrap(), first_bytes);
+
+        let replacement_bytes = [0xFE, b'N', b'E', b'W'];
+        fs::write(&seed, replacement_bytes).unwrap();
+        space.copy(&seed, &plugin).unwrap();
+
+        assert_eq!(fs::read(&plugin).unwrap(), replacement_bytes);
+    }
+
+    #[test]
+    fn system_space_opaque_copy_propagates_a_missing_source_error() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let plugin = dir.path().join("nested").join("MyMod.esp");
+
+        assert!(matches!(
+            space
+                .copy(&dir.path().join("absent.esp"), &plugin)
+                .unwrap_err(),
+            crate::error::Error::Io(_)
+        ));
+        assert!(!plugin.is_file());
     }
 
     #[test]
