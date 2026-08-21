@@ -40,7 +40,7 @@ pub(crate) use recording::RecordingWait;
 
 #[cfg(test)]
 mod recording {
-    use std::cell::RefCell;
+    use std::{cell::RefCell, fmt};
 
     use super::Wait;
 
@@ -48,9 +48,10 @@ mod recording {
     ///
     /// Interior mutability, like the other recording adapters: the caller under test holds
     /// the wait by shared reference across the whole episode.
-    #[derive(Debug, Default)]
+    #[derive(Default)]
     pub(crate) struct RecordingWait {
         delays: RefCell<Vec<u64>>,
+        effect: Option<Box<dyn Fn(u64)>>,
     }
 
     impl RecordingWait {
@@ -58,6 +59,18 @@ mod recording {
         #[must_use]
         pub(crate) fn new() -> Self {
             Self::default()
+        }
+
+        /// A wait that runs an owned test effect for every requested delay.
+        ///
+        /// The effect receives the requested duration in seconds, allowing a test to model
+        /// behavior tied to one specific wait while the adapter itself still never sleeps.
+        #[must_use]
+        pub(crate) fn with_effect(effect: impl Fn(u64) + 'static) -> Self {
+            Self {
+                delays: RefCell::new(Vec::new()),
+                effect: Some(Box::new(effect)),
+            }
         }
 
         /// Every delay requested so far, in seconds, in call order.
@@ -71,19 +84,41 @@ mod recording {
     }
 
     impl Wait for RecordingWait {
+        /// Record `seconds`, then run the configured test effect without sleeping.
         fn sync_delay(&self, seconds: u64) {
             self.delays.borrow_mut().push(seconds);
+
+            // Record first so the requested wait remains observable before its simulated VFS
+            // synchronization effect makes a pending artifact visible.
+            if let Some(effect) = &self.effect {
+                effect(seconds);
+            }
+        }
+    }
+
+    impl fmt::Debug for RecordingWait {
+        /// Format recorded delays and whether an unformattable effect is installed.
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            // Callbacks are not `Debug`; whether one is installed is the useful adapter state.
+            f.debug_struct("RecordingWait")
+                .field("delays", &self.delays)
+                .field("effect", &self.effect.is_some())
+                .finish()
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::path::PathBuf;
+    use std::rc::Rc;
     use std::time::{Duration, Instant};
 
     use super::{
         MO2_DELAY_AFTER_CK_SECS, MO2_DELAY_AFTER_SEED_COPY_SECS, RecordingWait, SystemWait, Wait,
     };
+    use crate::files::{FileSpace, InMemoryFileSpace};
 
     #[test]
     fn mandated_delays_keep_their_batch_durations() {
@@ -102,6 +137,32 @@ mod tests {
 
         assert_eq!(wait.delays(), vec![10, 5, 10]);
         // 25s of mandated delay, and the test is still instant.
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn recording_wait_runs_an_owned_effect_for_each_requested_delay() {
+        let files = Rc::new(InMemoryFileSpace::new());
+        let copied_plugin = PathBuf::from(r"C:\MO2\mods\Output\MyMod.esp");
+        let effect_delays = Rc::new(RefCell::new(Vec::new()));
+        let effect_files = Rc::clone(&files);
+        let effect_plugin = copied_plugin.clone();
+        let observed_effect_delays = Rc::clone(&effect_delays);
+        let wait = RecordingWait::with_effect(move |seconds| {
+            observed_effect_delays.borrow_mut().push(seconds);
+            if seconds == MO2_DELAY_AFTER_SEED_COPY_SECS {
+                effect_files.add_file(&effect_plugin);
+            }
+        });
+        let started = Instant::now();
+
+        wait.sync_delay(MO2_DELAY_AFTER_CK_SECS);
+        assert!(!files.is_file(&copied_plugin));
+        wait.sync_delay(MO2_DELAY_AFTER_SEED_COPY_SECS);
+
+        assert_eq!(wait.delays(), vec![10, 5]);
+        assert_eq!(*effect_delays.borrow(), vec![10, 5]);
+        assert!(files.is_file(&copied_plugin));
         assert!(started.elapsed() < Duration::from_secs(1));
     }
 
