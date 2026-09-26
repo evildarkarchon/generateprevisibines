@@ -623,6 +623,38 @@ mod tests {
         fallout4_dir
     }
 
+    /// Keep each case's CLI, probe, and installation together; a ready toolchain makes readiness
+    /// failures prove their precedence over Workflow Run preparation.
+    struct ReadyIntakeContext {
+        directory: tempfile::TempDir,
+        data_dir: PathBuf,
+        cli: Cli,
+        probe: WorkflowToolchainProbe,
+    }
+
+    impl ReadyIntakeContext {
+        /// Prepare a distinct Creation Kit installation and parse this case's command-line input.
+        fn new(args: &[&str]) -> Self {
+            let directory = tempfile::tempdir().unwrap();
+            let fallout4_dir = create_ck_ready_fallout4(directory.path());
+            let data_dir = fallout4_dir.join("Data");
+            let cli = Cli::try_parse_from(args.iter().copied()).unwrap();
+            let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
+                creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
+                fallout4_dir: Some(fallout4_dir),
+                ..crate::discovery::ToolPaths::default()
+            })
+            .unwrap();
+
+            Self {
+                directory,
+                data_dir,
+                cli,
+                probe,
+            }
+        }
+    }
+
     #[test]
     fn cli_plugin_continue_yields_non_interactive_request() {
         let cli = Cli::try_parse_from([
@@ -1253,24 +1285,8 @@ mod tests {
     /// required MO2 copy-observe-wait-reveal-observe ordering without a real sleep.
     #[test]
     fn delayed_seed_copy_waits_once_then_observes_the_revealed_plugin() {
-        let directory = tempfile::tempdir().unwrap();
-        let fallout4_dir = directory.path().join("Fallout4");
-        let data_dir = fallout4_dir.join("Data");
-        std::fs::create_dir_all(&fallout4_dir).unwrap();
-        std::fs::write(fallout4_dir.join("CreationKit.exe"), b"").unwrap();
-        std::fs::write(
-            fallout4_dir.join("fallout4_test.ini"),
-            "[CreationKit]\nBSHandleRefObjectPatch=true\n[CreationKit_Log]\nOutputFile=CK.log\n",
-        )
-        .unwrap();
-
-        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
-        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
-            fallout4_dir: Some(fallout4_dir.clone()),
-            creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
-            ..crate::discovery::ToolPaths::default()
-        })
-        .unwrap();
+        let context = ReadyIntakeContext::new(&["generateprevisibines"]);
+        let data_dir = &context.data_dir;
         let prompts = Rc::new(
             RecordingPrompts::default()
                 .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
@@ -1299,7 +1315,9 @@ mod tests {
             Rc::clone(&wait),
         );
 
-        let outcome = intake.resolve(&cli, directory.path(), &probe).unwrap();
+        let outcome = intake
+            .resolve(&context.cli, context.directory.path(), &context.probe)
+            .unwrap();
         let WorkflowIntakeOutcome::Ready(run) = outcome else {
             panic!("a plugin revealed by the MO2 wait should prepare a Workflow Run");
         };
@@ -1333,15 +1351,8 @@ mod tests {
     /// never reaches Workflow Run preparation.
     #[test]
     fn invisible_seed_copy_fails_after_one_wait_and_one_post_wait_observation() {
-        let directory = tempfile::tempdir().unwrap();
-        let fallout4_dir = directory.path().join("Fallout4");
-        let data_dir = fallout4_dir.join("Data");
-        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
-        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
-            fallout4_dir: Some(fallout4_dir),
-            ..crate::discovery::ToolPaths::default()
-        })
-        .unwrap();
+        let context = ReadyIntakeContext::new(&["generateprevisibines"]);
+        let data_dir = &context.data_dir;
         let prompts = Rc::new(
             RecordingPrompts::default()
                 .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
@@ -1367,7 +1378,9 @@ mod tests {
             Rc::clone(&wait),
         );
 
-        let err = intake.resolve(&cli, directory.path(), &probe).unwrap_err();
+        let err = intake
+            .resolve(&context.cli, context.directory.path(), &context.probe)
+            .unwrap_err();
 
         assert!(matches!(err, Error::SeedCopyFailed));
         assert_eq!(wait.delays(), vec![MO2_DELAY_AFTER_SEED_COPY_SECS]);
@@ -1390,15 +1403,8 @@ mod tests {
     /// wait behavior.
     #[test]
     fn seed_copy_failure_propagates_without_observing_or_waiting_again() {
-        let directory = tempfile::tempdir().unwrap();
-        let fallout4_dir = directory.path().join("Fallout4");
-        let data_dir = fallout4_dir.join("Data");
-        let cli = Cli::try_parse_from(["generateprevisibines"]).unwrap();
-        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
-            fallout4_dir: Some(fallout4_dir),
-            ..crate::discovery::ToolPaths::default()
-        })
-        .unwrap();
+        let context = ReadyIntakeContext::new(&["generateprevisibines"]);
+        let data_dir = &context.data_dir;
         let prompts = Rc::new(
             RecordingPrompts::default()
                 .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
@@ -1419,7 +1425,9 @@ mod tests {
             Rc::clone(&wait),
         );
 
-        let err = intake.resolve(&cli, directory.path(), &probe).unwrap_err();
+        let err = intake
+            .resolve(&context.cli, context.directory.path(), &context.probe)
+            .unwrap_err();
 
         assert!(
             matches!(err, Error::Io(error) if error.to_string() == "recorded seed copy failure")
@@ -1441,13 +1449,11 @@ mod tests {
     /// prepares the next candidate.
     #[test]
     fn reentering_plugin_name_clears_inherited_resume_before_next_candidate() {
-        let directory = tempfile::tempdir().unwrap();
-        let fallout4_dir = create_ck_ready_fallout4(directory.path());
-        let cli = Cli::try_parse_from(["generateprevisibines", "--resume-from", "6", "--filtered"])
-            .unwrap();
+        let context =
+            ReadyIntakeContext::new(&["generateprevisibines", "--resume-from", "6", "--filtered"]);
         let files = Rc::new(InMemoryFileSpace::new());
-        files.add_file(fallout4_dir.join("Data").join("FirstMod.esp"));
-        files.add_file(fallout4_dir.join("Data").join("SecondMod.esp"));
+        files.add_file(context.data_dir.join("FirstMod.esp"));
+        files.add_file(context.data_dir.join("SecondMod.esp"));
         let prompts = Rc::new(
             RecordingPrompts::default()
                 .with_plugin_names(vec![
@@ -1461,14 +1467,10 @@ mod tests {
                 .with_resume_steps(vec![None]),
         );
         let intake = WorkflowRequestIntake::new(Rc::clone(&prompts), Rc::clone(&files));
-        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
-            fallout4_dir: Some(fallout4_dir.clone()),
-            creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
-            ..crate::discovery::ToolPaths::default()
-        })
-        .unwrap();
 
-        let outcome = intake.resolve(&cli, directory.path(), &probe).unwrap();
+        let outcome = intake
+            .resolve(&context.cli, context.directory.path(), &context.probe)
+            .unwrap();
         let WorkflowIntakeOutcome::Ready(run) = outcome else {
             panic!("the replacement plugin should prepare a Workflow Run");
         };
@@ -1496,11 +1498,9 @@ mod tests {
     /// Run, so both its configuration and Workflow Plan begin at the selected step.
     #[test]
     fn choosing_interactive_resume_step_updates_prepared_run() {
-        let directory = tempfile::tempdir().unwrap();
-        let fallout4_dir = create_ck_ready_fallout4(directory.path());
-        let cli = Cli::try_parse_from(["generateprevisibines", "--resume-from", "6"]).unwrap();
+        let context = ReadyIntakeContext::new(&["generateprevisibines", "--resume-from", "6"]);
         let files = Rc::new(InMemoryFileSpace::new());
-        files.add_file(fallout4_dir.join("Data").join("MyMod.esp"));
+        files.add_file(context.data_dir.join("MyMod.esp"));
         let prompts = Rc::new(
             RecordingPrompts::default()
                 .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
@@ -1508,14 +1508,10 @@ mod tests {
                 .with_resume_steps(vec![Some(WorkflowStep::GeneratePrecombines)]),
         );
         let intake = WorkflowRequestIntake::new(Rc::clone(&prompts), Rc::clone(&files));
-        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
-            fallout4_dir: Some(fallout4_dir.clone()),
-            creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
-            ..crate::discovery::ToolPaths::default()
-        })
-        .unwrap();
 
-        let outcome = intake.resolve(&cli, directory.path(), &probe).unwrap();
+        let outcome = intake
+            .resolve(&context.cli, context.directory.path(), &context.probe)
+            .unwrap();
         let WorkflowIntakeOutcome::Ready(run) = outcome else {
             panic!("choosing a supported resume step should prepare a Workflow Run");
         };
