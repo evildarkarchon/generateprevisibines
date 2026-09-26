@@ -68,21 +68,16 @@ fn fo4edit_from_registry() -> Result<PathBuf> {
     Ok(PathBuf::from(clean_default_icon_path(&path)))
 }
 
+/// Extract the executable from a `DefaultIcon` value with an optional numeric icon index.
 fn clean_default_icon_path(value: &str) -> String {
-    let trimmed = value.trim();
-    if let Some(rest) = trimmed.strip_prefix('"')
-        && let Some((path, _)) = rest.split_once('"')
-    {
-        return path.to_string();
-    }
-
-    trimmed
-        .split(',')
-        .next()
-        .unwrap_or(trimmed)
-        .trim()
-        .trim_matches('"')
-        .to_string()
+    let unquoted = value.trim().trim_matches('"');
+    // The index can sit inside or outside the quotes. Split at the final comma only when its
+    // suffix is numeric, so a comma in the executable's directory remains part of the path.
+    let path = match unquoted.rsplit_once(',') {
+        Some((path, index)) if index.trim().parse::<i32>().is_ok() => path,
+        _ => unquoted,
+    };
+    path.trim().trim_matches('"').to_string()
 }
 
 #[cfg(not(windows))]
@@ -260,6 +255,10 @@ mod tests {
     fn cleans_default_icon_registry_path() {
         assert_eq!(
             clean_default_icon_path(r#""C:\Games\FO4Edit.exe",0"#),
+            r"C:\Games\FO4Edit.exe"
+        );
+        assert_eq!(
+            clean_default_icon_path(r#""C:\Games\FO4Edit.exe,0""#),
             r"C:\Games\FO4Edit.exe"
         );
         assert_eq!(
