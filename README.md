@@ -1,23 +1,34 @@
 # GeneratePrevisibines
 
-A Rust port of the `GeneratePrevisibines.bat` script for automating Fallout 4 precombine and previs generation workflows.
+Rust port of the GeneratePrevisibines V2.98 workflow for automating Fallout 4 precombine and previs generation.
+
+## Project status (reboot)
+
+The repository is in a **scaffold** phase:
+
+- **Behavioral reference:** PJM batch V2.98 (kept locally, not in this repo) until parity is proven on a real install.
+- **Implemented today:** CLI/types, validation rules, workflow step planning, logging layout, tool wrapper stubs, unit tests.
+- **Not implemented yet:** Creation Kit / FO4Edit / archive execution, interactive prompts, full 8-step automation.
+
+Track Rust work in **[docs/future-features.md](docs/future-features.md)**.
+
+Related docs: [behaviors](docs/behaviors.md) · [workarounds](docs/workarounds.md) · [technical](docs/technical.md)
 
 ## Overview
 
-This tool automates the 8-step workflow for generating precombined meshes and previs data for Fallout 4 mods using Creation Kit and FO4Edit. It handles all the quirks and workarounds necessary for these tools to work correctly.
+The goal is an 8-step workflow for precombined meshes and previs data using Creation Kit and FO4Edit, preserving required workarounds (MO2 delays, DLL renaming, FO4Edit keystrokes, Archive2 extract-repack).
 
-## Features
+## Features (scaffold vs planned)
 
-- **8-step automated workflow** for precombine/previs generation
-- **Interactive mode** with prompts for user control
-- **Non-interactive mode** for scripting and automation
-- **Resume capability** - restart from any step (1-8)
-- **Three build modes**: Clean, Filtered, Xbox
-- **Two archive tools**: Archive2 or BSArch
-- **Automatic tool discovery** via Windows Registry
-- **CKPE configuration validation**
-- **DLL management** - automatically disables/restores ENB/ReShade DLLs
-- **FO4Edit automation** - handles keystroke automation for Module Selection dialog
+| Area | Scaffold | Planned (see backlog) |
+|------|----------|------------------------|
+| Build modes (clean / filtered / xbox) | CLI + types | Full CK/archive behavior per mode |
+| Archive tool (Archive2 / BSArch) | CLI + types | Real pack/extract/append |
+| Tool discovery | Partial (Windows registry + cwd) | Version display, BSArch path rules |
+| CKPE / plugin validation | Yes | Same checks before CK runs |
+| 8-step workflow | Step planning + `--dry-run` | Execute all steps |
+| Interactive / resume | Types + menu labels | dialoguer prompts, resume execution |
+| External tool automation | Stubs in `src/tools/` | Parity with batch |
 
 ## Requirements
 
@@ -47,25 +58,26 @@ cargo build --release
 
 ## Usage
 
-### Interactive Mode
-Run without arguments to be prompted for all options:
+### Dry run (scaffold)
+
+List planned steps without calling external tools:
+
 ```bash
-generateprevisibines.exe
+cargo run -- --dry-run --filtered MyMod
 ```
 
-This will:
-1. Discover all required tools
-2. Validate CKPE configuration
-3. Prompt for plugin name
-4. Ask if you want to resume from a specific step
-5. Prompt before cleaning directories
-6. Run the workflow with full control
+### Non-interactive (scaffold)
 
-### Non-Interactive Mode
-Provide plugin name to run automatically:
+Validates config and executes the currently implemented Workflow Operations:
+
 ```bash
-generateprevisibines.exe MyMod.esp
+cargo run --release -- MyMod.esp
+cargo run --release -- -f --bsarch --FO4 "D:\Games\Fallout4" MyMod.esp
 ```
+
+### Interactive mode
+
+Not implemented in the scaffold. See [docs/future-features.md](docs/future-features.md) § Workflow Implementation.
 
 ### Command-Line Options
 
@@ -76,37 +88,63 @@ Arguments:
   [PLUGIN]  Plugin name (e.g., MyMod.esp)
 
 Options:
-  -c, --clean       Build mode: clean (default)
-  -f, --filtered    Build mode: filtered
-  -x, --xbox        Build mode: xbox
-      --bsarch      Use BSArch instead of Archive2
-      --FO4 <PATH>  Override Fallout 4 directory
-      --mo2                  Use Mod Organizer 2 mode (runs tools through MO2's VFS) Requires --mo2-path to be specified
-      --mo2-path <PATH>      Path to ModOrganizer.exe (required when using --mo2)
-      --mo2-data-dir <PATH>  Path to MO2's VFS staging directory (e.g., overwrite folder) Required when using --mo2 for archiving operations
-  -h, --help        Print help
+  -c, --clean            Build mode: clean (default)
+  -f, --filtered         Build mode: filtered (skips PSG and CDX)
+  -x, --xbox             Build mode: Xbox compression (also skips PSG and CDX)
+      --bsarch           Use BSArch instead of Archive2
+      --FO4 <DIR>        Override the Fallout 4 installation directory
+      --resume-from <N>  Resume from workflow step 1-8 (non-interactive)
+      --dry-run          List planned workflow steps and exit
+  -h, --help             Print help
+  -V, --version          Print version
 ```
+
+Legacy batch spellings are also supported: `-clean`, `-filtered`, `-xbox`,
+`-bsarch`, and attached `-FO4:<dir>`. Legacy option names are
+case-insensitive, and legacy and modern options may be mixed in one invocation.
+
+### Choice and repetition rules
+
+| Choice | Supported spellings | Repetition rule |
+|--------|---------------------|-----------------|
+| Clean mode | `-c`, `--clean`, `-clean` | Aliases for clean may repeat |
+| Filtered mode | `-f`, `--filtered`, `-filtered` | Aliases for filtered may repeat |
+| Xbox mode | `-x`, `--xbox`, `-xbox` | Aliases for Xbox may repeat |
+| BSArch | `--bsarch`, `-bsarch` | May appear once |
+| Fallout 4 directory | `--FO4 <dir>`, `-FO4:<dir>` | May appear once and must not be empty |
+| Resume step | `--resume-from <N>` | May appear once; `N` must be 1-8 |
+| Plugin | one positional `PLUGIN` | May appear once or be omitted for interactive intake |
+
+Aliases for one build mode can be mixed, such as `-filtered --filtered`.
+Choosing different build modes in one invocation is an error, regardless of
+spelling or order. Unknown options and all other repeated single choices are
+reported by Clap with command usage.
 
 ### Examples
 
 **Clean mode (default):**
 ```bash
 generateprevisibines.exe MyMod.esp
+generateprevisibines.exe -c MyMod.esp
+generateprevisibines.exe -clean MyMod.esp
 ```
 
 **Filtered mode:**
 ```bash
 generateprevisibines.exe -f MyMod.esp
+generateprevisibines.exe -filtered MyMod.esp
 ```
 
 **Xbox mode with BSArch:**
 ```bash
 generateprevisibines.exe -x --bsarch MyMod.esp
+generateprevisibines.exe -xbox -bsarch MyMod.esp
 ```
 
 **Custom Fallout 4 directory:**
 ```bash
 generateprevisibines.exe --FO4 "D:\Games\Fallout4" MyMod.esp
+generateprevisibines.exe "-FO4:D:\Games\Fallout4" MyMod.esp
 ```
 
 ## The 8-Step Workflow
@@ -122,17 +160,17 @@ generateprevisibines.exe --FO4 "D:\Games\Fallout4" MyMod.esp
 
 ## Build Modes
 
-### Clean Mode (`-c` or default)
+### Clean Mode (`-c`, `--clean`, `-clean`, or default)
 - Generates full precombine and previs data
 - Includes PSG compression and CDX building
 - Recommended for final releases
 
-### Filtered Mode (`-f`)
+### Filtered Mode (`-f`, `--filtered`, or `-filtered`)
 - Generates precombines and previs without extra processing
 - Skips PSG compression and CDX building
 - Faster workflow for testing
 
-### Xbox Mode (`-x`)
+### Xbox Mode (`-x`, `--xbox`, or `-xbox`)
 - Same as filtered mode but uses Xbox compression for archives
 - Required for Xbox mods
 
@@ -143,7 +181,7 @@ generateprevisibines.exe --FO4 "D:\Games\Fallout4" MyMod.esp
 - Found in `Fallout 4\Tools\Archive2\Archive2.exe`
 - **No append support** - must extract, modify, re-archive
 
-### BSArch (`--bsarch`)
+### BSArch (`--bsarch` or `-bsarch`)
 - Community tool with better performance
 - Can append to existing archives
 - Searched in order:
@@ -224,12 +262,14 @@ In interactive mode, you'll be prompted to clean directories. In non-interactive
 
 ## Development
 
+See [docs/future-features.md](docs/future-features.md) for the implementation backlog and recommended vertical slices.
+
 ### Running Tests
 ```bash
 cargo test
 ```
 
-27 unit tests covering validation, file operations, CKPE parsing, and workflow logic.
+Unit tests cover CLI parsing, plugin/CKPE validation, workflow step planning, and discovery helpers.
 
 ### Building
 ```bash
@@ -242,8 +282,8 @@ cargo build --release
 
 ## Credits
 
-- Original `GeneratePrevisibines.bat` by [PJMail](https://www.nexusmods.com/fallout4/users/28439055)
-- Ported to Rust with improvements and better error handling
+- Original GeneratePrevisibines batch workflow by [PJMail](https://www.nexusmods.com/fallout4/users/28439055)
+- Rust reboot scaffold; parity work tracked in [docs/future-features.md](docs/future-features.md)
 
 ## License
 
