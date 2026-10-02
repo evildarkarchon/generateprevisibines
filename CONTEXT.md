@@ -8,6 +8,10 @@ GeneratePrevisibines automates the Fallout 4 precombine and previs build workflo
 The user's requested build: plugin identity, build mode, archive tool choice, resume step, and any Fallout 4 path override. It is intent before tool paths, CKPE configuration, logs, or runnable steps are resolved.
 _Avoid_: ProjectConfig, CLI config, raw args
 
+**Build Mode**:
+The kind of build a Workflow Request asks for: Clean, Filtered, or Xbox. Clean and Xbox are both clean builds — they generate precombines from a clean cell set and build the CDX; they differ only in that Xbox keeps the geometry file uncompressed. Filtered generates filtered precombines and has no geometry or CDX steps. Build Mode decides Workflow Plan membership; no Build Mode compresses archives for Xbox.
+_Avoid_: "filtered + Xbox compression" (the pre-V2.99 meaning), "clean mode" when any clean build is meant
+
 **Workflow Request Intake**:
 The pre-run decision flow that turns a Workflow Request into either a Workflow Run or a deliberate user exit, including plugin readiness and resume intent. It is intake before any Workflow Operation runs.
 _Avoid_: main orchestration, config builder, prompt flow
@@ -47,3 +51,7 @@ _Avoid_: Step 1 checks, precombine helper, CK precombine wrapper
 **Precombine Workspace**:
 The artifact space evaluated by the Generate Precombines Operation before and after Creation Kit runs, including existing precombined meshes and generated precombine outputs. It is the workspace being prepared and validated, not the Creation Kit command itself.
 _Avoid_: Step 1 checks, precombine helper, artifact scanner
+
+**Previs Workspace**:
+The artifact space evaluated by the previs steps — the generated visibility files and the previs plugin — which the Generate Previs step clears and validates and the later previs merge and archive steps require. It is the workspace being prepared and validated, not the Creation Kit or FO4Edit command itself.
+_Avoid_: vis checks, previs helper, uvd scanner

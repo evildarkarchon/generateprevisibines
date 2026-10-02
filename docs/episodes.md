@@ -54,6 +54,16 @@ and a non-zero exit is downgraded to a warning (472). The log scans live at the 
 their predicate *and severity* differ per step. Both scans are also skipped entirely when the
 CK log is absent (275, 318), which jumps straight to the next step rather than failing.
 
+**The output check only stops an interactive run.** Line 471's `goto failed` runs inside the
+`Call`ed `:RunCK` frame, and `:Failed` → `:Done` ends non-interactive runs with
+`goto :eof` (369). Inside a `Call`, that *returns to the caller* rather than ending the script,
+so a non-interactive run whose Creation Kit produced no output resumes after the `Call` and
+carries on into the next step (Step 1 into 270/274, Step 6 into 318 and Step 7). Interactive
+runs reach `PAUSE`/`Exit` (371–372) and really stop. The port deliberately does **not**
+replicate this: a missing Creation Kit output stops every run — decided on #27. The same
+`goto :eof`-inside-`Call` shape sits under the fatal checks in `:RunScript` and `:Archive`
+(owned by #28 and #29).
+
 Step 1 has a second, mode-conditional output check (`<plugin> - Geometry.psg`, line 270, run in
 every mode except filtered) that is not the `:RunCK` parameter. The same file is re-checked on
 entry to step 4 (297), again in every mode except filtered.
