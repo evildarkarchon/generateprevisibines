@@ -90,11 +90,31 @@ pub fn prompt_plugin_name(build_mode: BuildMode) -> Result<Option<PluginIdentity
     println!("(Do not include the .esp extension unless you need .esm/.esl)");
     println!();
 
+    read_plugin_name(
+        build_mode,
+        || {
+            Ok(Input::new()
+                .with_prompt("Plugin name")
+                .allow_empty(true)
+                .interact_text()?)
+        },
+        |err| eprintln!("ERROR - {err}"),
+    )
+}
+
+/// Read plugin-name answers until the terminal input converts to a typed candidate or an exit.
+///
+/// Returns `None` for a blank answer, which is the batch's deliberate-exit response. Invalid names
+/// are passed to `report_invalid` and re-read here so terminal repetition never leaks into Intake;
+/// Intake still validates the returned candidate itself because other adapters may supply it.
+/// Reader failures propagate unchanged to the caller.
+fn read_plugin_name(
+    build_mode: BuildMode,
+    mut read_answer: impl FnMut() -> Result<String>,
+    mut report_invalid: impl FnMut(&Error),
+) -> Result<Option<PluginIdentity>> {
     loop {
-        let raw: String = Input::new()
-            .with_prompt("Plugin name")
-            .allow_empty(true)
-            .interact_text()?;
+        let raw = read_answer()?;
 
         if raw.trim().is_empty() {
             return Ok(None);
@@ -103,7 +123,7 @@ pub fn prompt_plugin_name(build_mode: BuildMode) -> Result<Option<PluginIdentity
         let plugin = PluginIdentity::parse(&raw);
         match validation::validate_plugin(&plugin, build_mode) {
             Ok(()) => return Ok(Some(plugin)),
-            Err(err) => eprintln!("ERROR - {err}"),
+            Err(err) => report_invalid(&err),
         }
     }
 }
@@ -121,7 +141,7 @@ pub fn report_missing_plugin(plugin_file: &str) {
 /// # Errors
 ///
 /// Returns [`Error::Prompt`] when the terminal confirmation cannot be completed.
-pub fn prompt_seed_copy_confirmation(_plugin_file: &str) -> Result<bool> {
+pub fn prompt_seed_copy_confirmation() -> Result<bool> {
     Ok(Confirm::new()
         .with_prompt("Copy xPrevisPatch.esp as a starting plugin?")
         .default(false)
@@ -281,7 +301,7 @@ pub fn ensure_plugin_ready(readiness: &PluginReadiness) -> Result<ExistingPlugin
 mod tests {
     use super::*;
     use crate::config::BuildMode;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
     use std::fs;
     use tempfile::tempdir;
@@ -355,6 +375,56 @@ mod tests {
 
         assert_eq!(step, Some(WorkflowStep::CreateBa2FromPrecombines));
         assert_eq!(invalid_answers.get(), 1);
+    }
+
+    /// A blank plugin-name line is the terminal's deliberate-exit answer, not invalid input.
+    #[test]
+    fn plugin_name_prompt_converts_blank_input_to_exit_without_reporting_invalid_input() {
+        let mut answers = VecDeque::from(["   ".to_owned()]);
+        let invalid_answers = Cell::new(0);
+
+        let plugin = read_plugin_name(
+            BuildMode::Clean,
+            || Ok(answers.pop_front().unwrap()),
+            |_| invalid_answers.set(invalid_answers.get() + 1),
+        )
+        .unwrap();
+
+        assert_eq!(plugin, None);
+        assert_eq!(invalid_answers.get(), 0);
+    }
+
+    /// Invalid plugin names are reported and re-read inside the terminal adapter, so Intake only
+    /// ever receives a typed candidate or a deliberate exit.
+    #[test]
+    fn plugin_name_prompt_repeats_invalid_input_inside_the_terminal_adapter() {
+        let mut answers =
+            VecDeque::from(["previs".to_owned(), "My Mod".to_owned(), "MyMod".to_owned()]);
+        let reported = RefCell::new(Vec::new());
+
+        let plugin = read_plugin_name(
+            BuildMode::Clean,
+            || Ok(answers.pop_front().unwrap()),
+            |error| reported.borrow_mut().push(error.to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(plugin, Some(PluginIdentity::parse("MyMod")));
+        assert_eq!(reported.borrow().len(), 2);
+        assert!(answers.is_empty());
+    }
+
+    /// Terminal reader failures surface unchanged instead of being treated as an exit answer.
+    #[test]
+    fn plugin_name_prompt_propagates_reader_failures() {
+        let err = read_plugin_name(
+            BuildMode::Clean,
+            || Err(Error::Other("recorded terminal failure".to_owned())),
+            |_| panic!("a reader failure is not invalid input"),
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, Error::Other(message) if message == "recorded terminal failure"));
     }
 
     #[test]

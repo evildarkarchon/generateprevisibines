@@ -29,7 +29,6 @@ pub struct WorkflowRequest {
     pub plugin: PluginIdentity,
     pub non_interactive: bool,
     pub resume_from: Option<WorkflowStep>,
-    pub fallout4_override: Option<PathBuf>,
 }
 
 impl WorkflowRequest {
@@ -41,7 +40,6 @@ impl WorkflowRequest {
         plugin: PluginIdentity,
         non_interactive: bool,
         resume_from: Option<WorkflowStep>,
-        fallout4_override: Option<PathBuf>,
     ) -> Self {
         Self {
             build_mode,
@@ -49,7 +47,6 @@ impl WorkflowRequest {
             plugin,
             non_interactive,
             resume_from,
-            fallout4_override,
         }
     }
 
@@ -298,7 +295,6 @@ mod tests {
             PluginIdentity::parse("MyMod"),
             true,
             None,
-            None,
         );
 
         ReadyWorkflowFixture {
@@ -318,7 +314,6 @@ mod tests {
             PluginIdentity::parse("MyMod"),
             true,
             None,
-            Some(PathBuf::from(r"D:\Games\Fallout4")),
         );
         let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
             fallout4_dir: Some(PathBuf::from(r"D:\Games\Fallout4")),
@@ -450,7 +445,6 @@ mod tests {
             PluginIdentity::parse("MyMod"),
             true,
             None,
-            None,
         );
 
         let error = WorkflowRun::prepare(
@@ -539,7 +533,6 @@ mod tests {
             ArchiveTool::Archive2,
             PluginIdentity::parse("MyMod"),
             true,
-            None,
             None,
         );
 
