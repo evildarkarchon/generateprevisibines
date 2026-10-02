@@ -2,12 +2,13 @@
 
 ## From Original Script
 
-Line references are against the **V2.98** batch (`GeneratePrevisibines.bat`, gitignored,
-556 lines, header `PJM V2.98 Jun 2026`) — the same file [episodes.md](episodes.md) cites.
+Line references are against the **V2.99** batch (`GeneratePrevisibines.bat`, committed at
+the repo root, 564 lines, header `PJM V2.99 Aug 2026`) — the same file [episodes.md](episodes.md)
+cites.
 
-- **Reserved Plugin Names**: "previs", "combinedobjects", "xprevispatch" are forbidden (`:CheckPluginName` lines 168-176)
-- **Clean Mode Space Check**: Plugin names cannot contain spaces in clean mode (lines 155-157, error path `:SpaceInName` 177-180)
-- **8-Step Resume**: Users can restart from any step 1-8 after failures (`:GetStep` lines 208-229)
+- **Reserved Plugin Names**: "previs", "combinedobjects", "xprevispatch" are forbidden (`:CheckPluginName` lines 174-182)
+- **Space Check**: Plugin names cannot contain spaces in clean or xbox mode — only filtered mode skips the check (lines 161-163, error path `:SpaceInName` 183-186). V2.98 checked clean mode only; the port's `validation` follows V2.99 (since #34)
+- **8-Step Resume**: Users can restart from any step 1-8 after failures (`:GetStep` lines 214-235)
 - **CKPE Config Checking**: Must validate `bBSPointerHandleExtremly=true` setting exists
 - **Multiple Config Locations**: CKPE may use .toml, .ini, or fallout4_test.ini with different setting names
 - **Version Display**: Show version info for FO4Edit, Fallout4.exe, CreationKit, CKPE
@@ -15,8 +16,8 @@ Line references are against the **V2.98** batch (`GeneratePrevisibines.bat`, git
 
 ## Host Support
 
-- **Wine/Proton is a supported host.** V2.98's header advertises "Support for Wine", and the
-  port keeps it. The batch implements that support as a `WHERE /Q reg.exe` probe (line 21) whose
+- **Wine/Proton is a supported host.** The batch header has advertised "Support for Wine" since
+  V2.98 (V2.99 line 15), and the port keeps it. The batch implements that support as a `WHERE /Q reg.exe` probe (line 21) whose
   `RegErr_` result guards both registry lookups (lines 38 and 49).
 - The port does **not** reproduce the probe itself. `WHERE /Q reg.exe` only proves the binary is
   on `PATH`, so a Wine prefix carrying a stub `reg.exe` passes it and then answers nothing

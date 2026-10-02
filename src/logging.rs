@@ -43,17 +43,17 @@ pub fn append_log_line(path: &Path, line: &str, files: &dyn FileSpace) -> Result
     files.append(path, &format!("{line}\n"))
 }
 
-/// Batch-aligned session log header (`:Precomb2`, batch line 260).
+/// Batch-aligned session log header (`:Precomb2`, batch line 266).
 ///
-/// The `V2.95` here is **not** the batch reference version — that is V2.98, as the author
-/// header (line 15) and the banner (line 18) say. It is hardcoded into this one `echo` and never
-/// updated it as the script moved on. This is a literal reproduction of a line the batch writes
-/// to the session log, so it matches the batch's *output*, not the batch's *version*. Anything
-/// parsing or diffing a session log against a batch-produced one depends on that. Bump it only
-/// if the batch's own line 260 changes.
+/// The version here is a literal reproduction of the one hardcoded into this `echo`, not a copy
+/// of the batch reference version. The two used to differ: through V2.98 the batch wrote `V2.95`
+/// here while its author header (line 15) and banner (line 18) had moved on. V2.99 brought this
+/// line back in step. Matching the batch's *output* is the point, because anything parsing or
+/// diffing a session log against a batch-produced one depends on it. Bump it only if the
+/// batch's own line 266 changes, whatever its header says.
 #[must_use]
 pub fn build_session_header(build_mode: &str, plugin_file: &str) -> String {
-    format!("Starting {build_mode} Build V2.95 of {plugin_file}")
+    format!("Starting {build_mode} Build V2.99 of {plugin_file}")
 }
 
 /// Initialize the session log at `path` with the build header (batch `Starting %BuildMode_% Build`).
@@ -70,7 +70,7 @@ pub fn init_session_log(
     files.write(path, &format!("{header}\n"))
 }
 
-/// The batch's rule between the run banner and the `Start` line (`:RunCK` line 453).
+/// The batch's rule between the run banner and the `Start` line (`:RunCK` line 462).
 ///
 /// Thirty-six `=`, as the batch's `echo` writes them, so a session log this port produces lines
 /// up against one the batch produced. Trailing whitespace is the one thing not reproduced: every
@@ -78,7 +78,7 @@ pub fn init_session_log(
 /// already drops the batch header's two.
 const CK_RUN_SEPARATOR: &str = "====================================";
 
-/// Open one Creation Kit run's session-log entry (batch `:RunCK` lines 452–454).
+/// Open one Creation Kit run's session-log entry (batch `:RunCK` lines 461–463).
 ///
 /// `operation` is the batch's `%1` — `GeneratePrecombined` and friends. Four runs share one
 /// session log across a build, so this is what attributes everything below it to a step.
@@ -102,7 +102,7 @@ pub fn append_ck_run_header(
     )
 }
 
-/// Close a Creation Kit run's timing bracket (batch `:RunCK` line 457).
+/// Close a Creation Kit run's timing bracket (batch `:RunCK` line 466).
 ///
 /// A named function rather than an [`append_log_line`] call at the adapter: every literal the
 /// session log reproduces from the batch lives in this module, so there is one place to check a
@@ -118,7 +118,7 @@ pub fn append_ck_run_ended(
     append_log_line(session_log, &format!("Ended {ended_at}"), files)
 }
 
-/// Append a Creation Kit run's log, or record that there was none (batch `:RunCK` lines 460–461).
+/// Append a Creation Kit run's log, or record that there was none (batch `:RunCK` lines 469–470).
 ///
 /// Takes `contents` rather than a path so the Creation Kit adapter reads its log exactly once
 /// and uses that one read for both this append and the content it hands back to the Workflow
@@ -134,7 +134,7 @@ pub fn append_ck_log(
     files: &dyn FileSpace,
 ) -> Result<()> {
     let Some(contents) = contents else {
-        // Batch line 460, two spaces before the path included.
+        // Batch line 469, two spaces before the path included.
         return append_log_line(
             session_log,
             &format!("Unable to find log  {}", ck_log_path.display()),
@@ -180,9 +180,9 @@ mod tests {
     }
 
     #[test]
-    fn session_header_matches_batch_version() {
+    fn session_header_reproduces_batch_line_266() {
         let header = build_session_header("clean", "MyMod.esp");
-        assert!(header.contains("V2.95"));
+        assert!(header.contains("V2.99"));
         assert!(header.contains("MyMod.esp"));
     }
 
@@ -197,7 +197,7 @@ mod tests {
 
         assert_eq!(
             files.read_lossy(&log).unwrap(),
-            "Starting filtered Build V2.95 of MyMod.esp\n"
+            "Starting filtered Build V2.99 of MyMod.esp\n"
         );
     }
 
@@ -252,7 +252,7 @@ mod tests {
 
         assert_eq!(
             files.read_lossy(&session_log).unwrap(),
-            "Starting clean Build V2.95 of MyMod.esp\n\
+            "Starting clean Build V2.99 of MyMod.esp\n\
              Running CK option GeneratePrecombined:\n\
              ====================================\n\
              Start 09:00:00.00\n\
@@ -289,7 +289,7 @@ mod tests {
     /// The header alone is a complete record of a run that never came back.
     ///
     /// A Creation Kit that hangs or is killed leaves exactly this, because the batch writes
-    /// lines 452–454 before `START` rather than after it. Nothing downstream gets to append.
+    /// lines 461–463 before `START` rather than after it. Nothing downstream gets to append.
     #[test]
     fn a_run_that_never_returns_still_leaves_its_header() {
         let files = InMemoryFileSpace::new();

@@ -881,7 +881,7 @@ mod tests {
         assert!(files.contains_file(run.log_path()));
         assert_eq!(
             files.contents(run.log_path()),
-            "Starting clean Build V2.95 of MyMod.esp\n"
+            "Starting clean Build V2.99 of MyMod.esp\n"
         );
     }
 

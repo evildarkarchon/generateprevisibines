@@ -2,14 +2,14 @@
 
 use std::path::PathBuf;
 
-use crate::config::{BuildMode, ProjectConfig};
+use crate::config::ProjectConfig;
 use crate::error::{Error, Result};
 use crate::files::FileSpace;
 
 /// The Creation Kit log text that means the precombine ran out of Reference Handles.
 ///
 /// Held in the batch's own shape — `Findstr /I /M /C:"OUT OF HANDLE ARRAY ENTRIES"`
-/// (`GeneratePrevisibines.bat:270`): a case-insensitive substring, carrying no prefix. The
+/// (`GeneratePrevisibines.bat:276`): a case-insensitive substring, carrying no prefix. The
 /// Creation Kit usually emits it under `DEFAULT: `, but the batch never required that, so
 /// neither do we; requiring it would let a differently-prefixed line pass a run the batch
 /// would have failed.
@@ -87,12 +87,15 @@ impl<'a> PrecombineWorkspace<'a> {
     ///
     /// `ck_log` is the log *content* the Creation Kit adapter read back, not a path: that
     /// adapter owns the log's lifecycle, and `None` is its "Creation Kit wrote no log" state.
+    ///
+    /// A missing `<plugin> - Geometry.psg` is fatal for every clean build — Clean and, since
+    /// V2.99, Xbox — because both ran `clean all` (V2.99 batch line 270).
     pub(super) fn validate_generated(&self, ck_log: Option<&str>) -> Result<()> {
         if !self.files.is_file(&self.combined_objects_path()) {
             return Err(Error::MissingCombinedObjects);
         }
 
-        if self.config.build_mode == BuildMode::Clean
+        if self.config.build_mode.is_clean_build()
             && !self.files.is_file(&self.geometry_psg_path())
         {
             return Err(Error::MissingGeometryPsg(
@@ -147,7 +150,7 @@ fn has_handle_array_error(contents: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ArchiveTool, PluginIdentity};
+    use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
     use crate::files::InMemoryFileSpace;
 
     /// A resolved project configuration rooted at plain relative paths.
@@ -209,8 +212,8 @@ mod tests {
 
     /// Record what a successful Creation Kit run leaves behind.
     ///
-    /// `include_psg` distinguishes a Clean-mode run, which emits the geometry PSG, from a
-    /// Filtered-mode run, which does not.
+    /// `include_psg` distinguishes a clean-build run (Clean or Xbox), which emits the geometry
+    /// PSG, from a Filtered-mode run, which does not.
     fn record_generated_outputs(space: &InMemoryFileSpace, include_psg: bool) {
         space.add_file(precombined_mesh());
         space.add_file(combined_objects());
@@ -342,18 +345,24 @@ mod tests {
         assert!(matches!(err, Error::MissingCombinedObjects));
     }
 
+    /// Clean and V2.99 Xbox both run `clean all`, so both require the PSG (batch line 270).
     #[test]
-    fn validate_reports_a_missing_geometry_psg_before_missing_meshes_in_clean_mode() {
-        let config = project_config(BuildMode::Clean);
-        let space = InMemoryFileSpace::new();
-        space.add_file(combined_objects());
-        let workspace = PrecombineWorkspace::new(&config, &space);
+    fn validate_reports_a_missing_geometry_psg_before_missing_meshes_in_clean_builds() {
+        for mode in [BuildMode::Clean, BuildMode::Xbox] {
+            let config = project_config(mode);
+            let space = InMemoryFileSpace::new();
+            space.add_file(combined_objects());
+            let workspace = PrecombineWorkspace::new(&config, &space);
 
-        let err = workspace
-            .validate_generated(Some(&failing_ck_log()))
-            .unwrap_err();
+            let err = workspace
+                .validate_generated(Some(&failing_ck_log()))
+                .unwrap_err();
 
-        assert!(matches!(err, Error::MissingGeometryPsg(name) if name == "MyMod"));
+            assert!(
+                matches!(&err, Error::MissingGeometryPsg(name) if name == "MyMod"),
+                "mode: {mode:?}, err: {err:?}"
+            );
+        }
     }
 
     #[test]

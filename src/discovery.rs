@@ -1,19 +1,20 @@
 //! Tool discovery via current directory and Windows registry (batch lines 24–40 for xEdit,
-//! 46–50 for the Fallout 4 install path, 67–68 for CK and Archive2, 513 for BSArch).
+//! 46–50 for the Fallout 4 install path, 67–68 for CK and Archive2, 522 for BSArch).
 //!
 //! Both registry lookups sit behind the batch's `reg.exe` probe (21–22) and its `RegErr_`
-//! guards (38, 49), which skip the registry entirely when `reg.exe` is absent — V2.98's
-//! "Support for Wine", which the port supports. Rather than probe for `reg.exe` (a `PATH` test
-//! that a stub binary passes while still answering nothing), both lookups here treat an
-//! unanswerable registry as an empty answer: xEdit falls through to its own not-found error,
-//! and Fallout 4 falls through to the missing-directory message at batch line 63.
+//! guards (38, 49), which skip the registry entirely when `reg.exe` is absent — the
+//! "Support for Wine" the batch's author header (line 15) advertises, which the port supports.
+//! Rather than probe for `reg.exe` (a `PATH` test that a stub binary passes while still
+//! answering nothing), both lookups here treat an unanswerable registry as an empty answer:
+//! xEdit falls through to its own not-found error, and Fallout 4 falls through to the
+//! missing-directory message at batch line 63.
 
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 
 /// Executable names `:xEditCheck` probes in the script's own directory, in the batch's own order
-/// (V2.98 lines 26–35). Order is a parity contract: an install carrying more than one of these
+/// (V2.99 lines 26–35). Order is a parity contract: an install carrying more than one of these
 /// must resolve to the same binary the batch would have picked.
 const FO4EDIT_CANDIDATES: &[&str] = &[
     "xFOEdit.exe",

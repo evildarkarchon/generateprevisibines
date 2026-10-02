@@ -598,7 +598,7 @@ mod tests {
     ///
     /// The build mode is pinned by *difference* rather than by spelling out what it becomes on
     /// the command line: a Step 1 that ignored `config.build_mode` would send Clean and
-    /// Filtered identical argv, and one that invented its own mapping would split Filtered from
+    /// Filtered identical argv, and one that invented its own mapping would split Clean from
     /// Xbox. Which qualifiers each mode actually produces is asserted in `tools::creation_kit`,
     /// against the same recorded argv — and leaving them there is what keeps Creation Kit's
     /// command grammar out of `src/workflow/` entirely.
@@ -609,9 +609,36 @@ mod tests {
         let xbox = only_spawn_of_step_one(BuildMode::Xbox);
 
         assert_ne!(clean, filtered);
-        // Xbox differs from Filtered only in how the archive is compressed, which is steps 5
-        // and 8; the precombine request is the same one.
-        assert_eq!(filtered, xbox);
+        // V2.99 Xbox is a clean build (batch 268–272 test `NEQ "filtered"`): it differs from
+        // Clean only in skipping `CompressPSG` (no archive gets Xbox compression since 391 was
+        // REM'd), which is not Step 1, so the precombine request is the same one.
+        assert_eq!(clean, xbox);
+    }
+
+    /// V2.99 Xbox fails Step 1 on a missing `<plugin> - Geometry.psg`, exactly as Clean does
+    /// (batch line 270).
+    ///
+    /// Driven through the real Step 1 rather than only the Precombine Workspace, because the
+    /// spawn must also have run first: the check is a postcondition of the `clean all` request,
+    /// not a precondition.
+    #[test]
+    fn step_one_fails_an_xbox_run_that_leaves_no_geometry_psg() {
+        let fixture = step_one_fixture(BuildMode::Xbox, true);
+        let config = fixture.run.config().clone();
+        let ck_log = fixture.ck_log_path();
+        let psg = config
+            .fo4edit_data_dir()
+            .join(format!("{} - Geometry.psg", config.plugin.base_name));
+        let process = RecordingProcessRunner::new().with_effects(&fixture.files, move |space| {
+            record_successful_precombine_outputs(space, &config, &ck_log);
+            // Creation Kit ran but wrote no PSG — the one output this test is about.
+            space.remove_file(&psg).unwrap();
+        });
+
+        let err = fixture.run_step_one(&process).unwrap_err();
+
+        assert!(matches!(err, Error::MissingGeometryPsg(name) if name == "MyMod"));
+        assert_eq!(process.calls().len(), 1);
     }
 
     /// A Step 1 run keeps the whole Creation Kit episode, not just the spawn.

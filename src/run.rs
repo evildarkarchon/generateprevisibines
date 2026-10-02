@@ -362,7 +362,7 @@ mod tests {
         assert_eq!(run.log_path(), fixture.files.temp_dir().join("MyMod.log"));
         assert_eq!(
             fixture.files.read_lossy(run.log_path()).unwrap(),
-            "Starting clean Build V2.95 of MyMod.esp\n"
+            "Starting clean Build V2.99 of MyMod.esp\n"
         );
     }
 
