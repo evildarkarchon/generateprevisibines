@@ -14,7 +14,7 @@
 use std::cell::Cell;
 use std::path::Path;
 
-use crate::config::{BuildMode, ProjectConfig};
+use crate::config::ProjectConfig;
 use crate::error::Result;
 use crate::files::InMemoryFileSpace;
 
@@ -87,8 +87,9 @@ pub(crate) fn record_successful_precombine_outputs(
     // Nested, because that is the shape Creation Kit writes precombines in.
     space.add_file(config.precombined_dir().join("cell").join("mesh.nif"));
 
-    // Only a Clean-mode run emits the geometry PSG; a Filtered one never does.
-    if config.build_mode == BuildMode::Clean {
+    // Only a `clean all` run (Clean, and Xbox since V2.99) emits the geometry PSG; a
+    // Filtered one never does.
+    if config.build_mode.is_clean_build() {
         space.add_file(
             config
                 .fo4edit_data_dir()

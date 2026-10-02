@@ -27,8 +27,11 @@ pub fn validate_plugin_name_token(name: &str) -> Result<()> {
 }
 
 /// Full plugin validation after parsing identity.
+///
+/// Spaces are rejected for every clean build — Clean and, since V2.99, Xbox; only Filtered
+/// jumps past the check to `:SkipSpace` (V2.99 batch line 161).
 pub fn validate_plugin(plugin: &PluginIdentity, build_mode: BuildMode) -> Result<()> {
-    if build_mode == BuildMode::Clean && plugin.base_name.contains(' ') {
+    if build_mode.is_clean_build() && plugin.base_name.contains(' ') {
         return Err(Error::PluginNameContainsSpaces);
     }
 
@@ -179,6 +182,15 @@ mod tests {
     fn clean_mode_rejects_spaces() {
         let plugin = PluginIdentity::parse("My Mod");
         let err = validate_plugin(&plugin, BuildMode::Clean).unwrap_err();
+        assert!(matches!(err, Error::PluginNameContainsSpaces));
+    }
+
+    /// V2.99 batch line 161 skips the space check only for `filtered`, so Xbox rejects spaces
+    /// with the same error as Clean.
+    #[test]
+    fn xbox_mode_rejects_spaces() {
+        let plugin = PluginIdentity::parse("My Mod");
+        let err = validate_plugin(&plugin, BuildMode::Xbox).unwrap_err();
         assert!(matches!(err, Error::PluginNameContainsSpaces));
     }
 

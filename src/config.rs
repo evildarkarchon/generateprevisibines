@@ -19,6 +19,22 @@ impl BuildMode {
         }
     }
 
+    /// Whether this is a clean build: every mode except Filtered.
+    ///
+    /// The V2.99 batch tests `NEQ "filtered"` rather than V2.98's `EQU "clean"`, because Xbox
+    /// gained clean-mode support and is now a clean build that merely skips `CompressPSG`.
+    /// This predicate governs the plugin-name space check (line 161), the
+    /// `-GeneratePrecombined` `clean all` qualifier and the post-CK `- Geometry.psg` check
+    /// (268–272). The batch's other `filtered` tests (219, 296, 305, 345) decide step
+    /// membership and are not routed through here.
+    ///
+    /// Deliberately separate from [`Self::includes_psg_and_cdx`]: that one decides Workflow
+    /// Plan membership, where Xbox's place is still open, and Step 1 must not move with it.
+    #[must_use]
+    pub const fn is_clean_build(self) -> bool {
+        !matches!(self, Self::Filtered)
+    }
+
     /// Steps 4 and 5 (PSG compress, CDX build) run only in clean mode.
     #[must_use]
     pub const fn includes_psg_and_cdx(self) -> bool {
