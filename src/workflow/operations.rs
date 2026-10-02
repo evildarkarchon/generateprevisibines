@@ -538,7 +538,6 @@ mod tests {
             PluginIdentity::parse("MyMod"),
             non_interactive,
             None,
-            None,
         );
 
         let files = InMemoryFileSpace::new();

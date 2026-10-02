@@ -192,7 +192,6 @@ impl WorkflowRequestIntake {
             PluginIdentity::parse(plugin_name),
             true,
             cli.resume_from,
-            cli.fo4_dir.clone(),
         );
         Self::validate_non_interactive_candidate(&request, probe, self.ports.files.as_ref())?;
 
@@ -218,14 +217,8 @@ impl WorkflowRequestIntake {
                 return Ok(None);
             };
 
-            let mut request = WorkflowRequest::new(
-                build_mode,
-                archive_tool,
-                plugin,
-                false,
-                resume_from,
-                cli.fo4_dir.clone(),
-            );
+            let mut request =
+                WorkflowRequest::new(build_mode, archive_tool, plugin, false, resume_from);
             crate::validation::validate_plugin(&request.plugin, request.build_mode)?;
 
             let data_dir = probe.data_dir();
