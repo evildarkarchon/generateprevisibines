@@ -86,6 +86,14 @@ before any CK invocation, so nothing is renamed yet; the exception is step 2's p
 resume-at-step-2 where this run never renamed anything. Leftover `*-PJMdisabled` files from an
 earlier crashed run are not restored on that path.
 
+The port restores per CK run instead (`DllGuard`, dropped when each CK episode ends, on every
+path including panics). Leftovers from a crashed earlier run — decided on #30 — are **adopted**
+by the next guard: a `*-PJMdisabled` with no original beside it is recorded as one of the
+guard's own renames, so that run's restore recovers it. Recovery therefore happens on the next
+run that launches CK (Steps 1, 4, 5, 6), not on every run; Finish has no DLL duty. When both the
+leftover and the original exist, the guard keeps its existing behaviour (the leftover is
+replaced).
+
 ## FO4Edit — two script runs, identical shape
 
 Both through `:RunScript` (530–564).
@@ -312,3 +320,8 @@ path (`:RePrecomb`, `:RePreVis`).
   non-interactive runs always clean (354). DLL restore runs on every exit path that reaches
   `:Done`, including `:Failed` (375–377 → `:Done`, 362–367) — but not on the `:PauseAndExit`
   paths; see the `:RunCK` note above for why that is nearly always harmless.
+  **Port, decided on #30:** Finish is a run epilogue, not a Workflow Operation, and runs only
+  when every planned step completed. It keeps the batch's lines, manifest and prompt verbatim
+  (manifest by Build Mode, unchecked; only "Build of Patch X Complete." reaches the session
+  log; no MO2 wait before the deletes; a missing Working File is skipped). One divergence: a
+  Working File that cannot be deleted is a Build Warning and the run still exits 0.

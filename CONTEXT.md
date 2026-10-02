@@ -33,8 +33,12 @@ The domain behavior for one planned workflow step: its required toolchain readin
 _Avoid_: Tool runner step, step helper, command wrapper
 
 **Build Warning**:
-A condition a Workflow Operation reports while the Workflow Run continues — a tool finished but its log or exit status suggests a degraded result, or a step found nothing to do where the batch warns. It is surfaced when raised, on the console and in the session log. It is distinct from a run diagnostic, which is noticed while preparing a Workflow Run, before any Workflow Operation runs.
+A condition a Workflow Operation or Finish reports while the Workflow Run continues — a tool finished but its log or exit status suggests a degraded result, a step found nothing to do where the batch warns, or Finish could not remove a Working File. It is surfaced when raised, on the console and in the session log. It is distinct from a run diagnostic, which is noticed while preparing a Workflow Run, before any Workflow Operation runs.
 _Avoid_: diagnostic, soft error, non-fatal error
+
+**Finish**:
+The epilogue of a Workflow Run that runs only once every planned step has completed: it announces the build complete, lists the Patch Files, and offers to remove the Working Files. It is not a Workflow Operation — it has no step number, cannot be resumed to, and is not part of the Workflow Plan — and it never runs after a stop.
+_Avoid_: step 9, cleanup step, `:Fin`
 
 **Episode**:
 One interaction between the build and something outside the process: a Creation Kit invocation, an FO4Edit script run, an archive operation, a user prompt, a wall-clock MO2 sync wait, a filesystem mutation, or a log read. It is the unit of external-tool behavior a Workflow Operation must reproduce, enumerated per step in `docs/episodes.md`; an episode bundles its own command line, delays, and log lifecycle, while the success criteria over its result stay with the Workflow Operation.
@@ -59,3 +63,11 @@ _Avoid_: BA2 (as a synonym in prose), append (for the Add Previs rebuild), BSArc
 **Previs Workspace**:
 The artifact space evaluated by the previs steps — the generated visibility files and the previs plugin — which the Generate Previs step clears and validates and the later previs merge and archive steps require. It is the workspace being prepared and validated, not the Creation Kit or FO4Edit command itself.
 _Avoid_: vis checks, previs helper, uvd scanner
+
+**Patch Files**:
+The deliverables a completed build leaves in `Data` for the user to package or activate: the plugin and the Plugin Archive, plus — in clean builds — the CDX and the geometry file (compressed for Clean, uncompressed for Xbox). Finish lists them by Build Mode.
+_Avoid_: outputs, artifacts, created files
+
+**Working Files**:
+The intermediate plugins `CombinedObjects.esp` and `Previs.esp`, which later steps merge into the plugin and which serve no purpose once the build completes. Finish offers to remove them, and always removes them when the run is non-interactive.
+_Avoid_: temp files, scratch plugins
