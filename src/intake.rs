@@ -655,36 +655,30 @@ mod tests {
         }
     }
 
+    /// Command-line build mode, archive tool, and plugin choices reach the prepared unattended
+    /// Workflow Run through the same resolution seam production uses.
     #[test]
-    fn cli_plugin_continue_yields_non_interactive_request() {
-        let cli = Cli::try_parse_from([
-            "generateprevisibines",
-            "-FiLtErEd",
-            "-BsArCh",
-            r"-fO4:C:\Fallout4",
-            "MyMod",
-        ])
-        .unwrap();
+    fn cli_plugin_choices_reach_the_prepared_non_interactive_run() {
+        let context =
+            ReadyIntakeContext::new(&["generateprevisibines", "-FiLtErEd", "-BsArCh", "MyMod"]);
         let prompts = Rc::new(RecordingPrompts::default());
         let files = Rc::new(InMemoryFileSpace::new());
-        files.add_file(PathBuf::from(r"C:\Fallout4\Data\MyMod.esp"));
-        let intake = WorkflowRequestIntake::new(prompts, files);
-        let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
-            fallout4_dir: Some(PathBuf::from(r"C:\Fallout4")),
-            ..crate::discovery::ToolPaths::default()
-        })
-        .unwrap();
+        files.add_file(context.data_dir.join("MyMod.esp"));
+        let intake = WorkflowRequestIntake::new(Rc::clone(&prompts), Rc::clone(&files));
 
-        let request = intake.resolve_request(&cli, &probe).unwrap().unwrap();
+        let outcome = intake
+            .resolve(&context.cli, context.directory.path(), &context.probe)
+            .unwrap();
+        let WorkflowIntakeOutcome::Ready(run) = outcome else {
+            panic!("an existing command-line plugin should prepare a Workflow Run");
+        };
 
-        assert_eq!(request.build_mode, BuildMode::Filtered);
-        assert_eq!(request.archive_tool, ArchiveTool::BSArch);
-        assert_eq!(request.plugin.file_name, "MyMod.esp");
-        assert_eq!(
-            request.fallout4_override.as_deref(),
-            Some(std::path::Path::new(r"C:\Fallout4"))
-        );
-        assert!(request.non_interactive);
+        let config = run.config();
+        assert_eq!(config.build_mode, BuildMode::Filtered);
+        assert_eq!(config.archive_tool, ArchiveTool::BSArch);
+        assert_eq!(config.plugin.file_name, "MyMod.esp");
+        assert!(config.non_interactive);
+        assert_eq!(prompts.call_count(), 0);
     }
 
     /// Candidate validation wins before Intake asks the File Space any readiness question.
