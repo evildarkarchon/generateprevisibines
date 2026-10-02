@@ -16,17 +16,19 @@ filesystem mutation, or a log read.
 severities and delays for that step, and which of them differ between build modes and archive
 tools.
 
-Line references are against the **V2.98** batch (`GeneratePrevisibines.bat`, gitignored,
-556 lines, header `PJM V2.98 Jun 2026`). Every citation below was verified against that file.
-Where this document contradicts the older prose in [workarounds.md](workarounds.md) or
-[future-features.md](future-features.md), the citations here are the current ones — see
+Line references are against the **V2.99** batch (`GeneratePrevisibines.bat`, committed at the
+repo root, 564 lines, header `PJM V2.99 Aug 2026`). Every citation below was verified against
+that file. The V2.98 numbering this document used before (556 lines, never committed) runs six
+to nine lines earlier; the V2.98 → V2.99 re-sync and its behavioural diff are recorded on
+issue #32. Where this document contradicts the older prose in [workarounds.md](workarounds.md)
+or [future-features.md](future-features.md), the citations here are the current ones — see
 `.scratch/workflow-operation-ports/issues/11-sync-batch-v298-references.md`.
 
 ---
 
 ## Creation Kit — four operations, one invocation shape
 
-All four go through the single `:RunCK` subroutine (444–465):
+All four go through the single `:RunCK` subroutine (453–474):
 
 ```
 START "CK" /D"<fo4dir>" /wait "CreationKit.exe" -<Operation>:"<PluginNameExt_>" <qualifiers>
@@ -42,128 +44,132 @@ builds argv directly must **not** reproduce them — see
 
 | Operation | Step | Qualifier | Expected output | Post-run log scan |
 |---|---|---|---|---|
-| `GeneratePrecombined` | 1 | `clean all` / `filtered all` — BuildMode-derived (263, 266) | `CombinedObjects.esp` (fixed) | `OUT OF HANDLE ARRAY ENTRIES` (270) → **fatal** (271) |
-| `CompressPSG` | 4 | *(empty)* (293) | `<plugin> - Geometry.csg` | none |
-| `BuildCDX` | 5 | *(empty)* (300) | `<plugin>.cdx` | none |
-| `GeneratePreVisData` | 6 | `clean all` — **hardcoded, ignores BuildMode** (310) | `Previs.esp` (fixed) | `ERROR: visibility task did not complete.` (312) → **warning** (313) |
+| `GeneratePrecombined` | 1 | `clean all` in clean and xbox mode, `filtered all` in filtered mode — BuildMode-derived (268–272) | `CombinedObjects.esp` (fixed) | `OUT OF HANDLE ARRAY ENTRIES` (276) → **fatal** (277) |
+| `CompressPSG` | 4 | *(empty)* (300) — clean mode only | `<plugin> - Geometry.csg` | none |
+| `BuildCDX` | 5 | *(empty)* (307) — clean and xbox mode | `<plugin>.cdx` | none |
+| `GeneratePreVisData` | 6 | `clean all` — **hardcoded, ignores BuildMode** (317) | `Previs.esp` (fixed) | `ERROR: visibility task did not complete.` (319) → **warning** (320) |
 
-`:RunCK` itself enforces only two things, uniformly: the expected output file exists (462),
-and a non-zero exit is downgraded to a warning (463). The log scans live at the call sites —
+`:RunCK` itself enforces only two things, uniformly: the expected output file exists (471),
+and a non-zero exit is downgraded to a warning (472). The log scans live at the call sites —
 their predicate *and severity* differ per step. Both scans are also skipped entirely when the
-CK log is absent (269, 311), which jumps straight to the next step rather than failing.
+CK log is absent (275, 318), which jumps straight to the next step rather than failing.
 
-Step 1 has a second, mode-conditional output check (`<plugin> - Geometry.psg`, line 264) that
-is not the `:RunCK` parameter.
+Step 1 has a second, mode-conditional output check (`<plugin> - Geometry.psg`, line 270, run in
+every mode except filtered) that is not the `:RunCK` parameter. The same file is re-checked on
+entry to step 4 (297), again in every mode except filtered.
 
-Full episode chain per CK run: rename six ENB/ReShade DLLs to `*-PJMdisabled` (445–450) →
-delete the CK log (451) → write header and `Start <time>` to the session log (452–454) →
-`START /wait` (455) → capture `ERRORLEVEL` into `Err_` (456) → write `Ended <time>` (457) →
-**wait 10s** (459) → append the CK log to the session log, or note it was missing (460–461) →
-output-file check (462) → exit-code warning (463).
+Full episode chain per CK run: rename six ENB/ReShade DLLs to `*-PJMdisabled` (454–459) →
+delete the CK log (460) → write header and `Start <time>` to the session log (461–463) →
+`START /wait` (464) → capture `ERRORLEVEL` into `Err_` (465) → write `Ended <time>` (466) →
+**wait 10s** (468) → append the CK log to the session log, or note it was missing (469–470) →
+output-file check (471) → exit-code warning (472).
 
 Note that the DLLs are *not* restored inside `:RunCK` — restoration happens once, at `:Done`
-(353–358). That covers every exit path that *reaches* `:Done`: success via `:Fin`, `:Failed`
-(366–368), and the three `Goto Done` hard stops (249, 254, 306). It does **not** cover
-`:PauseAndExit` (361), which is entered by `goto` from fifteen sites and only falls through
-from `:Done` on the interactive path (360). All but one of those `goto PauseAndExit` sites sit
+(362–367). That covers every exit path that *reaches* `:Done`: success via `:Fin`, `:Failed`
+(375–377), and the three `Goto Done` hard stops (255, 260, 313). It does **not** cover
+`:PauseAndExit` (370), which is entered by `goto` from fifteen sites and only falls through
+from `:Done` on the interactive path (369). All but one of those `goto PauseAndExit` sites sit
 before any CK invocation, so nothing is renamed yet; the exception is step 2's precondition
-(275), reachable only when step 1's identical check at 268 already passed — i.e. on a
+(281), reachable only when step 1's identical check at 274 already passed — i.e. on a
 resume-at-step-2 where this run never renamed anything. Leftover `*-PJMdisabled` files from an
 earlier crashed run are not restored on that path.
 
 ## FO4Edit — two script runs, identical shape
 
-Both through `:RunScript` (521–556).
+Both through `:RunScript` (530–564).
 
 | Step | Script | Source plugin | Required version | Call-site criterion |
 |---|---|---|---|---|
-| 2 | `Batch_FO4MergeCombinedObjectsAndCheck.pas` | `CombinedObjects.esp` | V1.5 (135) | `"Error: "` **present** → warning (278–279) |
-| 7 | `Batch_FO4MergePrevisandCleanRefr.pas` | `Previs.esp` | V2.3 (134) | `"Completed: No Errors."` **absent** → warning (320–321) |
+| 2 | `Batch_FO4MergeCombinedObjectsAndCheck.pas` | `CombinedObjects.esp` | V1.5 (141) | `"Error: "` **present** → warning (284–285) |
+| 7 | `Batch_FO4MergePrevisandCleanRefr.pas` | `Previs.esp` | V2.3 (140) | `"Completed: No Errors."` **absent** → warning (327–328) |
 
 Note the polarity inversion between the two — one fails on a positive match, the other on a
 negative one.
 
 Shared fatal checks inside `:RunScript`: `Error: Missing [<target>] or [<source>] modules`
-(551–552) and absence of `"Completed: "` (553–554).
+(560–561) and absence of `"Completed: "` (562–563).
 
-The launch flag set (534) is:
+The launch flag set (543) is:
 
 ```
 START "xEdit" /B <xEdit.exe> -fo4 -autoexit -P:"%TEMP%\Plugins.txt" <ModDir_> ^
     -Script:<script.pas> -Mod:<target plugin> -log:"%TEMP%\UnattendedScript.log"
 ```
 
-The `-D:<dir>\Data` flag is **not per-call** — `ModDir_` is set once at line 489 when `-FO4:`
+The `-D:<dir>\Data` flag is **not per-call** — `ModDir_` is set once at line 498 when `-FO4:`
 is passed, so both runs get it or neither does.
 
-Full episode chain per run: write `%TEMP%\Plugins.txt` (`*<target>`, `*<source>` — 525–526) →
-delete `%TEMP%\UnattendedScript.log` (528) → **wait 10s** (533) → `START /B` (534: async, no
-`/wait`) → **wait 5s** (536) → PowerShell `AppActivate(<xEdit process>)`, `Start-Sleep 1`,
-`AppActivate('Module Selection')`, `SendKeys {ENTER}` (537) → **poll every 5s** until the
-unattended log appears (539–541) → **wait 10s** (543) → `CloseMainWindow()` (544) →
-**wait 15s** (546) → `TaskKill /IM` (547) → **wait 10s** (549) → append log to session log
-(550) → scan (551–554).
+Full episode chain per run: write `%TEMP%\Plugins.txt` (`*<target>`, `*<source>` — 534–535) →
+delete `%TEMP%\UnattendedScript.log` (537) → **wait 10s** (542) → `START /B` (543: async, no
+`/wait`) → **wait 5s** (545) → PowerShell `AppActivate(<xEdit process>)`, `Start-Sleep 1`,
+`AppActivate('Module Selection')`, `SendKeys {ENTER}` (546) → **poll every 5s** until the
+unattended log appears (548–550) → **wait 10s** (552) → `CloseMainWindow()` (553) →
+**wait 15s** (555) → `TaskKill /IM` (556) → **wait 10s** (558) → append log to session log
+(559) → scan (560–563).
 
 ## Archive — verbs, and where the tools diverge
 
 | Verb | Archive2 | BSArch |
 |---|---|---|
-| pack one folder | `Archive2.exe <folder> -c="<archive>" [-compression=XBox] -f=General -q`, cwd = `Data` (396) | `BSArch.exe Pack "<fo4>\BSArchTemp" "<archive>" -mt -fo4 -z`, cwd = `Data` (388) — packs a *staging dir* |
-| pack multiple folders | `meshes\precombined,vis` — comma-separated (433) | implicit; staging dir already holds both |
-| extract | `Archive2.exe "<archive>" -e=. -q` (407) | **never invoked** — `:Extract` (404–410) has no BSArch branch |
+| pack one folder | `Archive2.exe <folder> -c="<archive>" %Arch2Quals_% -f=General -q`, cwd = `Data` (405) — `%Arch2Quals_%` is always empty at V2.99, see below | `BSArch.exe Pack "<fo4>\BSArchTemp" "<archive>" -mt -fo4 -z`, cwd = `Data` (397) — packs a *staging dir* |
+| pack multiple folders | `meshes\precombined,vis` — comma-separated (442) | implicit; staging dir already holds both |
+| extract | `Archive2.exe "<archive>" -e=. -q` (416) | **never invoked** — `:Extract` (413–419) has no BSArch branch |
 | append | **not supported** → extract-repack | **also not a verb** — see below |
-| delete source folder | `RD /S /Q` (286, 434, 329) | never — folders were `MOVE`d into staging (387, 420) |
+| delete source folder | `RD /S /Q` (292, 443, 336) | never — folders were `MOVE`d into staging (396, 429) |
 
 **BSArch has no native append.** It runs the *identical* `Pack` command in steps 3 and 8. The
 difference is that step 3's BSArch path **moves** the precombined meshes into
-`<fo4>\BSArchTemp\Meshes` (386–387) rather than deleting them (contrast line 286,
-Archive2-only), so step 8 adds `vis` to the same tree (419–420) and repacks wholesale.
+`<fo4>\BSArchTemp\Meshes` (395–396) rather than deleting them (contrast line 292,
+Archive2-only), so step 8 adds `vis` to the same tree (428–429) and repacks wholesale.
 Archive2 recovers prior content *from the archive*; BSArch retains it *on disk* across steps.
 
-On failure, both BSArch paths move the staged folder back before `goto failed` (391, 424) —
+On failure, both BSArch paths move the staged folder back before `goto failed` (400, 433) —
 note the two targets differ (`Data\Meshes` vs `Data`), mirroring the differing `MOVE`
 destinations above.
 
-Archive2's step-8 workaround ([workarounds.md](workarounds.md) §4, V2.98 lines 428–435):
-extract into `Data` (429) → **wait 5s** (430) → delete the BA2 (431) → re-scan
-`meshes\precombined\*.nif` (432) → repack `meshes\precombined,vis` (433) → `RD` the
-precombined folder (434).
+Archive2's step-8 workaround ([workarounds.md](workarounds.md) §4, V2.99 lines 437–444):
+extract into `Data` (438) → **wait 5s** (439) → delete the BA2 (440) → re-scan
+`meshes\precombined\*.nif` (441) → repack `meshes\precombined,vis` (442) → `RD` the
+precombined folder (443).
 
 That re-scan is a branch, not an assertion: if the extract produced no precombined `.nif`
-files, control falls through to `:ArchiveOnly` (432 → 436) and the archive is rebuilt from
+files, control falls through to `:ArchiveOnly` (441 → 445) and the archive is rebuilt from
 `vis` alone, silently dropping the precombines.
 
 **Two divergences worth designing around:**
 
-- **Xbox compression is Archive2-only.** `Arch2Quals_=-compression=XBox` (382) reaches the
-  Archive2 command line (396) but only the *log header* on the BSArch path (383, 417) — it
-  never reaches the BSArch command (388, 421). So `-xbox -bsarch` silently produces
-  non-Xbox archives. Decide deliberately in Phase B whether to replicate or fix.
-  `Arch2Quals_` is also only ever assigned inside `:Archive` (381–382), and the BSArch step-8
-  path (417) does not call `:Archive` — so on a resume directly at step 8 even that log header
-  prints empty.
+- **No archive gets Xbox compression.** At V2.99 the only line that would set
+  `Arch2Quals_=-compression=XBox` is commented out (`REM`, 391), so `Arch2Quals_` is always
+  the empty string `:Archive` assigns at 390. The `%Arch2Quals_%` slot on the Archive2 command
+  line (405) expands to nothing, and both archive log headers (392, 426) print a doubled space
+  where the qualifier would go. `-xbox` therefore changes nothing on either archive path. The
+  BSArch command never carried the qualifier in any version (397, 430). (V2.98 still set it, so
+  there Xbox compression reached the Archive2 command line only, and `-xbox -bsarch` silently
+  produced non-Xbox archives.) Decide deliberately in Phase B whether to replicate or fix —
+  owned by #29.
 - **BSArch staging state is cross-step.** `<fo4>\BSArchTemp` is cleared in exactly two
-  places: line 256, inside the Step 1 preamble, and line 426, after a *successful* BSArch
+  places: line 262, inside the Step 1 preamble, and line 435, after a *successful* BSArch
   step-8 pack. So resuming at step 3 or 8 with `-bsarch` inherits whatever a run that stopped
   between step 3 and a successful step 8 left there — including the partially-moved tree from
-  a failed pack (422–425, which returns only the one folder it moved).
+  a failed pack (431–434, which returns only the one folder it moved).
 
 ## Waits (MO2 VFS sync)
 
 | Duration | After which action | Line | Notes |
 |---|---|---|---|
-| 5s | seed copy of `xPrevisPatch.esp` — **only if** not yet visible | 191 | conditional |
-| **10s** | **every Creation Kit exit** (all 4 operations) | 459 | ×4 clean, ×2 filtered/xbox |
-| 10s | **before** launching xEdit | 533 | pre-launch |
-| 5s | after launching xEdit, before `SendKeys` | 536 | lets the dialog appear |
-| 1s | between the two `AppActivate` calls | 537 | inside the PowerShell one-liner |
-| 5s | each poll iteration awaiting the unattended log | 540 | unbounded loop |
-| 10s | after the log appears, before `CloseMainWindow()` | 543 | |
-| 15s | after `CloseMainWindow()`, before `TaskKill` | 546 | |
-| 10s | after `TaskKill`, before reading the log | 549 | |
-| 5s | after Archive2 extract, before deleting the BA2 | 430 | Archive2 only |
+| 5s | seed copy of `xPrevisPatch.esp` — **only if** not yet visible | 197 | conditional |
+| **10s** | **every Creation Kit exit** (all 4 operations) | 468 | ×4 clean, ×3 xbox, ×2 filtered |
+| 10s | **before** launching xEdit | 542 | pre-launch |
+| 5s | after launching xEdit, before `SendKeys` | 545 | lets the dialog appear |
+| 1s | between the two `AppActivate` calls | 546 | inside the PowerShell one-liner |
+| 5s | each poll iteration awaiting the unattended log | 549 | unbounded loop |
+| 10s | after the log appears, before `CloseMainWindow()` | 552 | |
+| 15s | after `CloseMainWindow()`, before `TaskKill` | 555 | |
+| 10s | after `TaskKill`, before reading the log | 558 | |
+| 5s | after Archive2 extract, before deleting the BA2 | 439 | Archive2 only |
 
-Fixed cost: ~50s per xEdit run (×2) plus polling; 10s per CK run (×4 clean, ×2 otherwise).
+Fixed cost: ~50s per xEdit run (×2) plus polling; 10s per CK run (×4 clean, ×3 xbox, ×2
+filtered).
 
 ## User prompts
 
@@ -174,43 +180,52 @@ a prompt of the first kind.
 
 | Prompt | Line | Why non-interactive skips it | Non-interactive behaviour |
 |---|---|---|---|
-| `Enter Patch Plugin name (return to exit)` | 152 | `NoPrompt_` test at 150 | `PauseAndExit` |
-| `Plugin does not exist, Rename xPrevisPatch.esp to this? [Y/N]` | 187 | `NoPrompt_` test at 185 | error, back to `:GetPlugin` → exit |
-| `Plugin already exists, Use It? [Y], Exit [N], Rerun from failed step [C]` | 204 | `NoPrompt_` test at 203 | assumes **Y** — straight to step 1 |
-| `Restart at step (1 - 8 or 0 to exit)` | 220 | `:GetStep` is entered only from 206 (**C**), or re-entered from 234 / 241 | unreachable |
-| `Precombine directory … needs to be empty. Clean it? [Y/N]` | 233 | `:RePrecomb` is a `:GetStep` target only | unreachable |
-| `Previs directory (Data\vis) needs to be empty. Clean it? [Y/N]` | 240 | `:RePreVis` is a `:GetStep` target only | unreachable |
-| `Remove working files [Y]?` | 346 | `NoPrompt_` test at 345 | assumes **Y** — always cleans |
+| `Enter Patch Plugin name (return to exit)` | 158 | `NoPrompt_` test at 156 | `PauseAndExit` |
+| `Plugin does not exist, Rename xPrevisPatch.esp to this? [Y/N]` | 193 | `NoPrompt_` test at 191 | error, back to `:GetPlugin` → exit |
+| `Plugin already exists, Use It? [Y], Exit [N], Rerun from failed step [C]` | 210 | `NoPrompt_` test at 209 | assumes **Y** — straight to step 1 |
+| `Restart at step (1 - 8 or 0 to exit)` | 226 | `:GetStep` is entered only from 212 (**C**), or re-entered from 240 / 247 | unreachable |
+| `Precombine directory … needs to be empty. Clean it? [Y/N]` | 239 | `:RePrecomb` is a `:GetStep` target only | unreachable |
+| `Previs directory (Data\vis) needs to be empty. Clean it? [Y/N]` | 246 | `:RePreVis` is a `:GetStep` target only | unreachable |
+| `Remove working files [Y]?` | 355 | `NoPrompt_` test at 354 | assumes **Y** — always cleans |
 
 The two "clean it?" prompts are the only places the workflow deletes `Data\meshes\Precombined`
-(235) or `Data\vis` (242) on the user's behalf at intake, and they exist only on the resume
+(241) or `Data\vis` (248) on the user's behalf at intake, and they exist only on the resume
 path (`:RePrecomb`, `:RePreVis`).
 
 ## Per-step notes not captured above
 
-- **Intake**: resume menu lists steps 4–5 only in clean mode (213–216); an unrecognised
-  choice loops back to `:CheckPluginExists` (229).
-- **Step 1 preamble**: precombined dir non-empty → `:Done` (247–249, non-resume entry only);
-  archive already exists → back to `:GetPlugin` (251), i.e. re-prompt interactively and
-  `PauseAndExit` otherwise; `Data\vis` non-empty → `:Done` (252–254). None of these three is
-  a `:failed`. Then `RD` of `<fo4>\BSarchTemp` (256) — *only reached via step-1 entry* —
-  delete `CombinedObjects.esp` (257), `- Geometry.psg` (258), and the session log (259).
-- **Step 2 precondition**: no precombined meshes → `PauseAndExit`, **not** `failed` (275).
-- **Step 3**: no precombined meshes → **silently skip to step 4**, not an error (283); in
-  filtered/xbox mode step 4 then immediately forwards to step 6 (290).
-- **Step 5**: the only step that runs CK with **zero** pre-checks (297–300 — only the
-  build-mode gate).
+- **Intake**: resume menu lists steps 4–5 in every mode except filtered (219–222); an
+  unrecognised choice loops back to `:CheckPluginExists` (235).
+- **Step 1 preamble**: precombined dir non-empty → `:Done` (253–255, non-resume entry only);
+  archive already exists → back to `:GetPlugin` (257), i.e. re-prompt interactively and
+  `PauseAndExit` otherwise; `Data\vis` non-empty → `:Done` (258–260). None of these three is
+  a `:failed`. Then `RD` of `<fo4>\BSarchTemp` (262) — *only reached via step-1 entry* —
+  delete `CombinedObjects.esp` (263), `- Geometry.psg` (264), and the session log (265).
+- **Step 2 precondition**: no precombined meshes → `PauseAndExit`, **not** `failed` (281).
+- **Step 3**: no precombined meshes → **silently skip to step 4**, not an error (289); in
+  filtered mode step 4 then immediately forwards to step 6 (296), and in clean and xbox mode
+  the skip lands on step 4's `- Geometry.psg` check (297).
+- **Step 4**: three-way build-mode gate. Filtered → step 6 (296). Clean and xbox: no
+  `<plugin> - Geometry.psg` → `failed` (297). Xbox then skips `CompressPSG` and goes straight
+  to step 5 (298), so its `.psg` is never compressed or deleted — it is the geometry file the
+  Finish manifest lists for xbox. Clean runs `CompressPSG` (299–300) and deletes the `.psg`
+  (301).
+- **Step 5**: the only step that runs CK with **zero** pre-checks of its own (304–307 — only
+  the build-mode gate, which skips it in filtered mode alone, 305). Reached by fallthrough it
+  inherits step 4's `.psg` check; a resume at step 5 enters at `:BldCDX` (231) and skips that.
 - **Step 6**: non-resume entry with a non-empty `Data\vis` is a hard stop via `:Done`, not a
-  `failed` (304–306).
-- **Step 7 preconditions**: no `.uvd` files → `failed` (316); no `Previs.esp` → `failed` (317).
+  `failed` (311–313).
+- **Step 7 preconditions**: no `.uvd` files → `failed` (323); no `Previs.esp` → `failed` (324).
   Contrast step 8's warning for the same missing `.uvd` files.
-- **Step 8**: no `.uvd` files → **warning** and jump to `:Fin`, not a failure (326). Missing
-  `- Main.ba2` → plain `:Archive vis` (415, 436–437). On the BSArch path that fallback stages
-  `vis` under `BSArchTemp\Meshes` (386–387, which hardcodes `\Meshes` for its step-3 caller),
+- **Step 8**: no `.uvd` files → **warning** and jump to `:Fin`, not a failure (333). Missing
+  `- Main.ba2` → plain `:Archive vis` (424, 445–446). On the BSArch path that fallback stages
+  `vis` under `BSArchTemp\Meshes` (395–396, which hardcodes `\Meshes` for its step-3 caller),
   so the resulting BA2 holds `Meshes\vis\*.uvd` rather than `vis\*.uvd` — a latent bug in the
   batch, not a behaviour to replicate.
-- **Finish**: created-files manifest lists `.csg` / `.cdx` only in clean mode (337–340). The
+- **Finish**: created-files manifest (343–350) lists the plugin and `- Main.ba2` in every mode;
+  outside filtered mode it adds `<plugin>.cdx` plus one geometry file — `- Geometry.csg` in
+  clean mode, `- Geometry.psg` in xbox mode (345–349). The
   "Remove working files [Y]?" prompt is **skipped when non-interactive** — meaning
-  non-interactive runs always clean (345). DLL restore runs on every exit path that reaches
-  `:Done`, including `:Failed` (366–368 → `:Done`, 353–358) — but not on the `:PauseAndExit`
+  non-interactive runs always clean (354). DLL restore runs on every exit path that reaches
+  `:Done`, including `:Failed` (375–377 → `:Done`, 362–367) — but not on the `:PauseAndExit`
   paths; see the `:RunCK` note above for why that is nearly always harmless.
