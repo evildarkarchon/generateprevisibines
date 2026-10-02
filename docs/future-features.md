@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document is the implementation backlog for turning the Rust **scaffold** into a full replacement for the V2.98 GeneratePrevisibines batch workflow. [workarounds.md](workarounds.md) and the other docs in `docs/` remain the behavioral source of truth until parity is demonstrated on a real Fallout 4 / MO2 setup. [episodes.md](episodes.md) is the per-step parity reference: it enumerates every external-tool interaction — command lines, pre/post-checks, log predicates and severities, delays — so a slice below can point at it instead of restating the detail.
+This document is the implementation backlog for turning the Rust **scaffold** into a full replacement for the V2.99 GeneratePrevisibines batch workflow. [workarounds.md](workarounds.md) and the other docs in `docs/` remain the behavioral source of truth until parity is demonstrated on a real Fallout 4 / MO2 setup. [episodes.md](episodes.md) is the per-step parity reference: it enumerates every external-tool interaction — command lines, pre/post-checks, log predicates and severities, delays — so a slice below can point at it instead of restating the detail.
 
 **Reader:** a maintainer choosing the next vertical slice.  
 **After reading:** you can pick a slice, know which batch behavior it must preserve, and see how it relates to existing modules (`cli`, `discovery`, `validation`, `workflow`, `tools`).
@@ -13,20 +13,21 @@ This document is the implementation backlog for turning the Rust **scaffold** in
 
 These are required before claiming the Rust binary replaces the batch script.
 
-Line references are against the **V2.98** batch (`GeneratePrevisibines.bat`, gitignored,
-556 lines, header `PJM V2.98 Jun 2026`) — the same file [episodes.md](episodes.md) cites.
+Line references are against the **V2.99** batch (`GeneratePrevisibines.bat`, committed at
+the repo root, 564 lines, header `PJM V2.99 Aug 2026`) — the same file [episodes.md](episodes.md)
+cites.
 
 | Area | Batch reference | Rust target |
 |------|-----------------|-------------|
-| Tool discovery | Lines 24–40 (xEdit), 46–50 (Fallout 4 via registry), 67–88 (CK, Archive2, version display), 513 + 138 (BSArch) | `discovery` — registry + cwd FO4Edit, Fallout 4 path, CK, Archive2, BSArch |
+| Tool discovery | Lines 24–40 (xEdit), 46–50 (Fallout 4 via registry), 67–88 (CK, Archive2, version display), 522 + 144 (BSArch) | `discovery` — registry + cwd FO4Edit, Fallout 4 path, CK, Archive2, BSArch |
 | CLI / parameters | `:CheckParam`, header comments | `cli` — `-clean`/`-filtered`/`-xbox`, `-bsarch`, `-FO4:dir`, plugin arg |
-| Plugin rules | `:CheckPluginName`, `:SpaceInName`, `:TryCopySeed` | `validation` — reserved names and clean-mode spaces; `intake` — seed readiness and copy ordering |
+| Plugin rules | `:CheckPluginName`, `:SpaceInName`, `:TryCopySeed` | `validation` — reserved names and no spaces outside filtered mode; `intake` — seed readiness and copy ordering |
 | CKPE validation | `:TestCKPEConfig`, `:CheckCKPEConfig` | `validation` — TOML/INI/legacy ini, log path, handle limit warning |
 | xEdit script versions | `:CheckScripts` | `validation` — script presence + version markers |
 | 8-step workflow | `:Precomb` … `:Fin`, `:GetStep` | `workflow` — correct step list per build mode, resume from step N |
 | CK execution | `:RunCK` | `tools/creation_kit` — DLL guard, wait, log append, MO2 delay |
 | FO4Edit scripts | `:RunScript` | `tools/fo4edit` — plugin list, `-D:Data` when `-FO4` set, keystroke automation |
-| Archives | `:Archive`, `:Extract`, `:AddToArchive` | `tools/archive` — Archive2 extract/repack; BSArch pack/append; Xbox compression |
+| Archives | `:Archive`, `:Extract`, `:AddToArchive` | `tools/archive` — Archive2 extract/repack; BSArch pack/append; Xbox compression (V2.99 no longer requests it — line 391 is `REM`'d; #29 decides) |
 | DLL restore | `:Done` | `tools/dll` — restore `*-PJMdisabled` on success and failure |
 | Logging | `%TEMP%` logs, unattended log | `logging` — session log + unattended log merge |
 | UX messages | Throughout | Match familiar batch error strings where practical ([behaviors.md](behaviors.md)) |
@@ -46,7 +47,7 @@ Ordered slices recommended for parity work:
 4. **Step 3 — Archive precombines** — create `{plugin} - Main.ba2`, delete precombined folder when using Archive2.
    Per-verb command lines for both tools, the Xbox-compression divergence and the BSArch staging-dir
    behaviour are in [episodes.md](episodes.md) § *Archive*.
-5. **Steps 4–5 — PSG / CDX** (clean only) — `CompressPSG`, `BuildCDX`, delete intermediate `.psg`.
+5. **Steps 4–5 — PSG / CDX** (clean and xbox; filtered skips both) — `- Geometry.psg` presence check on step-4 entry, then `CompressPSG` and delete the intermediate `.psg` (clean only — xbox skips straight to step 5 and keeps the `.psg`), then `BuildCDX`. Mode gates are in [episodes.md](episodes.md) § *Per-step notes*.
 6. **Step 6 — Generate previs** — empty `Data\vis`, `GeneratePreVisData`, visibility task warning.
 7. **Step 7 — Merge previs** — `Batch_FO4MergePrevisandCleanRefr.pas`, success string check.
 8. **Step 8 — Add previs to archive** — `AddToArchive` with extract-repack path for Archive2.
@@ -88,8 +89,10 @@ Manual integration checklist (minimum):
 - [ ] Interactive: existing plugin Y/N/C; **C** shows resume menu; **0** re-prompts plugin name
 - [ ] Interactive: resume step 1 with existing `meshes\precombined\*.nif` prompts to delete folder
 - [ ] Non-interactive: `generateprevisibines.exe MyMod.esp` runs Step 1 only; errors if `--resume-from` ≥ 2
-- [ ] Clean mode: CK qualifiers `clean all`; PSG `{plugin} - Geometry.psg` required after CK
-- [ ] Filtered/Xbox: CK qualifiers `filtered all`; no PSG check
+- [ ] Clean/Xbox mode: CK qualifiers `clean all`; PSG `{plugin} - Geometry.psg` required after CK
+- [ ] Filtered: CK qualifiers `filtered all`; no PSG check
+- (The two items above are V2.99 behaviour. Step 1 as implemented still follows V2.98, which
+  grouped Xbox with Filtered here; the realignment is a follow-up recorded on #32.)
 - [ ] CK log scanned for `OUT OF HANDLE ARRAY ENTRIES` (case-insensitive, any prefix)
 - [ ] DLLs renamed to `*-PJMdisabled` during CK and restored after exit
 
@@ -97,7 +100,8 @@ Manual integration checklist (minimum):
 
 - [ ] Clean mode full run produces `.esp`, `.csg`, `.cdx`, `- Main.ba2`
 - [ ] Filtered mode skips steps 4–5
-- [ ] Xbox mode uses Xbox compression flag on archives
+- [ ] Xbox mode skips `CompressPSG` but runs `BuildCDX`, and ships `- Geometry.psg` + `.cdx`
+- [ ] Xbox mode archives carry no Xbox compression flag (V2.99 `REM`s it at line 391; #29 decides whether to keep that)
 - [ ] Resume from step 6 after forced failure at step 5
 - [ ] BSArch path vs Archive2 path
 - [ ] `-FO4:` override sets xEdit data directory correctly
@@ -120,11 +124,15 @@ Optional once parity exists; must not change batch-compatible defaults:
 
 - GitHub Actions: `cargo build --release`, `cargo test`, `cargo clippy` on Windows runner.
 - Ship `generateprevisibines.exe` with README install instructions.
-- Embed version from `Cargo.toml`; print batch reference version (V2.98) in banner.
-- Version alignment with the local V2.98 batch reference (not tracked in git). Note the batch
-  itself is inconsistent: its banner and header say V2.98, but the session-log header it writes
-  is hardcoded `Starting <mode> Build V2.95` (line 260). `logging::build_session_header`
-  reproduces the V2.95 literal deliberately — see the doc comment there.
+- Embed version from `Cargo.toml`; print batch reference version (V2.99) in banner.
+- Version alignment with the V2.99 batch reference, now committed at the repo root. V2.98 (kept
+  locally, never tracked in git) was inconsistent: its banner and header said V2.98, but the
+  session-log header it wrote was hardcoded `Starting <mode> Build V2.95` (V2.98 line 260).
+  V2.99 writes its own version there — `Starting <mode> Build V2.99` (line 266), matching the
+  banner (line 18) and header (line 15). `logging::build_session_header` still reproduces the
+  V2.95 literal deliberately — see the doc comment there, whose own bump condition ("only if the
+  batch's own line 260 changes") V2.99 has now met; updating it is a code follow-up recorded on
+  #32.
 
 ---
 
