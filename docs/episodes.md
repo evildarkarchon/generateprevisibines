@@ -62,7 +62,9 @@ carries on into the next step (Step 1 into 270/274, Step 6 into 318 and Step 7).
 runs reach `PAUSE`/`Exit` (371–372) and really stop. The port deliberately does **not**
 replicate this: a missing Creation Kit output stops every run — decided on #27. The same
 `goto :eof`-inside-`Call` shape sits under the fatal checks in `:RunScript` (560–563), which
-the port also stops on in every mode — decided on #28 — and under `:Archive` (owned by #29).
+the port also stops on in every mode — decided on #28 — and under every `:Archive` failure path
+(the non-zero exits at 398/406/417/431, the archive-exists check at 408, and the BSArch
+move-backs at 400/433), which the port likewise stops on in every mode — decided on #29.
 
 Step 1 has a second, mode-conditional output check (`<plugin> - Geometry.psg`, line 270, run in
 every mode except filtered) that is not the `:RunCK` parameter. The same file is re-checked on
@@ -178,13 +180,49 @@ files, control falls through to `:ArchiveOnly` (441 → 445) and the archive is 
   where the qualifier would go. `-xbox` therefore changes nothing on either archive path. The
   BSArch command never carried the qualifier in any version (397, 430). (V2.98 still set it, so
   there Xbox compression reached the Archive2 command line only, and `-xbox -bsarch` silently
-  produced non-Xbox archives.) Decide deliberately in Phase B whether to replicate or fix —
-  owned by #29.
+  produced non-Xbox archives.) The port replicates this: no Build Mode requests Xbox
+  compression and `-xbox -bsarch` gets no warning, because nothing is being dropped — decided
+  on #29.
 - **BSArch staging state is cross-step.** `<fo4>\BSArchTemp` is cleared in exactly two
   places: line 262, inside the Step 1 preamble, and line 435, after a *successful* BSArch
   step-8 pack. So resuming at step 3 or 8 with `-bsarch` inherits whatever a run that stopped
   between step 3 and a successful step 8 left there — including the partially-moved tree from
   a failed pack (431–434, which returns only the one folder it moved).
+
+**Port divergences, decided on #29** (rationale in
+[ADR-0004](adr/0004-plugin-archive-is-the-only-cross-step-archive-state.md)):
+
+- **The Plugin Archive is the only state carried across the archive steps.** Step 3 packs the
+  precombines and removes the loose files with either tool. Step 8 rebuilds the archive from its
+  own contents plus `vis`. Archive2 keeps the batch's extract → 5s → repack exactly. BSArch
+  `unpack`s the archive into staging, moves `vis` in and packs. `BSArchTemp` is gone: one
+  run-owned work folder, `<fo4>\ArchiveWork`, holds the BSArch staging tree and both tools'
+  output, and it never outlives the step that created it.
+- **Build elsewhere, check, then swap.** Both tools write the new archive into the work folder
+  under its final name. Archive2 does this with `-c=` pointing there; its sources stay relative
+  under cwd `Data`, so rooting is unchanged. The archive-exists check runs on that file, and
+  only then is the archive in `Data` replaced. The batch deletes the archive *before*
+  repacking (440 → 442), so its failed repack leaves no archive.
+- **BSArch waits 5s before every pack**, in Step 3 and Step 8, after everything is staged. The
+  batch's BSArch path has no wait. Under MO2, files moved out of the virtual `Data` may not have
+  settled when BSArch reads staging, which yields an incomplete archive.
+- **A leftover work folder** at the start of Step 3 or 8 stops the run, with its path named.
+  The port never clears it, because a crash may have left the user's moved precombines in it.
+  If a BSArch failure's move-back itself fails, the run stops with both paths named and staging
+  left in place.
+- **No precombined meshes after the extract or unpack stops the run** before the old archive
+  is touched, instead of rebuilding from `vis` alone (441 → 445).
+- **`:ArchiveOnly` is dropped.** A missing archive at Step 8 stops the run (see *Per-step
+  notes*), which also removes the `Meshes\vis\*.uvd` bug.
+- **Tool output** is captured — stdout *and* stderr — and appended to the session log under the
+  batch's `Creating … Archive …` / `====` header. The batch keeps stdout only, which loses
+  Archive2's `-1` stack traces.
+
+**Known limitation, kept for parity:** BSArch 1.0 roots internal paths after the *first*
+`\data\` in the absolute path, so an install under a `Data`-named ancestor (for example
+`D:\Data\Games\Fallout 4`) mis-roots every file. That applies to `Data\…` sources and to
+staged ones alike, and Archive2 may behave the same way (unverified). The batch has the same
+exposure, and the port does not guard against it.
 
 ## Waits (MO2 VFS sync)
 
@@ -203,6 +241,10 @@ files, control falls through to `:ArchiveOnly` (441 → 445) and the archive is 
 
 Fixed cost: ~50s per xEdit run (×2) plus polling; 10s per CK run (×4 clean, ×3 xbox, ×2
 filtered).
+
+The port adds one wait the batch lacks: **5s before every BSArch pack** (Steps 3 and 8), so that
+files moved out of MO2's virtual `Data` settle before BSArch reads its staging folder — decided
+on #29.
 
 ## User prompts
 
@@ -233,11 +275,16 @@ path (`:RePrecomb`, `:RePreVis`).
   archive already exists → back to `:GetPlugin` (257), i.e. re-prompt interactively and
   `PauseAndExit` otherwise; `Data\vis` non-empty → `:Done` (258–260). None of these three is
   a `:failed`. Then `RD` of `<fo4>\BSarchTemp` (262) — *only reached via step-1 entry* —
-  delete `CombinedObjects.esp` (263), `- Geometry.psg` (264), and the session log (265).
+  delete `CombinedObjects.esp` (263), `- Geometry.psg` (264), and the session log (265). The
+  port does **not** port the `RD` at 262: the port never uses `BSArchTemp`, and a leftover one
+  may hold a batch run's moved precombines — decided on #29.
 - **Step 2 precondition**: no precombined meshes → `PauseAndExit`, **not** `failed` (281).
 - **Step 3**: no precombined meshes → **silently skip to step 4**, not an error (289); in
   filtered mode step 4 then immediately forwards to step 6 (296), and in clean and xbox mode
-  the skip lands on step 4's `- Geometry.psg` check (297).
+  the skip lands on step 4's `- Geometry.psg` check (297). The skip is reachable only on a
+  resume at 3, because the port's Step 2 stops on zero meshes. The port completes with nothing
+  to do when the archive already exists (Step 3 ran on an earlier attempt), and **stops the run**
+  when there is no archive either — decided on #29.
 - **Step 4**: three-way build-mode gate. Filtered → step 6 (296). Clean and xbox: no
   `<plugin> - Geometry.psg` → `failed` (297). Xbox then skips `CompressPSG` and goes straight
   to step 5 (298), so its `.psg` is never compressed or deleted — it is the geometry file the
@@ -254,7 +301,10 @@ path (`:RePrecomb`, `:RePreVis`).
   `- Main.ba2` → plain `:Archive vis` (424, 445–446). On the BSArch path that fallback stages
   `vis` under `BSArchTemp\Meshes` (395–396, which hardcodes `\Meshes` for its step-3 caller),
   so the resulting BA2 holds `Meshes\vis\*.uvd` rather than `vis\*.uvd` — a latent bug in the
-  batch, not a behaviour to replicate.
+  batch, not a behaviour to replicate. The port keeps the no-`.uvd` warning as a Build Warning
+  and completes. It is reachable only on a resume at 8, and it is the normal state after a Step 8
+  that succeeded. A missing `- Main.ba2` **stops the run** instead of falling back to
+  `:ArchiveOnly`: a `vis`-only archive is a broken build — decided on #29.
 - **Finish**: created-files manifest (343–350) lists the plugin and `- Main.ba2` in every mode;
   outside filtered mode it adds `<plugin>.cdx` plus one geometry file — `- Geometry.csg` in
   clean mode, `- Geometry.psg` in xbox mode (345–349). The

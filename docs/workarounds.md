@@ -33,6 +33,10 @@ moved.
   that sequence — it is one iteration of the unbounded `:loop` poll (548-550) awaiting the
   unattended log, so its total cost scales with how long the script takes
 - **Keep these delays; they're not arbitrary**
+- The port adds **5s before every BSArch pack** (Steps 3 and 8), which the batch's BSArch path
+  never had. BSArch doesn't write to `Data` itself, but the files it packs are moved out of MO2's
+  virtual `Data` into a staging folder. If they haven't settled when BSArch reads that folder,
+  the archive comes out incomplete (decided on #29).
 
 ## 3. DLL Renaming (batch lines 454-459, 362-367)
 
@@ -51,3 +55,7 @@ moved.
   `Archive2.exe "<archive>" -e=. -q`; `:AddToArchive2` (437-444) then waits 5s, deletes the
   BA2, and repacks `meshes\precombined,vis`
 - **This is an Archive2.exe limitation, not inefficient code**
+- The port keeps extract → 5s → repack, and applies the same rebuild to BSArch through `unpack`
+  (decided on #29, [ADR-0004](adr/0004-plugin-archive-is-the-only-cross-step-archive-state.md)).
+  It changes only *where* the repack writes: into a work folder beside `Data`. The old archive is
+  replaced only after the new one exists.
