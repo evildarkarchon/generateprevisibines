@@ -64,8 +64,10 @@ impl WorkflowIntakePrompts for InteractiveWorkflowIntakePrompts {
         interactive::report_missing_plugin(plugin_file);
     }
 
-    fn confirm_seed_copy(&self, plugin_file: &str) -> Result<bool> {
-        interactive::prompt_seed_copy_confirmation(plugin_file)
+    fn confirm_seed_copy(&self, _plugin_file: &str) -> Result<bool> {
+        // The terminal already named the missing plugin via `report_missing_plugin`, so the
+        // confirmation wording does not repeat it; the seam keeps the name for other adapters.
+        interactive::prompt_seed_copy_confirmation()
     }
 
     fn report_seed_copy_success(&self) {

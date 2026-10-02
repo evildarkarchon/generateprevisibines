@@ -141,7 +141,7 @@ pub fn report_missing_plugin(plugin_file: &str) {
 /// # Errors
 ///
 /// Returns [`Error::Prompt`] when the terminal confirmation cannot be completed.
-pub fn prompt_seed_copy_confirmation(_plugin_file: &str) -> Result<bool> {
+pub fn prompt_seed_copy_confirmation() -> Result<bool> {
     Ok(Confirm::new()
         .with_prompt("Copy xPrevisPatch.esp as a starting plugin?")
         .default(false)
