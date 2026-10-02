@@ -7,7 +7,7 @@ the repo root, 564 lines, header `PJM V2.99 Aug 2026`) — the same file [episod
 cites.
 
 - **Reserved Plugin Names**: "previs", "combinedobjects", "xprevispatch" are forbidden (`:CheckPluginName` lines 174-182)
-- **Space Check**: Plugin names cannot contain spaces in clean or xbox mode — only filtered mode skips the check (lines 161-163, error path `:SpaceInName` 183-186). V2.98 checked clean mode only, and the port's `validation` still does
+- **Space Check**: Plugin names cannot contain spaces in clean or xbox mode — only filtered mode skips the check (lines 161-163, error path `:SpaceInName` 183-186). V2.98 checked clean mode only; the port's `validation` follows V2.99 (since #34)
 - **8-Step Resume**: Users can restart from any step 1-8 after failures (`:GetStep` lines 214-235)
 - **CKPE Config Checking**: Must validate `bBSPointerHandleExtremly=true` setting exists
 - **Multiple Config Locations**: CKPE may use .toml, .ini, or fallout4_test.ini with different setting names

@@ -91,8 +91,8 @@ Manual integration checklist (minimum):
 - [ ] Non-interactive: `generateprevisibines.exe MyMod.esp` runs Step 1 only; errors if `--resume-from` ≥ 2
 - [ ] Clean/Xbox mode: CK qualifiers `clean all`; PSG `{plugin} - Geometry.psg` required after CK
 - [ ] Filtered: CK qualifiers `filtered all`; no PSG check
-- (The two items above are V2.99 behaviour. Step 1 as implemented still follows V2.98, which
-  grouped Xbox with Filtered here; the realignment is a follow-up recorded on #32.)
+- (The two items above are V2.99 behaviour. V2.98 grouped Xbox with Filtered here; Step 1 was
+  realigned to V2.99 in #34.)
 - [ ] CK log scanned for `OUT OF HANDLE ARRAY ENTRIES` (case-insensitive, any prefix)
 - [ ] DLLs renamed to `*-PJMdisabled` during CK and restored after exit
 
@@ -129,10 +129,9 @@ Optional once parity exists; must not change batch-compatible defaults:
   locally, never tracked in git) was inconsistent: its banner and header said V2.98, but the
   session-log header it wrote was hardcoded `Starting <mode> Build V2.95` (V2.98 line 260).
   V2.99 writes its own version there — `Starting <mode> Build V2.99` (line 266), matching the
-  banner (line 18) and header (line 15). `logging::build_session_header` still reproduces the
-  V2.95 literal deliberately — see the doc comment there, whose own bump condition ("only if the
-  batch's own line 260 changes") V2.99 has now met; updating it is a code follow-up recorded on
-  #32.
+  banner (line 18) and header (line 15). `logging::build_session_header` reproduces that line's
+  literal, not the reference version, and was bumped to V2.99 in #35 — see the doc comment there
+  for why the two are tracked separately.
 
 ---
 
