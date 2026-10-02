@@ -41,7 +41,7 @@ One interaction between the build and something outside the process: a Creation 
 _Avoid_: tool call, adapter invocation, side effect
 
 **Operation Ports**:
-The adapters a Workflow Operation is handed for one dispatch: the Creation Kit episode, confirmations, and the file space. It is the set of substitutable things a Workflow Operation may reach, not a seam in its own right — process spawn and MO2 wait sit behind the Creation Kit episode, not beside it.
+The adapters a Workflow Operation is handed for one dispatch: the Creation Kit episode, the FO4Edit episode, confirmations, and the file space. It is the set of substitutable things a Workflow Operation may reach, not a seam in its own right — process spawn, MO2 wait and FO4Edit's window handling sit behind the tool episodes, not beside them.
 _Avoid_: adapter bundle, operation context, tool registry
 
 **Generate Precombines Operation**:
