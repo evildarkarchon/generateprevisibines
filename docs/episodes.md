@@ -61,8 +61,8 @@ so a non-interactive run whose Creation Kit produced no output resumes after the
 carries on into the next step (Step 1 into 270/274, Step 6 into 318 and Step 7). Interactive
 runs reach `PAUSE`/`Exit` (371–372) and really stop. The port deliberately does **not**
 replicate this: a missing Creation Kit output stops every run — decided on #27. The same
-`goto :eof`-inside-`Call` shape sits under the fatal checks in `:RunScript` and `:Archive`
-(owned by #28 and #29).
+`goto :eof`-inside-`Call` shape sits under the fatal checks in `:RunScript` (560–563), which
+the port also stops on in every mode — decided on #28 — and under `:Archive` (owned by #29).
 
 Step 1 has a second, mode-conditional output check (`<plugin> - Geometry.psg`, line 270, run in
 every mode except filtered) that is not the `:RunCK` parameter. The same file is re-checked on
@@ -116,6 +116,29 @@ delete `%TEMP%\UnattendedScript.log` (537) → **wait 10s** (542) → `START /B`
 unattended log appears (548–550) → **wait 10s** (552) → `CloseMainWindow()` (553) →
 **wait 15s** (555) → `TaskKill /IM` (556) → **wait 10s** (558) → append log to session log
 (559) → scan (560–563).
+
+Neither close step is a kill: `TaskKill` has no `/F`, so it is a second close request, and it
+reaches every `FO4Edit.exe` on the machine. Both matter because xEdit writes the merged plugin
+from its own close path, so the close sequence is what saves the merge. Under Wine both
+PowerShell lines (546, 553) are silent no-ops, because Wine's `powershell.exe` is a stub. A Wine
+user therefore presses OK in Module Selection by hand, and Wine's own `taskkill` does the
+closing. Sources: `docs/research/fo4edit-window-automation.md` on branch
+`research/fo4edit-window-automation`.
+
+**Port divergences, decided on #28:**
+
+- Dismissal targets this run's `Module Selection` window only. The port tries a targeted
+  message, then foreground plus `SendInput`, then prints an instruction to press OK. It never
+  sends input to any other window.
+- The poll stops the run if FO4Edit exits before the log appears.
+- Close requests go to this run's PID only, and the port never kills FO4Edit. If FO4Edit is
+  still running after the close sequence, the run stops.
+- Step 2 checks for `CombinedObjects.esp` before launching FO4Edit, mirroring Step 7's
+  `Previs.esp` check at 324. The batch does not check it at all.
+- The two shared fatal checks (560–563) stop every run.
+
+The port keeps every delay, keeps `-autoexit`, and writes `Plugins.txt` without the trailing
+space that `echo` adds.
 
 ## Archive — verbs, and where the tools diverge
 
