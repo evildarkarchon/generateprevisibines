@@ -9,7 +9,7 @@ use crate::files::FileSpace;
 /// The Creation Kit log text that means the precombine ran out of Reference Handles.
 ///
 /// Held in the batch's own shape — `Findstr /I /M /C:"OUT OF HANDLE ARRAY ENTRIES"`
-/// (`GeneratePrevisibines.bat:270`): a case-insensitive substring, carrying no prefix. The
+/// (`GeneratePrevisibines.bat:276`): a case-insensitive substring, carrying no prefix. The
 /// Creation Kit usually emits it under `DEFAULT: `, but the batch never required that, so
 /// neither do we; requiring it would let a differently-prefixed line pass a run the batch
 /// would have failed.

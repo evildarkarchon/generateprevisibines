@@ -23,7 +23,7 @@ cargo clippy             # Lint with pedantic warnings enabled
 
 ### Key Types
 
-- `BuildMode`: `Clean` (full workflow), `Filtered` (skip PSG/CDX), `Xbox` (filtered + Xbox compression)
+- `BuildMode`: `Clean` (full workflow), `Filtered` (skip PSG/CDX), `Xbox` (clean build that skips `CompressPSG`; since V2.99 no archive gets Xbox compression)
 - `ArchiveTool`: `Archive2` (Bethesda's tool) or `BSArch` (community tool with append support)
 - `WorkflowStep`: enum for steps 1-8, supports resume from any step
 

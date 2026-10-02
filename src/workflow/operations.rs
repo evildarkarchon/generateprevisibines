@@ -610,8 +610,8 @@ mod tests {
 
         assert_ne!(clean, filtered);
         // V2.99 Xbox is a clean build (batch 268–272 test `NEQ "filtered"`): it differs from
-        // Clean only in skipping `CompressPSG` and in archive compression, neither of which is
-        // Step 1, so the precombine request is the same one.
+        // Clean only in skipping `CompressPSG` (no archive gets Xbox compression since 391 was
+        // REM'd), which is not Step 1, so the precombine request is the same one.
         assert_eq!(clean, xbox);
     }
 

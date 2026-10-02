@@ -1,4 +1,4 @@
-//! Input and environment validation matching batch V2.98 rules.
+//! Input and environment validation matching batch V2.99 rules.
 
 use std::path::Path;
 

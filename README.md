@@ -1,12 +1,12 @@
 # GeneratePrevisibines
 
-Rust port of the GeneratePrevisibines V2.98 workflow for automating Fallout 4 precombine and previs generation.
+Rust port of the GeneratePrevisibines V2.99 workflow for automating Fallout 4 precombine and previs generation.
 
 ## Project status (reboot)
 
 The repository is in a **scaffold** phase:
 
-- **Behavioral reference:** PJM batch V2.98 (kept locally, not in this repo) until parity is proven on a real install.
+- **Behavioral reference:** PJM batch V2.99 ([`GeneratePrevisibines.bat`](GeneratePrevisibines.bat), committed at the repository root) until parity is proven on a real install.
 - **Implemented today:** CLI/types, validation rules, workflow step planning, logging layout, tool wrapper stubs, unit tests.
 - **Not implemented yet:** Creation Kit / FO4Edit / archive execution, interactive prompts, full 8-step automation.
 
@@ -90,7 +90,7 @@ Arguments:
 Options:
   -c, --clean            Build mode: clean (default)
   -f, --filtered         Build mode: filtered (skips PSG and CDX)
-  -x, --xbox             Build mode: Xbox compression (also skips PSG and CDX)
+  -x, --xbox             Build mode: Xbox (clean precombines; skips PSG and CDX)
       --bsarch           Use BSArch instead of Archive2
       --FO4 <DIR>        Override the Fallout 4 installation directory
       --resume-from <N>  Resume from workflow step 1-8 (non-interactive)
@@ -171,7 +171,9 @@ generateprevisibines.exe "-FO4:D:\Games\Fallout4" MyMod.esp
 - Faster workflow for testing
 
 ### Xbox Mode (`-x`, `--xbox`, or `-xbox`)
-- Same as filtered mode but uses Xbox compression for archives
+- A clean build that skips PSG compression: precombines are generated with `clean all` and the CDX is still built
+- The port does not build the CDX in Xbox mode yet — it still skips steps 4 and 5, as V2.98 did
+- Since V2.99 no archive receives Xbox compression — the batch's Archive2 `-compression=XBox` qualifier is disabled, and BSArch never had one
 - Required for Xbox mods
 
 ## Archive Tools

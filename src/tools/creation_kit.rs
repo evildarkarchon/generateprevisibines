@@ -149,9 +149,9 @@ impl<'a> CreationKitOps<'a> {
         }
     }
 
-    /// Generate precombined meshes for `plugin_file` (batch `:Precomb2`, lines 262-266).
+    /// Generate precombined meshes for `plugin_file` (batch `:Precomb2`, lines 268–272).
     ///
-    /// A Clean build passes `clean all`; Filtered and Xbox both pass `filtered all`.
+    /// The qualifier follows the build mode; see [`precombine_qualifiers`].
     pub(crate) fn generate_precombined(
         &self,
         plugin_file: &str,
@@ -253,7 +253,7 @@ impl<'a> CreationKitOps<'a> {
         }
 
         // Held rather than `?`-propagated so `Ended` still lands when the spawn fails: the batch
-        // reaches line 457 whatever `START` did, and an entry that opened but never closed would
+        // reaches line 466 whatever `START` did, and an entry that opened but never closed would
         // read as a Creation Kit still running.
         let spawn = self.ports.process.run(&self.exe, &args, &self.fallout4_dir);
 
@@ -311,7 +311,7 @@ const fn precombine_qualifiers(build_mode: BuildMode) -> &'static str {
     }
 }
 
-/// The `-<Operation>:<plugin>` argument for one Creation Kit run (batch line 455).
+/// The `-<Operation>:<plugin>` argument for one Creation Kit run (batch line 464).
 ///
 /// Unquoted, deliberately: the batch writes `-<Operation>:"<plugin>"` onto a raw command line
 /// so the quotes survive `cmd`'s tokenizer, and `CommandLineToArgvW` then strips them before

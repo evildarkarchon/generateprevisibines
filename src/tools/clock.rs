@@ -5,7 +5,7 @@
 //! episode writes its record. A Workflow Operation never names it.
 //!
 //! It exists at all because the batch's `:RunCK` brackets every run with `Start %time%` and
-//! `Ended %time%` (lines 454 and 457), and a session log whose contents come from
+//! `Ended %time%` (lines 463 and 466), and a session log whose contents come from
 //! `SystemTime::now()` is a session log no test can assert on.
 
 /// The local wall-clock time of day, as the batch's `%time%` reports it.

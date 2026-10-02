@@ -1,4 +1,4 @@
-//! CLI parsing compatible with batch V2.98 argument conventions.
+//! CLI parsing compatible with batch V2.99 argument conventions.
 
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
@@ -84,7 +84,7 @@ struct BuildModeFlags {
     )]
     filtered: bool,
 
-    /// Build mode: Xbox compression (also skips PSG and CDX).
+    /// Build mode: Xbox (clean precombines; skips PSG and CDX).
     #[arg(
         short = 'x',
         long = "xbox",
