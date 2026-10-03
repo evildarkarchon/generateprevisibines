@@ -21,6 +21,12 @@ moved.
   window, plus close requests scoped to this run's PID, never a kill) is decided on #28 and
   listed in [episodes.md](episodes.md) § *FO4Edit*. The Win32 calls live in a helper crate:
   [ADR-0003](adr/0003-win32-window-calls-in-a-helper-crate.md)
+- **FO4Edit's `-log:` must stay short.** The PJM merge scripts cut the `-log:` value at 60
+  characters before saving to it, so the batch's absolute `%TEMP%\UnattendedScript.log` is cut
+  for a Windows user name longer than about 11 characters, and the poll never sees the log. The
+  port starts FO4Edit with `%TEMP%` as its working directory and passes the relative
+  `-log:UnattendedScript.log`, which lands in the same place. Do not "fix" it back to an
+  absolute path. Details are in [episodes.md](episodes.md) § *FO4Edit*.
 
 ## 2. MO2 Timing Delays (batch lines 197, 439, 468, 542, 545, 549, 552, 555, 558)
 

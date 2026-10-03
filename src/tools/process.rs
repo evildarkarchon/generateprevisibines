@@ -42,14 +42,6 @@ pub(crate) trait ProcessRunner: std::fmt::Debug {
     /// Equivalent to the batch `START /B`, which launches FO4Edit. `args` and `cwd` are
     /// handled exactly as in [`run`](Self::run). Fails only when the process cannot be
     /// started; how the process later exits is read through [`RunningProcess::try_wait`].
-    // Called only by tests until the FO4Edit episode lands (issue #58).
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "the FO4Edit episode, the first caller of `spawn`, is not ported yet"
-        )
-    )]
     fn spawn(&self, exe: &Path, args: &[OsString], cwd: &Path) -> Result<Box<dyn RunningProcess>>;
 }
 
@@ -58,14 +50,6 @@ pub(crate) trait ProcessRunner: std::fmt::Debug {
 /// There is deliberately no `kill`. xEdit saves its merge only on its close path, so the
 /// FO4Edit episode asks it to close and never kills it, and nothing else needs to. Dropping a
 /// `RunningProcess` leaves the process running; the handle is only a way to observe it.
-// Exercised only by tests until the FO4Edit episode, its first caller, lands (issue #58).
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the FO4Edit episode, the first caller of `spawn`, is not ported yet"
-    )
-)]
 pub(crate) trait RunningProcess: std::fmt::Debug {
     /// The operating system's process id, which window lookups target.
     fn id(&self) -> u32;
@@ -97,14 +81,6 @@ impl ProcessRunner for SystemProcessRunner {
 ///
 /// Relies on `Child`'s drop behaviour: dropping a `Child` neither kills nor waits for the
 /// process, which is exactly the "dropping leaves it running" contract.
-// Constructed only by `spawn`, which has no production caller until issue #58.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the FO4Edit episode, the first caller of `spawn`, is not ported yet"
-    )
-)]
 #[derive(Debug)]
 struct SystemRunningProcess {
     child: Child,

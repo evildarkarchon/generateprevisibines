@@ -144,7 +144,17 @@ closing. Sources: `docs/research/fo4edit-window-automation.md` on branch
   sends input to any other window, so it never types through `SendInput`, which goes to
   whichever window has the foreground (amended after #80's review; see
   [ADR-0003](adr/0003-win32-window-calls-in-a-helper-crate.md)).
-- The poll stops the run if FO4Edit exits before the log appears.
+- The poll stops the run if FO4Edit exits before the log appears, rather than polling forever
+  as the batch does (548–550). The poll has no timeout otherwise: it prints a one-time hint when
+  Module Selection has not appeared 30 seconds after launch, and a "still waiting" line every
+  minute.
+- FO4Edit is started with `%TEMP%` as its working directory and a **relative**
+  `-log:UnattendedScript.log`, so the log still lands at `%TEMP%\UnattendedScript.log`. The PJM
+  scripts cut the `-log:` value (and `-mod:`) at **60 characters** before saving to it, so the
+  batch's absolute `-log:"%TEMP%\UnattendedScript.log"` is already cut for a Windows user name
+  longer than about 11 characters, and its poll then never sees the log. Changing the working
+  directory is safe: xEdit resolves a bare `-Script:` name against its `Edit Scripts` folder,
+  not the working directory, and its only `SetCurrentDir` is a save-and-restore.
 - Close requests go to this run's PID only, and the port never kills FO4Edit. If FO4Edit is
   still running after the close sequence, the run stops.
 - Step 2 checks for `CombinedObjects.esp` before launching FO4Edit, mirroring Step 7's

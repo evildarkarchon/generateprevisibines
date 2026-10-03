@@ -14,16 +14,6 @@
 //! nothing, so the dismissal ladder never fires and the "press OK" instruction covers the user.
 //! The tool targets Windows and Wine, so off Windows is a build-and-test platform only.
 
-// Nothing calls this seam in production yet: the FO4Edit episode, its first caller, lands in
-// issue #58. The tests below exercise all of it.
-#![cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the FO4Edit episode, the first caller of `DesktopWindows`, is not ported yet"
-    )
-)]
-
 #[cfg(windows)]
 use generateprevisibines_win32_windows as win32;
 

@@ -31,6 +31,9 @@ pub(super) const DEFINITION: WorkflowOperationDefinition = WorkflowOperationDefi
 /// Also propagates [`Error::Io`] from the Creation Kit episode, the file deletes, and the
 /// session-log append a Build Warning makes.
 pub(super) fn run(run: &WorkflowRun, ports: &OperationPorts<'_>) -> Result<()> {
+    // Reached first, so a run that prepared no Creation Kit (a preparation bug) stops before
+    // anything in the workspace is touched.
+    let ck = ports.ck()?;
     let config = run.config();
     let psg = geometry_psg_path(config);
 
@@ -58,7 +61,7 @@ pub(super) fn run(run: &WorkflowRun, ports: &OperationPorts<'_>) -> Result<()> {
         ports.files.remove_file(&csg)?;
     }
 
-    let ck_run = ports.ck.compress_psg(&config.plugin.file_name)?;
+    let ck_run = ck.compress_psg(&config.plugin.file_name)?;
 
     if !ports.files.is_file(&csg) {
         return Err(ck_run.missing_output_error(&geometry_csg_name(config)));

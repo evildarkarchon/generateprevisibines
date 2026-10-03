@@ -31,6 +31,9 @@ pub(super) const DEFINITION: WorkflowOperationDefinition = WorkflowOperationDefi
 /// Also propagates [`Error::Io`] from the Creation Kit episode, the deletes, and the
 /// session-log append a Build Warning makes, and [`Error::Prompt`] from the console.
 pub(super) fn run(run: &WorkflowRun, ports: &OperationPorts<'_>) -> Result<()> {
+    // Reached first, so a run that prepared no Creation Kit (a preparation bug) stops before
+    // anything in the workspace is touched.
+    let ck = ports.ck()?;
     let config = run.config();
     let workspace = PrevisWorkspace::new(config, ports.files);
 
@@ -41,7 +44,7 @@ pub(super) fn run(run: &WorkflowRun, ports: &OperationPorts<'_>) -> Result<()> {
     // earlier run's plugin and have Step 7 merge it.
     workspace.remove_stale_previs_plugin()?;
 
-    let ck_run = ports.ck.generate_previs_data(&config.plugin.file_name)?;
+    let ck_run = ck.generate_previs_data(&config.plugin.file_name)?;
 
     let visibility_warning = workspace.validate_generated(ck_run.log.as_deref(), |file| {
         ck_run.missing_output_error(file)

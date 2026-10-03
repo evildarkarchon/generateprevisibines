@@ -11,7 +11,7 @@ use crate::files::FileSpace;
 use crate::interactive;
 use crate::run::WorkflowRun;
 use crate::toolchain::ToolchainRequirements;
-use crate::tools::CreationKitOps;
+use crate::tools::{CreationKitOps, Fo4EditOps};
 use crate::warning::BuildWarnings;
 use crate::workflow::WorkflowPlan;
 
@@ -178,6 +178,18 @@ impl ProductionWorkflowPreparation {
     pub(crate) fn into_parts(self) -> (WorkflowPlan, ToolchainRequirements) {
         (self.plan, self.requirements)
     }
+
+    /// Pair `plan` with `requirements` that no registration produced.
+    ///
+    /// For Workflow Run tests that need a readiness production cannot ask for yet — FO4Edit,
+    /// until Step 2 is registered.
+    #[cfg(test)]
+    pub(crate) const fn from_parts(
+        plan: WorkflowPlan,
+        requirements: ToolchainRequirements,
+    ) -> Self {
+        Self { plan, requirements }
+    }
 }
 
 /// Prepare the production Workflow Plan and its complete runnable-operation requirement union.
@@ -213,16 +225,30 @@ pub(crate) fn execute_registered_workflow(
 ///
 /// Deliberately a struct: the bundle itself has exactly one shape, so a trait over it would be
 /// a hypothetical seam. The *fields* are the real seams — `files` has two adapters, `prompts`
-/// will, and `ck` sits above the `ProcessRunner` and `Wait` ports, which have two each.
+/// will, and the two tool episodes sit above the `ProcessRunner`, `Wait` and `DesktopWindows`
+/// ports, which have two each.
 ///
-/// `ck` is concrete rather than `&dyn CreationKit` for that same reason. Tests substitute
-/// underneath it, at `ProcessRunner`/`Wait`, and run the real [`CreationKitOps`] — which is
-/// what puts the DLL guard, the MO2 delay and the log lifecycle under a Step 1 test instead of
-/// leaving the composition of them untested behind a one-implementation trait.
+/// `ck` and `fo4edit` are concrete episodes rather than `&dyn` traits for that same reason.
+/// Tests substitute underneath them, at `ProcessRunner`/`Wait`/`DesktopWindows`, and run the
+/// real [`CreationKitOps`] and [`Fo4EditOps`] — which is what puts the DLL guard, the MO2
+/// delays, the log lifecycle, the Module Selection ladder and the close sequence under an
+/// operation's tests instead of leaving their composition untested behind a
+/// one-implementation trait.
+///
+/// Each episode is optional, because a Workflow Run prepares only the tools its runnable
+/// operations require: a resume at Step 2 or Step 7 needs FO4Edit and no Creation Kit. An
+/// operation reaches its episode through [`Self::ck`] or [`Self::fo4edit`], and an absent one
+/// is a preparation bug rather than a user state.
 #[derive(Debug)]
 pub(crate) struct OperationPorts<'a> {
     /// The Creation Kit episode: a domain verb per batch operation, its command grammar hidden.
-    pub(crate) ck: &'a CreationKitOps<'a>,
+    ///
+    /// `None` when no runnable operation required Creation Kit. Read it through [`Self::ck`].
+    pub(crate) ck: Option<&'a CreationKitOps<'a>>,
+    /// The FO4Edit episode: one domain verb per merge script, its command grammar hidden.
+    ///
+    /// `None` when no runnable operation required FO4Edit. Read it through [`Self::fo4edit`].
+    pub(crate) fo4edit: Option<&'a Fo4EditOps<'a>>,
     /// The operator questions a Workflow Operation is allowed to ask.
     pub(crate) prompts: &'a dyn Prompts,
     /// The space every Workflow Operation observes and cleans up external-tool outputs in.
@@ -233,6 +259,32 @@ pub(crate) struct OperationPorts<'a> {
     /// to raise a warning. It is shared across every operation in the run, so a warning raised
     /// by an earlier step is still there when a later one stops.
     pub(crate) warnings: &'a BuildWarnings<'a>,
+}
+
+impl<'a> OperationPorts<'a> {
+    /// The Creation Kit episode, for an operation registered with Creation Kit readiness.
+    ///
+    /// Returns [`Error::CreationKitNotPrepared`] when the Workflow Run prepared no Creation Kit,
+    /// which means planning and readiness disagreed about the running operation.
+    pub(crate) fn ck(&self) -> Result<&'a CreationKitOps<'a>> {
+        self.ck.ok_or(Error::CreationKitNotPrepared)
+    }
+
+    /// The FO4Edit episode, for an operation registered with FO4Edit readiness.
+    ///
+    /// Returns [`Error::Fo4EditNotPrepared`] when the Workflow Run prepared no FO4Edit, which
+    /// means planning and readiness disagreed about the running operation.
+    // The FO4Edit merge steps, its first callers, are registered by issues #59 and #60.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "Steps 2 and 7, the first callers of the FO4Edit episode, are not registered yet"
+        )
+    )]
+    pub(crate) fn fo4edit(&self) -> Result<&'a Fo4EditOps<'a>> {
+        self.fo4edit.ok_or(Error::Fo4EditNotPrepared)
+    }
 }
 
 /// A yes/no question a Workflow Operation puts to the operator.
@@ -295,10 +347,11 @@ mod tests {
     use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
     use crate::files::InMemoryFileSpace;
     use crate::run::WorkflowRequest;
-    use crate::tools::CkPorts;
     use crate::tools::clock::ScriptedClock;
+    use crate::tools::desktop::RecordingDesktopWindows;
     use crate::tools::process::{ProcessRunner, RecordedProcessCall, RecordingProcessRunner};
     use crate::tools::wait::{MO2_DELAY_AFTER_CK_SECS, RecordingWait};
+    use crate::tools::{CkPorts, Fo4EditPaths, Fo4EditPorts};
     use crate::warning::BuildWarning;
     use crate::{discovery::ToolPaths, toolchain::WorkflowToolchainProbe};
 
@@ -536,7 +589,8 @@ mod tests {
             let warnings = BuildWarnings::new(self.run.log_path().to_path_buf(), &self.files);
 
             use_ports(&OperationPorts {
-                ck: &ck,
+                ck: Some(&ck),
+                fo4edit: None,
                 prompts: &self.prompts,
                 files: &self.files,
                 warnings: &warnings,
@@ -1810,5 +1864,82 @@ mod tests {
         assert!(warnings.is_empty(), "warnings: {warnings:?}");
         let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
         assert!(!session.contains("WARNING - "), "session log: {session}");
+    }
+
+    /// Each tool episode is reached through an accessor that names the missing preparation,
+    /// so an operation never has to unwrap an absent one itself.
+    #[test]
+    fn an_absent_tool_episode_is_a_preparation_error() {
+        let fixture = step_one_fixture(BuildMode::Clean, true);
+        let warnings = BuildWarnings::new(fixture.run.log_path().to_path_buf(), &fixture.files);
+        let ports = OperationPorts {
+            ck: None,
+            fo4edit: None,
+            prompts: &fixture.prompts,
+            files: &fixture.files,
+            warnings: &warnings,
+        };
+
+        assert!(matches!(ports.ck(), Err(Error::CreationKitNotPrepared)));
+        assert!(matches!(ports.fo4edit(), Err(Error::Fo4EditNotPrepared)));
+    }
+
+    /// A prepared episode comes back from its accessor as the very episode that was bound.
+    #[test]
+    fn a_prepared_tool_episode_is_returned_by_its_accessor() {
+        let fixture = step_one_fixture(BuildMode::Clean, true);
+        let process = RecordingProcessRunner::new();
+        let desktop = RecordingDesktopWindows::new();
+        let fo4edit_paths = Fo4EditPaths {
+            exe: PathBuf::from("FO4Edit.exe"),
+            data_dir_override: None,
+            session_log: fixture.run.log_path().to_path_buf(),
+        };
+        let fo4edit = fo4edit_paths.bind(Fo4EditPorts {
+            process: &process,
+            wait: &fixture.wait,
+            desktop: &desktop,
+            files: &fixture.files,
+        });
+        let ck = fixture.run.creation_kit().unwrap().bind(CkPorts {
+            process: &process,
+            wait: &fixture.wait,
+            clock: &fixture.clock,
+            files: &fixture.files,
+        });
+        let warnings = BuildWarnings::new(fixture.run.log_path().to_path_buf(), &fixture.files);
+        let ports = OperationPorts {
+            ck: Some(&ck),
+            fo4edit: Some(&fo4edit),
+            prompts: &fixture.prompts,
+            files: &fixture.files,
+            warnings: &warnings,
+        };
+
+        assert!(std::ptr::eq(ports.ck().unwrap(), &raw const ck));
+        assert!(std::ptr::eq(ports.fo4edit().unwrap(), &raw const fo4edit));
+    }
+
+    /// Step 1 reaches Creation Kit through `ports.ck()?`: a run that prepared none stops with
+    /// the preparation error instead of launching anything.
+    #[test]
+    fn step_one_without_creation_kit_stops_before_any_launch() {
+        let fixture = step_one_fixture(BuildMode::Clean, true);
+        let warnings = BuildWarnings::new(fixture.run.log_path().to_path_buf(), &fixture.files);
+        let ports = OperationPorts {
+            ck: None,
+            fo4edit: None,
+            prompts: &fixture.prompts,
+            files: &fixture.files,
+            warnings: &warnings,
+        };
+
+        let error = generate_precombines::run(&fixture.run, &ports).unwrap_err();
+
+        assert!(
+            matches!(error, Error::CreationKitNotPrepared),
+            "error: {error:?}"
+        );
+        assert_eq!(fixture.wait.delays(), Vec::<u64>::new());
     }
 }

@@ -19,15 +19,16 @@ pub(super) const DEFINITION: WorkflowOperationDefinition = WorkflowOperationDefi
 
 /// Run the Step 1 Generate Precombines Operation for a prepared Workflow Run.
 pub(super) fn run(run: &WorkflowRun, ports: &OperationPorts<'_>) -> Result<()> {
+    // Reached first, so a run that prepared no Creation Kit (a preparation bug) stops before
+    // anything in the workspace is touched.
+    let ck = ports.ck()?;
     let config = run.config();
     let workspace = PrecombineWorkspace::new(config, ports.files);
     maybe_clear_precombined_on_resume(run, ports, &workspace)?;
 
     workspace.prepare_for_generate()?;
 
-    let ck_run = ports
-        .ck
-        .generate_precombined(&config.plugin.file_name, config.build_mode)?;
+    let ck_run = ck.generate_precombined(&config.plugin.file_name, config.build_mode)?;
 
     // The log arrives as content, from the adapter that owns its lifecycle, rather than being
     // re-found by path: the Creation Kit episode deletes the stale log, reads this run's once,
