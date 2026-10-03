@@ -1,0 +1,914 @@
+{
+  "context": "inside-mo2",
+  "data": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data",
+  "fixture": {
+    "meshes": 40,
+    "vis": 20
+  },
+  "fo4": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4",
+  "mo2_instance": "E:\\Mod Organizer\\Fallout 4",
+  "pairs": [
+    {
+      "checks": [
+        {
+          "detail": {
+            "archive_exists": true,
+            "exit": 0
+          },
+          "item": "item2",
+          "ok": true,
+          "what": "step 3 pack: Archive2 wrote the archive into ArchiveWork (Rust-quoted \"-c=<path>\")"
+        },
+        {
+          "detail": {
+            "archive": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\GPProbe - Main.ba2",
+            "ba2_version": 8,
+            "diff": {
+              "bytes_differ": [],
+              "extra": [],
+              "lookup_key_differs_from_earlier_archive": [],
+              "missing": [],
+              "respelled_count": 0,
+              "respelled_examples": []
+            },
+            "file_count": 40,
+            "first_names": [
+              "meshes\\precombined\\00010000_0BF34DAD_OC.nif",
+              "meshes\\precombined\\00010037_E5906136_OC.nif",
+              "meshes\\precombined\\0001006E_08C63FF4_OC.nif"
+            ],
+            "stored_records": 0
+          },
+          "item": "item2",
+          "ok": true,
+          "what": "step 3: Archive2 archive in ArchiveWork holds meshes\\precombined\\…"
+        },
+        {
+          "detail": {
+            "bytes_match_built": true,
+            "physical": {
+              "mod_folders_holding_probe_files": [],
+              "overwrite_archive": true,
+              "overwrite_precombined_files": 0,
+              "overwrite_vis_files": 0,
+              "work_folder_files": 0
+            },
+            "rename_error": null,
+            "still_in_work_folder": false,
+            "visible_in_data": true
+          },
+          "item": "item3",
+          "ok": true,
+          "what": "step 3: std::fs::rename ArchiveWork archive into Data"
+        },
+        {
+          "detail": {
+            "diff": {
+              "bytes_differ": [],
+              "extra": [],
+              "lookup_key_differs_from_earlier_archive": [],
+              "missing": [],
+              "respelled_count": 0,
+              "respelled_examples": []
+            },
+            "file_count": 40,
+            "first_paths": [
+              "meshes\\precombined\\00010000_0BF34DAD_OC.nif",
+              "meshes\\precombined\\00010037_E5906136_OC.nif",
+              "meshes\\precombined\\0001006E_08C63FF4_OC.nif"
+            ],
+            "root": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data"
+          },
+          "item": "extract",
+          "ok": true,
+          "what": "step 8: Archive2 extract put the precombines back in Data"
+        },
+        {
+          "detail": {
+            "archive_exists": true,
+            "exit": 0
+          },
+          "item": "item2",
+          "ok": true,
+          "what": "step 8 repack: Archive2 wrote the archive into ArchiveWork (Rust-quoted \"-c=<path>\")"
+        },
+        {
+          "detail": {
+            "archive": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\GPProbe - Main.ba2",
+            "ba2_version": 8,
+            "diff": {
+              "bytes_differ": [],
+              "extra": [],
+              "lookup_key_differs_from_earlier_archive": [],
+              "missing": [],
+              "respelled_count": 0,
+              "respelled_examples": []
+            },
+            "file_count": 60,
+            "first_names": [
+              "meshes\\precombined\\00010000_0BF34DAD_OC.nif",
+              "meshes\\precombined\\00010037_E5906136_OC.nif",
+              "meshes\\precombined\\0001006E_08C63FF4_OC.nif"
+            ],
+            "stored_records": 0
+          },
+          "item": "item2",
+          "ok": true,
+          "what": "step 8: Archive2 archive in ArchiveWork holds meshes\\precombined\\… + vis\\…"
+        },
+        {
+          "detail": {
+            "error": null,
+            "physical": {
+              "mod_folders_holding_probe_files": [],
+              "overwrite_archive": false,
+              "overwrite_precombined_files": 40,
+              "overwrite_vis_files": 20,
+              "work_folder_files": 1
+            },
+            "still_visible": false
+          },
+          "item": "item3",
+          "ok": true,
+          "what": "step 8: delete the old archive in Data"
+        },
+        {
+          "detail": {
+            "bytes_match_built": true,
+            "physical": {
+              "mod_folders_holding_probe_files": [],
+              "overwrite_archive": true,
+              "overwrite_precombined_files": 40,
+              "overwrite_vis_files": 20,
+              "work_folder_files": 0
+            },
+            "rename_error": null,
+            "still_in_work_folder": false,
+            "visible_in_data": true
+          },
+          "item": "item3",
+          "ok": true,
+          "what": "step 8: std::fs::rename ArchiveWork archive into Data (replacing)"
+        },
+        {
+          "detail": {
+            "archive": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data\\GPProbe - Main.ba2",
+            "ba2_version": 8,
+            "diff": {
+              "bytes_differ": [],
+              "extra": [],
+              "lookup_key_differs_from_earlier_archive": [],
+              "missing": [],
+              "respelled_count": 0,
+              "respelled_examples": []
+            },
+            "file_count": 60,
+            "first_names": [
+              "meshes\\precombined\\00010000_0BF34DAD_OC.nif",
+              "meshes\\precombined\\00010037_E5906136_OC.nif",
+              "meshes\\precombined\\0001006E_08C63FF4_OC.nif"
+            ],
+            "stored_records": 0
+          },
+          "item": "item3",
+          "ok": true,
+          "what": "final Data archive holds precombines + previs"
+        },
+        {
+          "detail": {
+            "leftover": []
+          },
+          "item": "item3",
+          "ok": true,
+          "what": "no loose precombines or previs left in Data"
+        }
+      ],
+      "events": [
+        {
+          "detail": {
+            "base": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data",
+            "files": 40
+          },
+          "what": "seed loose precombines in Data"
+        },
+        {
+          "detail": {
+            "mod_folders_holding_probe_files": [],
+            "overwrite_archive": false,
+            "overwrite_precombined_files": 40,
+            "overwrite_vis_files": 0,
+            "work_folder_files": 0
+          },
+          "what": "physical location after seeding precombines"
+        },
+        {
+          "detail": {
+            "command": "\"E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Tools\\Archive2\\Archive2.exe\" meshes\\precombined \"-c=E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\GPProbe - Main.ba2\" -f=General -q",
+            "cwd": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data",
+            "exit": 0,
+            "millis": 1873,
+            "spawn_error": null,
+            "stderr": "",
+            "stdout": ""
+          },
+          "what": "step 3 pack: Archive2 -c= into ArchiveWork (Rust-quoted \"-c=<path>\")"
+        },
+        {
+          "detail": {
+            "error": null,
+            "still_visible": false
+          },
+          "what": "step 3: RD loose Data\\meshes\\precombined"
+        },
+        {
+          "detail": {
+            "error": null
+          },
+          "what": "remove the now-empty ArchiveWork"
+        },
+        {
+          "detail": {
+            "base": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data",
+            "files": 20
+          },
+          "what": "seed loose previs in Data"
+        },
+        {
+          "detail": {
+            "mod_folders_holding_probe_files": [],
+            "overwrite_archive": true,
+            "overwrite_precombined_files": 0,
+            "overwrite_vis_files": 20,
+            "work_folder_files": 0
+          },
+          "what": "physical location after seeding previs"
+        },
+        {
+          "detail": {
+            "physical": {
+              "mod_folders_holding_probe_files": [],
+              "overwrite_archive": true,
+              "overwrite_precombined_files": 0,
+              "overwrite_vis_files": 20,
+              "work_folder_files": 0
+            },
+            "present": true
+          },
+          "what": "step 8: archive present in Data before rebuild"
+        },
+        {
+          "detail": {
+            "command": "\"E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Tools\\Archive2\\Archive2.exe\" \"GPProbe - Main.ba2\" -e=. -q",
+            "cwd": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data",
+            "exit": 0,
+            "millis": 252,
+            "spawn_error": null,
+            "stderr": "",
+            "stdout": ""
+          },
+          "what": "step 8: Archive2 extract into Data"
+        },
+        {
+          "detail": null,
+          "what": "wait 5s after extract"
+        },
+        {
+          "detail": {
+            "command": "\"E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Tools\\Archive2\\Archive2.exe\" meshes\\precombined,vis \"-c=E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\GPProbe - Main.ba2\" -f=General -q",
+            "cwd": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data",
+            "exit": 0,
+            "millis": 1858,
+            "spawn_error": null,
+            "stderr": "",
+            "stdout": ""
+          },
+          "what": "step 8 repack: Archive2 -c= into ArchiveWork (Rust-quoted \"-c=<path>\")"
+        },
+        {
+          "detail": {
+            "error": null,
+            "still_visible": false
+          },
+          "what": "step 8: RD loose Data\\meshes\\precombined"
+        },
+        {
+          "detail": {
+            "error": null,
+            "still_visible": false
+          },
+          "what": "step 8: RD loose Data\\vis"
+        },
+        {
+          "detail": {
+            "error": null
+          },
+          "what": "remove the now-empty ArchiveWork"
+        },
+        {
+          "detail": {
+            "errors": [],
+            "physical": {
+              "mod_folders_holding_probe_files": [],
+              "overwrite_archive": false,
+              "overwrite_precombined_files": 0,
+              "overwrite_vis_files": 0,
+              "work_folder_files": 0
+            }
+          },
+          "what": "cleanup"
+        }
+      ],
+      "fatal": null,
+      "step3": "archive2",
+      "step8": "archive2",
+      "verdicts": {
+        "archive2_extract": "PASS",
+        "item1_bsarch_round_trip": "n/a",
+        "item2_archive2_outside_data": "PASS",
+        "item3_swap_into_data": "PASS"
+      }
+    },
+    {
+      "checks": [
+        {
+          "detail": {
+            "archive_exists": true,
+            "exit": 0
+          },
+          "item": "item2",
+          "ok": true,
+          "what": "step 3 pack: Archive2 wrote the archive into ArchiveWork (Rust-quoted \"-c=<path>\")"
+        },
+        {
+          "detail": {
+            "archive": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\GPProbe - Main.ba2",
+            "ba2_version": 8,
+            "diff": {
+              "bytes_differ": [],
+              "extra": [],
+              "lookup_key_differs_from_earlier_archive": [],
+              "missing": [],
+              "respelled_count": 0,
+              "respelled_examples": []
+            },
+            "file_count": 40,
+            "first_names": [
+              "meshes\\precombined\\00010000_0BF34DAD_OC.nif",
+              "meshes\\precombined\\00010037_E5906136_OC.nif",
+              "meshes\\precombined\\0001006E_08C63FF4_OC.nif"
+            ],
+            "stored_records": 0
+          },
+          "item": "item2",
+          "ok": true,
+          "what": "step 3: Archive2 archive in ArchiveWork holds meshes\\precombined\\…"
+        },
+        {
+          "detail": {
+            "bytes_match_built": true,
+            "physical": {
+              "mod_folders_holding_probe_files": [],
+              "overwrite_archive": true,
+              "overwrite_precombined_files": 0,
+              "overwrite_vis_files": 0,
+              "work_folder_files": 0
+            },
+            "rename_error": null,
+            "still_in_work_folder": false,
+            "visible_in_data": true
+          },
+          "item": "item3",
+          "ok": true,
+          "what": "step 3: std::fs::rename ArchiveWork archive into Data"
+        },
+        {
+          "detail": {
+            "diff": {
+              "bytes_differ": [],
+              "extra": [],
+              "lookup_key_differs_from_earlier_archive": [],
+              "missing": [],
+              "respelled_count": 0,
+              "respelled_examples": []
+            },
+            "file_count": 40,
+            "first_paths": [
+              "meshes\\precombined\\00010000_0BF34DAD_OC.nif",
+              "meshes\\precombined\\00010037_E5906136_OC.nif",
+              "meshes\\precombined\\0001006E_08C63FF4_OC.nif"
+            ],
+            "root": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork"
+          },
+          "item": "item1",
+          "ok": true,
+          "what": "step 8: BSArch unpack gives the precombines back byte-identical"
+        },
+        {
+          "detail": {
+            "archive": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\GPProbe - Main.ba2",
+            "ba2_version": 1,
+            "diff": {
+              "bytes_differ": [],
+              "extra": [],
+              "lookup_key_differs_from_earlier_archive": [],
+              "missing": [],
+              "respelled_count": 60,
+              "respelled_examples": [
+                "meshes\\precombined\\00010000_0BF34DAD_OC.nif -> meshes/precombined/00010000_0BF34DAD_OC.nif",
+                "meshes\\precombined\\00010037_E5906136_OC.nif -> meshes/precombined/00010037_E5906136_OC.nif"
+              ]
+            },
+            "file_count": 60,
+            "first_names": [
+              "meshes/precombined/00010000_0BF34DAD_OC.nif",
+              "meshes/precombined/00010037_E5906136_OC.nif",
+              "meshes/precombined/0001006E_08C63FF4_OC.nif"
+            ],
+            "stored_records": 0
+          },
+          "item": "item1",
+          "ok": true,
+          "what": "step 8: BSArch repack holds meshes\\precombined\\… + vis\\… byte-identical"
+        },
+        {
+          "detail": {
+            "error": null,
+            "physical": {
+              "mod_folders_holding_probe_files": [],
+              "overwrite_archive": false,
+              "overwrite_precombined_files": 0,
+              "overwrite_vis_files": 0,
+              "work_folder_files": 61
+            },
+            "still_visible": false
+          },
+          "item": "item3",
+          "ok": true,
+          "what": "step 8: delete the old archive in Data"
+        },
+        {
+          "detail": {
+            "bytes_match_built": true,
+            "physical": {
+              "mod_folders_holding_probe_files": [],
+              "overwrite_archive": true,
+              "overwrite_precombined_files": 0,
+              "overwrite_vis_files": 0,
+              "work_folder_files": 60
+            },
+            "rename_error": null,
+            "still_in_work_folder": false,
+            "visible_in_data": true
+          },
+          "item": "item3",
+          "ok": true,
+          "what": "step 8: std::fs::rename ArchiveWork archive into Data (replacing)"
+        }
+      ],
+      "events": [
+        {
+          "detail": {
+            "base": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data",
+            "files": 40
+          },
+          "what": "seed loose precombines in Data"
+        },
+        {
+          "detail": {
+            "mod_folders_holding_probe_files": [],
+            "overwrite_archive": false,
+            "overwrite_precombined_files": 40,
+            "overwrite_vis_files": 0,
+            "work_folder_files": 0
+          },
+          "what": "physical location after seeding precombines"
+        },
+        {
+          "detail": {
+            "command": "\"E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Tools\\Archive2\\Archive2.exe\" meshes\\precombined \"-c=E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\GPProbe - Main.ba2\" -f=General -q",
+            "cwd": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data",
+            "exit": 0,
+            "millis": 1859,
+            "spawn_error": null,
+            "stderr": "",
+            "stdout": ""
+          },
+          "what": "step 3 pack: Archive2 -c= into ArchiveWork (Rust-quoted \"-c=<path>\")"
+        },
+        {
+          "detail": {
+            "error": null,
+            "still_visible": false
+          },
+          "what": "step 3: RD loose Data\\meshes\\precombined"
+        },
+        {
+          "detail": {
+            "error": null
+          },
+          "what": "remove the now-empty ArchiveWork"
+        },
+        {
+          "detail": {
+            "base": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data",
+            "files": 20
+          },
+          "what": "seed loose previs in Data"
+        },
+        {
+          "detail": {
+            "mod_folders_holding_probe_files": [],
+            "overwrite_archive": true,
+            "overwrite_precombined_files": 0,
+            "overwrite_vis_files": 20,
+            "work_folder_files": 0
+          },
+          "what": "physical location after seeding previs"
+        },
+        {
+          "detail": {
+            "physical": {
+              "mod_folders_holding_probe_files": [],
+              "overwrite_archive": true,
+              "overwrite_precombined_files": 0,
+              "overwrite_vis_files": 20,
+              "work_folder_files": 0
+            },
+            "present": true
+          },
+          "what": "step 8: archive present in Data before rebuild"
+        },
+        {
+          "detail": {
+            "command": "\"D:\\programs\\xEdit 4.1\\BSArch.exe\" unpack \"E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data\\GPProbe - Main.ba2\" \"E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\"",
+            "cwd": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data",
+            "exit": 0,
+            "millis": 2215,
+            "spawn_error": null,
+            "stderr": "",
+            "stdout": "\nBSArch v1.0 x64 by zilav, ElminsterAU, Sheson\r\nPacker and unpacker for Bethesda Game Studios archive files\r\n\r\nThe Source Code Form is subject to the terms of the Mozilla Public License, v2.0.\r\nIf a copy of the MPL was not distributed with this file, You can obtain one at\r\nhttps://mozilla.org/MPL/2.0/\r\nThe Source Code Form is available at https://github.com/TES5Edit/TES5Edit\r\n\r\nUnpacking archive \"E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data\\GPProbe - Main.ba2\" into \"E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\\"\r\nMultithreaded unpacking: 40 file(s)...\r\n\r28%\r52%\r78%\r100%\r102%\r\nDone in 00:00:01.6336443.\r\n"
+          },
+          "what": "step 8: BSArch unpack into ArchiveWork"
+        },
+        {
+          "detail": {
+            "error": null,
+            "files_at_destination": 20,
+            "from": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data\\vis",
+            "physical": {
+              "mod_folders_holding_probe_files": [],
+              "overwrite_archive": true,
+              "overwrite_precombined_files": 0,
+              "overwrite_vis_files": 0,
+              "work_folder_files": 60
+            },
+            "source_still_visible": false,
+            "to": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\vis"
+          },
+          "what": "step 8: move Data\\vis into ArchiveWork"
+        },
+        {
+          "detail": null,
+          "what": "wait 5s before BSArch pack"
+        },
+        {
+          "detail": {
+            "command": "\"D:\\programs\\xEdit 4.1\\BSArch.exe\" pack \"E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\" \"E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\GPProbe - Main.ba2\" -mt -fo4 -z",
+            "cwd": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data",
+            "exit": 0,
+            "millis": 599,
+            "spawn_error": null,
+            "stderr": "",
+            "stdout": "\nBSArch v1.0 x64 by zilav, ElminsterAU, Sheson\r\nPacker and unpacker for Bethesda Game Studios archive files\r\n\r\nThe Source Code Form is subject to the terms of the Mozilla Public License, v2.0.\r\nIf a copy of the MPL was not distributed with this file, You can obtain one at\r\nhttps://mozilla.org/MPL/2.0/\r\nThe Source Code Form is available at https://github.com/TES5Edit/TES5Edit\r\n\r\nPacking Fallout 4 archive: Split: No,  Compress: ZLib,  Share: Yes\r\nAdding source: E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork  60 file(s)\r\nMultithreaded packing: 60 file(s)...\r\n\r18%\r35%\r52%\r68%\r85%\r100%\r102%\r\nDone in 00:00:00.0184505.\r\n\r\nCreated archives:\r\nE:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\GPProbe - Main.ba2   1.75 MB  60 files\r\n\r\n"
+          },
+          "what": "step 8 repack: BSArch pack ArchiveWork into itself"
+        },
+        {
+          "detail": {
+            "error": "The system cannot find the file specified. (os error 2) (os error 2)",
+            "still_visible": true
+          },
+          "what": "step 8: remove staged precombines"
+        },
+        {
+          "detail": {
+            "errors": [
+              "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork: The system cannot find the file specified. (os error 2)"
+            ],
+            "physical": {
+              "mod_folders_holding_probe_files": [],
+              "overwrite_archive": false,
+              "overwrite_precombined_files": 0,
+              "overwrite_vis_files": 0,
+              "work_folder_files": 20
+            }
+          },
+          "what": "cleanup"
+        }
+      ],
+      "fatal": "step 8: remove staged precombines: The system cannot find the file specified. (os error 2)",
+      "step3": "archive2",
+      "step8": "bsarch-1.0",
+      "verdicts": {
+        "archive2_extract": "n/a",
+        "item1_bsarch_round_trip": "PASS",
+        "item2_archive2_outside_data": "PASS",
+        "item3_swap_into_data": "PASS"
+      }
+    },
+    {
+      "checks": [
+        {
+          "detail": {
+            "archive": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\GPProbe - Main.ba2",
+            "ba2_version": 1,
+            "diff": {
+              "bytes_differ": [],
+              "extra": [
+                "vis/00020000.uvd",
+                "vis/00020011.uvd",
+                "vis/00020022.uvd",
+                "vis/00020033.uvd",
+                "vis/00020044.uvd",
+                "vis/00020055.uvd",
+                "vis/00020066.uvd",
+                "vis/00020077.uvd",
+                "vis/00020088.uvd",
+                "vis/00020099.uvd",
+                "vis/000200AA.uvd",
+                "vis/000200BB.uvd",
+                "vis/000200CC.uvd",
+                "vis/000200DD.uvd",
+                "vis/000200EE.uvd",
+                "vis/000200FF.uvd",
+                "vis/00020110.uvd",
+                "vis/00020121.uvd",
+                "vis/00020132.uvd",
+                "vis/00020143.uvd"
+              ],
+              "lookup_key_differs_from_earlier_archive": [],
+              "missing": [],
+              "respelled_count": 40,
+              "respelled_examples": [
+                "meshes\\precombined\\00010000_0BF34DAD_OC.nif -> meshes/precombined/00010000_0BF34DAD_OC.nif",
+                "meshes\\precombined\\00010037_E5906136_OC.nif -> meshes/precombined/00010037_E5906136_OC.nif"
+              ]
+            },
+            "file_count": 60,
+            "first_names": [
+              "meshes/precombined/00010000_0BF34DAD_OC.nif",
+              "meshes/precombined/00010037_E5906136_OC.nif",
+              "meshes/precombined/0001006E_08C63FF4_OC.nif"
+            ],
+            "stored_records": 0
+          },
+          "item": "item1",
+          "ok": false,
+          "what": "step 3: BSArch archive packed from ArchiveWork holds meshes\\precombined\\…"
+        }
+      ],
+      "events": [
+        {
+          "detail": {
+            "base": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data",
+            "files": 40
+          },
+          "what": "seed loose precombines in Data"
+        },
+        {
+          "detail": {
+            "mod_folders_holding_probe_files": [],
+            "overwrite_archive": false,
+            "overwrite_precombined_files": 40,
+            "overwrite_vis_files": 0,
+            "work_folder_files": 20
+          },
+          "what": "physical location after seeding precombines"
+        },
+        {
+          "detail": {
+            "error": null,
+            "files_at_destination": 40,
+            "from": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data\\meshes\\precombined",
+            "physical": {
+              "mod_folders_holding_probe_files": [],
+              "overwrite_archive": false,
+              "overwrite_precombined_files": 0,
+              "overwrite_vis_files": 0,
+              "work_folder_files": 60
+            },
+            "source_still_visible": false,
+            "to": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\meshes\\precombined"
+          },
+          "what": "step 3: move Data\\meshes\\precombined into ArchiveWork"
+        },
+        {
+          "detail": null,
+          "what": "wait 5s before BSArch pack"
+        },
+        {
+          "detail": {
+            "command": "\"D:\\programs\\xEdit 4.1\\BSArch.exe\" pack \"E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\" \"E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\GPProbe - Main.ba2\" -mt -fo4 -z",
+            "cwd": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data",
+            "exit": 0,
+            "millis": 602,
+            "spawn_error": null,
+            "stderr": "",
+            "stdout": "\nBSArch v1.0 x64 by zilav, ElminsterAU, Sheson\r\nPacker and unpacker for Bethesda Game Studios archive files\r\n\r\nThe Source Code Form is subject to the terms of the Mozilla Public License, v2.0.\r\nIf a copy of the MPL was not distributed with this file, You can obtain one at\r\nhttps://mozilla.org/MPL/2.0/\r\nThe Source Code Form is available at https://github.com/TES5Edit/TES5Edit\r\n\r\nPacking Fallout 4 archive: Split: No,  Compress: ZLib,  Share: Yes\r\nAdding source: E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork  60 file(s)\r\nMultithreaded packing: 60 file(s)...\r\n\r18%\r35%\r52%\r68%\r85%\r100%\r102%\r\nDone in 00:00:00.0162505.\r\n\r\nCreated archives:\r\nE:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\GPProbe - Main.ba2   1.75 MB  60 files\r\n\r\n"
+          },
+          "what": "step 3 pack: BSArch pack ArchiveWork into itself"
+        },
+        {
+          "detail": {
+            "error": "The system cannot find the file specified. (os error 2) (os error 2)",
+            "still_visible": true
+          },
+          "what": "step 3: remove staged loose precombines"
+        },
+        {
+          "detail": {
+            "errors": [
+              "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork: The system cannot find the file specified. (os error 2)"
+            ],
+            "physical": {
+              "mod_folders_holding_probe_files": [],
+              "overwrite_archive": false,
+              "overwrite_precombined_files": 0,
+              "overwrite_vis_files": 0,
+              "work_folder_files": 20
+            }
+          },
+          "what": "cleanup"
+        }
+      ],
+      "fatal": "step 3: remove staged loose precombines: The system cannot find the file specified. (os error 2)",
+      "step3": "bsarch-1.0",
+      "step8": "archive2",
+      "verdicts": {
+        "archive2_extract": "n/a",
+        "item1_bsarch_round_trip": "FAIL",
+        "item2_archive2_outside_data": "n/a",
+        "item3_swap_into_data": "n/a"
+      }
+    },
+    {
+      "checks": [
+        {
+          "detail": {
+            "archive": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\GPProbe - Main.ba2",
+            "ba2_version": 1,
+            "diff": {
+              "bytes_differ": [],
+              "extra": [
+                "vis/00020000.uvd",
+                "vis/00020011.uvd",
+                "vis/00020022.uvd",
+                "vis/00020033.uvd",
+                "vis/00020044.uvd",
+                "vis/00020055.uvd",
+                "vis/00020066.uvd",
+                "vis/00020077.uvd",
+                "vis/00020088.uvd",
+                "vis/00020099.uvd",
+                "vis/000200AA.uvd",
+                "vis/000200BB.uvd",
+                "vis/000200CC.uvd",
+                "vis/000200DD.uvd",
+                "vis/000200EE.uvd",
+                "vis/000200FF.uvd",
+                "vis/00020110.uvd",
+                "vis/00020121.uvd",
+                "vis/00020132.uvd",
+                "vis/00020143.uvd"
+              ],
+              "lookup_key_differs_from_earlier_archive": [],
+              "missing": [],
+              "respelled_count": 40,
+              "respelled_examples": [
+                "meshes\\precombined\\00010000_0BF34DAD_OC.nif -> meshes/precombined/00010000_0BF34DAD_OC.nif",
+                "meshes\\precombined\\00010037_E5906136_OC.nif -> meshes/precombined/00010037_E5906136_OC.nif"
+              ]
+            },
+            "file_count": 60,
+            "first_names": [
+              "meshes/precombined/00010000_0BF34DAD_OC.nif",
+              "meshes/precombined/00010037_E5906136_OC.nif",
+              "meshes/precombined/0001006E_08C63FF4_OC.nif"
+            ],
+            "stored_records": 30
+          },
+          "item": "item1",
+          "ok": false,
+          "what": "step 3: BSArch archive packed from ArchiveWork holds meshes\\precombined\\…"
+        }
+      ],
+      "events": [
+        {
+          "detail": {
+            "base": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data",
+            "files": 40
+          },
+          "what": "seed loose precombines in Data"
+        },
+        {
+          "detail": {
+            "mod_folders_holding_probe_files": [],
+            "overwrite_archive": false,
+            "overwrite_precombined_files": 40,
+            "overwrite_vis_files": 0,
+            "work_folder_files": 20
+          },
+          "what": "physical location after seeding precombines"
+        },
+        {
+          "detail": {
+            "error": null,
+            "files_at_destination": 40,
+            "from": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data\\meshes\\precombined",
+            "physical": {
+              "mod_folders_holding_probe_files": [],
+              "overwrite_archive": false,
+              "overwrite_precombined_files": 0,
+              "overwrite_vis_files": 0,
+              "work_folder_files": 60
+            },
+            "source_still_visible": false,
+            "to": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\meshes\\precombined"
+          },
+          "what": "step 3: move Data\\meshes\\precombined into ArchiveWork"
+        },
+        {
+          "detail": null,
+          "what": "wait 5s before BSArch pack"
+        },
+        {
+          "detail": {
+            "command": "\"D:\\programs\\xEdit 4.1.5f\\BSArch.exe\" pack \"E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\" \"E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\GPProbe - Main.ba2\" -mt -fo4 -z",
+            "cwd": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Data",
+            "exit": 0,
+            "millis": 878,
+            "spawn_error": null,
+            "stderr": "",
+            "stdout": "\nBSArch v0.9c by zilav, ElminsterAU, Sheson\r\nPacker and unpacker for Bethesda Game Studios archive files\r\n\r\nThe Source Code Form is subject to the terms of the Mozilla Public License,\r\nv. 2.0. If a copy of the MPL was not distributed with this file, You can obtain\r\none at https://mozilla.org/MPL/2.0/.\r\n\r\nThe Source Code Form is available at https://github.com/TES5Edit/TES5Edit\r\n\r\nPacking directory: E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\*.*\r\n\r\n  Archive Name: E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork\\GPProbe - Main.ba2\r\n        Format: Fallout 4\r\n       Version: 0x01\r\n         Files: 60\r\n\r\n\r[18%]\r[35%]\r[52%]\r[68%]\r[85%]\r[100%]\r[102%]\r\nDone in 00:00:00.0448551.\r\n"
+          },
+          "what": "step 3 pack: BSArch pack ArchiveWork into itself"
+        },
+        {
+          "detail": {
+            "error": "The system cannot find the file specified. (os error 2) (os error 2)",
+            "still_visible": true
+          },
+          "what": "step 3: remove staged loose precombines"
+        },
+        {
+          "detail": {
+            "errors": [
+              "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork: The system cannot find the file specified. (os error 2)"
+            ],
+            "physical": {
+              "mod_folders_holding_probe_files": [],
+              "overwrite_archive": false,
+              "overwrite_precombined_files": 0,
+              "overwrite_vis_files": 0,
+              "work_folder_files": 20
+            }
+          },
+          "what": "cleanup"
+        }
+      ],
+      "fatal": "step 3: remove staged loose precombines: The system cannot find the file specified. (os error 2)",
+      "step3": "bsarch-0.9x",
+      "step8": "archive2",
+      "verdicts": {
+        "archive2_extract": "n/a",
+        "item1_bsarch_round_trip": "FAIL",
+        "item2_archive2_outside_data": "n/a",
+        "item3_swap_into_data": "n/a"
+      }
+    }
+  ],
+  "skipped": [],
+  "ticket": "https://github.com/evildarkarchon/generateprevisibines/issues/44",
+  "tools": [
+    {
+      "banner": "Archive2",
+      "found": true,
+      "path": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\Tools\\Archive2\\Archive2.exe",
+      "tool": "archive2"
+    },
+    {
+      "banner": "BSArch v1.0 x64 by zilav, ElminsterAU, Sheson",
+      "found": true,
+      "path": "D:\\programs\\xEdit 4.1\\BSArch.exe",
+      "tool": "bsarch-1.0"
+    },
+    {
+      "banner": "BSArch v0.9c by zilav, ElminsterAU, Sheson",
+      "found": true,
+      "path": "D:\\programs\\xEdit 4.1.5f\\BSArch.exe",
+      "tool": "bsarch-0.9x"
+    }
+  ],
+  "usvfs_loaded": true,
+  "work": "E:\\SteamLibrary\\steamapps\\common\\Fallout 4\\ArchiveWork"
+}

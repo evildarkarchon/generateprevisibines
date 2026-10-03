@@ -38,6 +38,8 @@ const ARCHIVE_NAME: &str = "GPProbe - Main.ba2";
 const WORK_FOLDER: &str = "ArchiveWork";
 const PRECOMBINED: &str = r"meshes\precombined";
 const VIS: &str = "vis";
+/// Scratch folder in `Data` for the usvfs controls (see `run_controls`).
+const CONTROL_DIR: &str = "GPProbeControl";
 const MESH_COUNT: u32 = 40;
 const VIS_COUNT: u32 = 20;
 /// The design's MO2 settle wait: after the Archive2 extract, and before every BSArch pack.
@@ -167,7 +169,8 @@ impl Pair {
     fn verdict(&self, item: &str) -> &'static str {
         let mine: Vec<_> = self.checks.iter().filter(|c| c["item"] == item).collect();
         if mine.is_empty() {
-            "n/a"
+            // Cleanup records only its failures, so silence there is a pass.
+            if item == "cleanup" { "PASS" } else { "n/a" }
         } else if mine.iter().all(|c| c["ok"] == true) {
             "PASS"
         } else {
@@ -184,6 +187,7 @@ impl Pair {
                 "item2_archive2_outside_data": self.verdict("item2"),
                 "item3_swap_into_data": self.verdict("item3"),
                 "archive2_extract": self.verdict("extract"),
+                "staging_cleanup": self.verdict("cleanup"),
             },
             "fatal": self.fatal,
             "checks": self.checks,
@@ -273,11 +277,26 @@ fn real_main(cli: Cli) -> Result<i32, String> {
     let step8: Vec<Tool> = if cli.step8.is_empty() { Tool::ALL.to_vec() } else { cli.step8 };
 
     preflight(&ctx)?;
+    // Seeding `Data\meshes\...` inside MO2 creates `overwrite\meshes`, which the per-pair cleanup
+    // can't see as the probe's (the VFS `Data\meshes` already existed). Removed at the end if
+    // the probe made it.
+    let ow_meshes = ctx.mo2.as_ref().map(|m| m.join(r"overwrite\meshes"));
+    let ow_meshes_existed = ow_meshes.as_ref().is_some_and(|p| p.exists());
+
+    println!("\n=== usvfs controls: which removals fail, and does a plain DeleteFileW/RemoveDirectoryW walk work ===");
+    let controls = run_controls(&ctx);
+    let mut stopped = None;
+    if let Err(e) = preflight(&ctx) {
+        stopped = Some(format!("after the controls: {e}"));
+    }
 
     let mut pairs = Vec::new();
     let mut skipped = Vec::new();
-    for &s3 in &step3 {
+    'pairs: for &s3 in &step3 {
         for &s8 in &step8 {
+            if stopped.is_some() {
+                break 'pairs;
+            }
             if !found(s3) || !found(s8) {
                 skipped.push(format!("{} → {}", s3.label(), s8.label()));
                 continue;
@@ -290,24 +309,39 @@ fn real_main(cli: Cli) -> Result<i32, String> {
             }
             cleanup(&mut pair, &ctx);
             pairs.push(pair);
-            // A pair that couldn't clean up would poison the next one, so stop instead.
+            // A pair that couldn't clean up would poison every later one (the first MO2 run
+            // packed a previous pair's staged previs), so stop the whole run instead.
             if let Err(e) = preflight(&ctx) {
-                println!("\nStopping: cleanup left the probe's state behind: {e}");
-                break;
+                stopped = Some(format!("after {} → {}: {e}", s3.label(), s8.label()));
             }
         }
     }
+    if let Some(why) = &stopped {
+        println!("\nSTOPPED EARLY: cleanup left the probe's state behind {why}");
+    }
+    if let Some(dir) = ow_meshes.filter(|_| !ow_meshes_existed) {
+        let _ = fs::remove_dir(dir); // Only succeeds when empty, which is all we want.
+    }
 
     println!("\n=== Summary ({}) ===", if in_mo2 { "inside MO2" } else { "outside MO2" });
-    println!("{:<26} {:<6} {:<6} {:<6} {:<8}", "step3 → step8", "item1", "item2", "item3", "extract");
+    for c in &controls {
+        println!(
+            "control {:<44} std remove_dir_all: {:<4}  plain walk: {}",
+            c["name"].as_str().unwrap_or_default(),
+            if c["removal"]["std_ok"] == true { "ok" } else { "FAIL" },
+            c["removal"]["fallback"].as_str().unwrap_or_default()
+        );
+    }
+    println!("{:<26} {:<6} {:<6} {:<6} {:<8} {:<8}", "step3 → step8", "item1", "item2", "item3", "extract", "cleanup");
     for p in &pairs {
         println!(
-            "{:<26} {:<6} {:<6} {:<6} {:<8}{}",
+            "{:<26} {:<6} {:<6} {:<6} {:<8} {:<8}{}",
             format!("{} → {}", p.step3.label(), p.step8.label()),
             p.verdict("item1"),
             p.verdict("item2"),
             p.verdict("item3"),
             p.verdict("extract"),
+            p.verdict("cleanup"),
             if p.fatal.is_some() { "  (stopped)" } else { "" }
         );
     }
@@ -326,14 +360,18 @@ fn real_main(cli: Cli) -> Result<i32, String> {
         "tools": tools,
         "fixture": { "meshes": ctx.meshes.len(), "vis": ctx.vis.len() },
         "skipped": skipped,
+        "stopped_early": stopped,
+        "controls": controls,
         "pairs": pairs.iter().map(Pair::to_json).collect::<Vec<_>>(),
     });
     let path = save_report(&report, in_mo2)?;
     println!("\nReport written to {}", path.display());
 
-    let all_ok = pairs.iter().all(|p| {
-        p.fatal.is_none() && ["item1", "item2", "item3", "extract"].iter().all(|i| p.verdict(i) != "FAIL")
-    });
+    let all_ok = stopped.is_none()
+        && pairs.iter().all(|p| {
+            p.fatal.is_none()
+                && ["item1", "item2", "item3", "extract", "cleanup"].iter().all(|i| p.verdict(i) != "FAIL")
+        });
     Ok(i32::from(!all_ok))
 }
 
@@ -342,11 +380,14 @@ fn preflight(ctx: &Ctx) -> Result<(), String> {
     if !ctx.data.is_dir() {
         return Err(format!("{} is not a folder; pass --fo4", ctx.data.display()));
     }
-    if ctx.work.exists() {
-        return Err(format!(
-            "{} already exists. Check it holds nothing you need, then remove it by hand",
-            ctx.work.display()
-        ));
+    // Both probes, because under usvfs a path's attributes and its enumeration can disagree.
+    for dir in [ctx.work.clone(), ctx.data.join(CONTROL_DIR)] {
+        if dir.exists() || fs::read_dir(&dir).is_ok() {
+            return Err(format!(
+                "{} already exists. Check it holds nothing you need, then remove it by hand",
+                dir.display()
+            ));
+        }
     }
     if ctx.data_archive().exists() {
         return Err(format!("{} already exists; remove it by hand", ctx.data_archive().display()));
@@ -595,10 +636,106 @@ fn move_dir(pair: &mut Pair, ctx: &Ctx, from: &Path, to: &Path, what: &str) -> R
 }
 
 /// Removes a folder the probe filled. Only ever called on probe-created trees (see `preflight`).
+///
+/// It tries `std::fs::remove_dir_all` first, and records a failure of that as a `cleanup` FAIL.
+/// Then it falls back to a plain walk, so the pair can go on. Under MO2 the first run saw
+/// `remove_dir_all` fail with os error 2 on staging trees in `ArchiveWork`.
 fn remove_tree(pair: &mut Pair, dir: &Path, what: &str) -> Result<(), String> {
-    let r = fs::remove_dir_all(dir);
-    pair.event(what, json!({ "error": r.as_ref().err().map(io_err), "still_visible": dir.exists() }));
-    r.map_err(|e| format!("{what}: {e}"))
+    let removal = remove_two_tier(dir);
+    let (std_ok, any_ok) = (removal["std_ok"] == true, removal["gone"] == true);
+    if std_ok {
+        pair.event(what, removal);
+    } else {
+        pair.check("cleanup", &format!("{what} (std::fs::remove_dir_all)"), false, removal);
+    }
+    if any_ok { Ok(()) } else { Err(format!("{what}: neither removal worked")) }
+}
+
+/// `std::fs::remove_dir_all`, then, if that fails, `plain_remove`. Reports both outcomes, plus
+/// whether the folder still answers to `exists()` and to `read_dir` (they can disagree under
+/// usvfs).
+fn remove_two_tier(dir: &Path) -> Value {
+    let std_result = fs::remove_dir_all(dir);
+    let after_std = (dir.exists(), fs::read_dir(dir).is_ok());
+    let fallback = if std_result.is_ok() {
+        "not needed".to_string()
+    } else {
+        match plain_remove(dir) {
+            Ok(()) => "ok".to_string(),
+            Err(e) => format!("FAIL: {}", io_err(&e)),
+        }
+    };
+    let gone = !dir.exists() && fs::read_dir(dir).is_err();
+    json!({
+        "dir": dir,
+        "std_ok": std_result.is_ok(),
+        "std_error": std_result.err().map(|e| io_err(&e)),
+        "after_std": { "exists": after_std.0, "enumerable": after_std.1 },
+        "fallback": fallback,
+        "gone": gone,
+    })
+}
+
+/// Recursive removal with one `DeleteFileW` per file and one `RemoveDirectoryW` per folder, all
+/// by full path. That is what cmd's `RD /S` does. `std::fs::remove_dir_all` instead opens each
+/// child relative to its parent's handle, and usvfs may not reroute that.
+fn plain_remove(dir: &Path) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            plain_remove(&entry.path())?;
+        } else {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    fs::remove_dir(dir)
+}
+
+/// usvfs controls, run once before the pairs. Each one builds a tree in `ArchiveWork` and
+/// removes it with `remove_two_tier`. They separate three cases: a tree the probe wrote there
+/// directly, a tree `rename`d in from `Data`, and a directly written tree beside a renamed one
+/// (the first MO2 run failed on that last shape).
+fn run_controls(ctx: &Ctx) -> Vec<Value> {
+    let mut out = Vec::new();
+    let mut record = |name: &str, setup: Value, removal: Value| {
+        println!(
+            "  {name}: std remove_dir_all {}, plain walk {}",
+            if removal["std_ok"] == true { "ok" } else { "FAILED" },
+            removal["fallback"].as_str().unwrap_or_default()
+        );
+        out.push(json!({ "name": name, "setup": setup, "removal": removal }));
+    };
+    let write = |path: &Path| -> Value {
+        let r = path.parent().map_or(Ok(()), fs::create_dir_all).and_then(|()| fs::write(path, b"probe"));
+        json!({ "wrote": path, "error": r.err().map(|e| io_err(&e)) })
+    };
+    let rename_in = |from_rel: &str, to: &Path| -> Value {
+        let from = ctx.data.join(from_rel);
+        let w = write(&from.join(r"sub\f.bin"));
+        let r = fs::rename(&from, to);
+        json!({ "seed": w, "renamed": from, "to": to, "error": r.err().map(|e| io_err(&e)) })
+    };
+
+    let c1 = ctx.work.join("c1");
+    let setup = write(&c1.join(r"sub\f.bin"));
+    record("c1 written directly into ArchiveWork", setup, remove_two_tier(&c1));
+
+    let c2 = ctx.work.join("c2");
+    let setup = rename_in(CONTROL_DIR, &c2);
+    record("c2 renamed in from Data", setup, remove_two_tier(&c2));
+
+    let c3r = ctx.work.join("c3-renamed");
+    let c3 = ctx.work.join("c3");
+    let setup = json!({ "renamed_sibling": rename_in(CONTROL_DIR, &c3r), "direct": write(&c3.join(r"sub\f.bin")) });
+    record("c3 written directly beside a renamed-in folder", setup, remove_two_tier(&c3));
+    record("c3 the renamed-in sibling", json!(null), remove_two_tier(&c3r));
+
+    record("ArchiveWork itself", json!(null), remove_two_tier(&ctx.work));
+    let control = ctx.data.join(CONTROL_DIR);
+    if control.exists() {
+        let _ = plain_remove(&control); // Only if a rename failed and left the seed in Data.
+    }
+    out
 }
 
 /// The work folder must be empty once the archive has moved out. `remove_dir` proves that.
@@ -621,10 +758,12 @@ fn make_dir(pair: &mut Pair, dir: &Path) -> Result<(), String> {
 /// folders held no files.
 fn cleanup(pair: &mut Pair, ctx: &Ctx) {
     let mut errors = Vec::new();
-    if ctx.work.exists() {
-        if let Err(e) = fs::remove_dir_all(&ctx.work) {
-            errors.push(format!("{}: {e}", ctx.work.display()));
+    if ctx.work.exists() || fs::read_dir(&ctx.work).is_ok() {
+        let removal = remove_two_tier(&ctx.work);
+        if removal["gone"] != true {
+            errors.push(format!("{}: {removal}", ctx.work.display()));
         }
+        pair.event("cleanup: remove ArchiveWork", removal);
     }
     let archive = ctx.data_archive();
     if archive.exists() {
