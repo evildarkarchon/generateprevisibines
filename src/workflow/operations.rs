@@ -15,6 +15,7 @@ use crate::tools::CreationKitOps;
 use crate::warning::BuildWarnings;
 use crate::workflow::WorkflowPlan;
 
+mod build_cdx;
 mod compress_psg;
 mod generate_precombines;
 mod precombine_workspace;
@@ -30,7 +31,11 @@ macro_rules! register_production_operations {
     };
 }
 
-register_production_operations!(generate_precombines::DEFINITION, compress_psg::DEFINITION);
+register_production_operations!(
+    generate_precombines::DEFINITION,
+    compress_psg::DEFINITION,
+    build_cdx::DEFINITION,
+);
 
 type OperationExecution = fn(&WorkflowRun, &OperationPorts<'_>) -> Result<()>;
 
@@ -258,8 +263,8 @@ mod tests {
     use tempfile::{TempDir, tempdir};
 
     use super::recording_adapters::{
-        QUIET_CK_LOG, RecordingPrompts, record_successful_compress_outputs,
-        record_successful_precombine_outputs,
+        QUIET_CK_LOG, RecordingPrompts, record_successful_cdx_outputs,
+        record_successful_compress_outputs, record_successful_precombine_outputs,
     };
     use super::*;
     use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
@@ -544,6 +549,19 @@ mod tests {
             self.run_collecting_warnings(compress_psg::run, process)
         }
 
+        /// Drive Step 5 over the real Creation Kit episode; see [`Self::run_step_one`].
+        fn run_step_five(&self, process: &dyn ProcessRunner) -> Result<()> {
+            self.run_step_five_collecting_warnings(process).0
+        }
+
+        /// [`Self::run_step_five`], also returning every Build Warning the run raised.
+        fn run_step_five_collecting_warnings(
+            &self,
+            process: &dyn ProcessRunner,
+        ) -> (Result<()>, Vec<BuildWarning>) {
+            self.run_collecting_warnings(build_cdx::run, process)
+        }
+
         /// Drive `operation` over this fixture's ports and return how it ended, with every
         /// Build Warning it raised.
         ///
@@ -570,6 +588,12 @@ mod tests {
     /// re-running Compress PSG after a failure enters it.
     fn step_four_fixture(mode: BuildMode) -> OperationFixture {
         operation_fixture(mode, true, Some(WorkflowStep::CompressPsg))
+    }
+
+    /// Prepare a real non-interactive Workflow Run resumed at Step 5, which the batch enters at
+    /// `:BldCDX` (231), past Step 4's `.psg` check.
+    fn step_five_fixture(mode: BuildMode) -> OperationFixture {
+        operation_fixture(mode, true, Some(WorkflowStep::BuildCdx))
     }
 
     /// Prepare a real Workflow Run over a temporary Fallout 4 directory.
@@ -985,10 +1009,10 @@ mod tests {
         assert!(!requirements.needs_archive());
     }
 
-    /// A Clean resume at 4 runs Step 4 alone: Step 5 is the first planned step with no
+    /// A Clean resume at 4 runs Steps 4 and 5: Step 6 is the first planned step with no
     /// registered operation.
     #[test]
-    fn a_clean_resume_at_step_four_runs_step_four() {
+    fn a_clean_resume_at_step_four_runs_steps_four_and_five() {
         let plan =
             production_workflow_plan(BuildMode::Clean, Some(WorkflowStep::CompressPsg)).unwrap();
 
@@ -996,7 +1020,10 @@ mod tests {
             plan.planned_steps().first(),
             Some(&WorkflowStep::CompressPsg)
         );
-        assert_eq!(plan.runnable_steps(), &[WorkflowStep::CompressPsg]);
+        assert_eq!(
+            plan.runnable_steps(),
+            &[WorkflowStep::CompressPsg, WorkflowStep::BuildCdx]
+        );
     }
 
     /// Batch parity: `CHOICE /C:123456780` accepts a hidden 4 in Filtered, and `:CompPSG`
@@ -1183,5 +1210,213 @@ mod tests {
         let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
         assert!(!session.contains("WARNING - "), "session log: {session}");
         assert!(fixture.files.is_file(&geometry_psg(&fixture)));
+    }
+
+    /// `Data\<base name>.cdx` for the fixture's plugin.
+    fn cdx(fixture: &OperationFixture) -> PathBuf {
+        fixture.run.config().fo4edit_data_dir().join("MyMod.cdx")
+    }
+
+    /// A Creation Kit spawn that leaves a successful `BuildCDX` run's outputs behind.
+    fn successful_cdx_spawn(
+        fixture: &OperationFixture,
+        exit_code: i32,
+    ) -> RecordingProcessRunner<'_> {
+        let config = fixture.run.config().clone();
+        let ck_log = fixture.ck_log_path();
+
+        RecordingProcessRunner::new()
+            .returning_exit_code(exit_code)
+            .with_effects(&fixture.files, move |space| {
+                record_successful_cdx_outputs(space, &config, &ck_log);
+            })
+    }
+
+    #[test]
+    fn build_cdx_is_registered_and_requires_creation_kit() {
+        let source = production_operation_source();
+        let requirements = source.toolchain_requirements_for_steps(&[WorkflowStep::BuildCdx]);
+
+        assert!(source.contains(WorkflowStep::BuildCdx));
+        assert!(requirements.needs_creation_kit());
+        assert!(!requirements.needs_fo4edit());
+        assert!(!requirements.needs_archive());
+    }
+
+    /// Registering Steps 4 and 5 leaves a fresh clean build where it was: Step 2 is still the
+    /// first planned step with no registered operation, so only Step 1 runs.
+    #[test]
+    fn a_fresh_clean_build_still_runs_only_the_contiguous_registered_prefix() {
+        for mode in [BuildMode::Clean, BuildMode::Xbox] {
+            let plan = production_workflow_plan(mode, None).unwrap();
+
+            assert_eq!(plan.planned_steps().len(), 8, "mode: {mode:?}");
+            assert_eq!(
+                plan.runnable_steps(),
+                &[WorkflowStep::GeneratePrecombines],
+                "mode: {mode:?}"
+            );
+        }
+    }
+
+    /// A Clean or Xbox resume at 5 runs Step 5 alone: Step 6 is not registered yet.
+    #[test]
+    fn a_clean_build_resumed_at_step_five_runs_step_five() {
+        for mode in [BuildMode::Clean, BuildMode::Xbox] {
+            let plan = production_workflow_plan(mode, Some(WorkflowStep::BuildCdx)).unwrap();
+
+            assert_eq!(
+                plan.runnable_steps(),
+                &[WorkflowStep::BuildCdx],
+                "mode: {mode:?}"
+            );
+        }
+    }
+
+    /// Batch parity, as for a hidden 4: `:BldCDX` forwards Filtered to `:PreVis` (305), so a
+    /// Filtered resume at 5 plans from Step 6, which has nothing it can run yet.
+    #[test]
+    fn a_filtered_resume_at_step_five_plans_from_step_six() {
+        let error = production_workflow_plan(BuildMode::Filtered, Some(WorkflowStep::BuildCdx))
+            .unwrap_err();
+
+        assert!(
+            matches!(error, Error::StepNotImplemented(6)),
+            "error: {error:?}"
+        );
+    }
+
+    /// Step 5 has no pre-checks of its own (304–307): a resume at 5 enters at `:BldCDX` (231)
+    /// and skips Step 4's `.psg` check, so a missing `.psg` must not stop it.
+    #[test]
+    fn a_resume_at_step_five_builds_the_cdx_without_a_geometry_psg() {
+        for mode in [BuildMode::Clean, BuildMode::Xbox] {
+            let fixture = step_five_fixture(mode);
+            assert!(!fixture.files.is_file(&geometry_psg(&fixture)));
+            let process = successful_cdx_spawn(&fixture, 0);
+
+            let (result, warnings) = fixture.run_step_five_collecting_warnings(&process);
+
+            result.unwrap();
+            assert!(
+                warnings.is_empty(),
+                "mode: {mode:?}, warnings: {warnings:?}"
+            );
+            assert!(fixture.files.is_file(&cdx(&fixture)), "mode: {mode:?}");
+            // One spawn of the run's own Creation Kit for the run's own plugin, with the whole
+            // episode around it; the verb itself is pinned in `tools::creation_kit`.
+            let calls = process.calls();
+            assert_eq!(calls.len(), 1, "mode: {mode:?}");
+            assert_eq!(calls[0].exe, fixture.run.creation_kit().unwrap().exe);
+            assert!(
+                calls[0]
+                    .args
+                    .iter()
+                    .any(|arg| arg.to_string_lossy().contains("MyMod.esp")),
+                "mode: {mode:?}, args: {:?}",
+                calls[0].args
+            );
+            assert_eq!(fixture.wait.delays(), vec![MO2_DELAY_AFTER_CK_SECS]);
+            let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+            assert!(
+                session.contains("Running CK option BuildCDX:"),
+                "mode: {mode:?}, session log: {session}"
+            );
+        }
+    }
+
+    /// A `.cdx` left by an earlier run is gone by the time Creation Kit is spawned (a
+    /// divergence — the batch never clears it), so the `.cdx` the output check finds is this
+    /// run's.
+    #[test]
+    fn step_five_deletes_a_stale_cdx_before_creation_kit_runs() {
+        let fixture = step_five_fixture(BuildMode::Clean);
+        fixture.files.add_file_with_contents(cdx(&fixture), "stale");
+        let config = fixture.run.config().clone();
+        let ck_log = fixture.ck_log_path();
+        let cdx_path = cdx(&fixture);
+        let stale_at_spawn = std::cell::Cell::new(None);
+        let process = RecordingProcessRunner::new().with_effects(&fixture.files, |space| {
+            stale_at_spawn.set(Some(space.is_file(&cdx_path)));
+            record_successful_cdx_outputs(space, &config, &ck_log);
+        });
+
+        fixture.run_step_five(&process).unwrap();
+
+        assert_eq!(stale_at_spawn.get(), Some(false));
+        assert!(fixture.files.is_file(&cdx(&fixture)));
+    }
+
+    /// A stale `.cdx` must not pass for this run's output: with it cleared before the spawn, a
+    /// Creation Kit that writes nothing stops the run, non-interactively, with the shared
+    /// missing-output error.
+    #[test]
+    fn a_stale_cdx_never_passes_for_a_silent_creation_kit_run() {
+        let fixture = step_five_fixture(BuildMode::Clean);
+        assert!(fixture.run.config().non_interactive);
+        fixture.files.add_file(cdx(&fixture));
+        // Creation Kit ran, exited cleanly, and wrote nothing at all.
+        let process = RecordingProcessRunner::new();
+
+        let (result, warnings) = fixture.run_step_five_collecting_warnings(&process);
+
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "BuildCDX failed to create file MyMod.cdx with exit status 0"
+        );
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        assert_eq!(process.calls().len(), 1);
+        assert!(!fixture.files.is_file(&cdx(&fixture)));
+    }
+
+    /// A non-zero exit with the `.cdx` present completes with one warning in the batch's words
+    /// (472).
+    #[test]
+    fn step_five_warns_about_a_non_zero_exit_that_still_produced_its_cdx() {
+        let fixture = step_five_fixture(BuildMode::Clean);
+        let process = successful_cdx_spawn(&fixture, 3);
+
+        let (result, warnings) = fixture.run_step_five_collecting_warnings(&process);
+
+        result.unwrap();
+        assert_eq!(
+            warnings,
+            vec![BuildWarning::CreationKitNonZeroExit {
+                operation: "BuildCDX",
+                code: Some(3),
+            }]
+        );
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(
+            session.ends_with(
+                "WARNING - BuildCDX ended with error 3 but seemed to finish so error ignored.\n"
+            ),
+            "session log: {session}"
+        );
+        assert!(fixture.files.is_file(&cdx(&fixture)));
+    }
+
+    /// The same exit without the `.cdx` stops on the output and says nothing about the exit
+    /// (batch 471 before 472).
+    #[test]
+    fn step_five_raises_no_exit_warning_when_its_cdx_is_missing() {
+        let fixture = step_five_fixture(BuildMode::Clean);
+        let process = RecordingProcessRunner::new().returning_exit_code(3);
+
+        let (result, warnings) = fixture.run_step_five_collecting_warnings(&process);
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                Error::MissingCreationKitOutput { operation, file, code }
+                    if *operation == "BuildCDX" && file == "MyMod.cdx" && *code == Some(3)
+            ),
+            "error: {err:?}"
+        );
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(!session.contains("WARNING - "), "session log: {session}");
     }
 }

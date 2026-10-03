@@ -677,7 +677,7 @@ mod tests {
         }
     }
 
-    /// A Clean resume at 4 runs Step 4 alone, so the diagnostic must say that rather than
+    /// A Clean resume at 4 runs Steps 4 and 5, so the diagnostic must say that rather than
     /// claim Step 1 is what runs.
     #[test]
     fn a_resumed_partial_run_names_the_steps_it_will_execute() {
@@ -693,13 +693,16 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(run.runnable_steps(), &[WorkflowStep::CompressPsg]);
+        assert_eq!(
+            run.runnable_steps(),
+            &[WorkflowStep::CompressPsg, WorkflowStep::BuildCdx]
+        );
         assert!(
             run.diagnostics()
                 .contains(&RunDiagnostic::LaterStepsNotImplemented {
-                    skipped: 4,
+                    skipped: 3,
                     planned: 5,
-                    runnable: vec![WorkflowStep::CompressPsg],
+                    runnable: vec![WorkflowStep::CompressPsg, WorkflowStep::BuildCdx],
                 }),
             "diagnostics: {:?}",
             run.diagnostics()

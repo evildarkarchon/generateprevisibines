@@ -1578,7 +1578,10 @@ mod tests {
         };
 
         assert_eq!(run.config().resume_from, Some(WorkflowStep::CompressPsg));
-        assert_eq!(run.runnable_steps(), &[WorkflowStep::CompressPsg]);
+        assert_eq!(
+            run.runnable_steps(),
+            &[WorkflowStep::CompressPsg, WorkflowStep::BuildCdx]
+        );
         assert_eq!(prompts.call_count(), 0);
     }
 

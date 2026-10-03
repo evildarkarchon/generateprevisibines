@@ -218,13 +218,6 @@ impl<'a> CreationKitOps<'a> {
     }
 
     /// Build the CDX index (batch `:BuildCDX`).
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "the Step 5 Workflow Operation that calls this is not ported yet"
-        )
-    )]
     pub(crate) fn build_cdx(&self, plugin_file: &str) -> Result<CkRun> {
         self.run(CkOperation::BuildCdx, plugin_file, "")
     }

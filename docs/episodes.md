@@ -355,6 +355,8 @@ path (`:RePrecomb`, `:RePreVis`).
 - **Step 5**: the only step that runs CK with **zero** pre-checks of its own (304–307 — only
   the build-mode gate, which skips it in filtered mode alone, 305). Reached by fallthrough it
   inherits step 4's `.psg` check; a resume at step 5 enters at `:BldCDX` (231) and skips that.
+  One divergence, for the same reason as step 4's `.csg`: the port deletes a stale
+  `<plugin>.cdx` **before** the spawn, so the 471 output check can only pass on this run's file.
 - **Step 6**: non-resume entry with a non-empty `Data\vis` is a hard stop via `:Done`, not a
   `failed` (311–313).
 - **Step 7 preconditions**: no `.uvd` files → `failed` (323); no `Previs.esp` → `failed` (324).
