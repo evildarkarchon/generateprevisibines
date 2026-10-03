@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::config::{ArchiveTool, CkpeConfigKind, PluginIdentity};
 use crate::discovery::{self, ToolPaths};
 use crate::error::{Error, Result};
-use crate::tools::CreationKitPaths;
+use crate::tools::{CreationKitPaths, Fo4EditPaths};
 use crate::validation;
 
 /// Pre-intake toolchain facts needed before a Workflow Request becomes a Workflow Run.
@@ -16,6 +16,11 @@ pub struct WorkflowToolchainProbe {
     tools: ToolPaths,
     fallout4_dir: PathBuf,
     data_dir: PathBuf,
+    /// Whether the Fallout 4 directory came from `-FO4:` rather than the registry.
+    ///
+    /// Recorded because FO4Edit is pointed at `Data` with `-D:` only then: the batch sets
+    /// `%ModDir_%` only in `:SetFO4` (line 498), and otherwise FO4Edit finds the install itself.
+    fallout4_dir_overridden: bool,
     diagnostics: Vec<ToolchainDiagnostic>,
 }
 
@@ -25,7 +30,11 @@ impl WorkflowToolchainProbe {
     /// This is intentionally light: it must resolve the data root used for plugin readiness,
     /// but it does not require Creation Kit, CKPE, xEdit scripts, or archive tools yet.
     pub fn discover(exe_dir: &Path, fallout4_override: Option<PathBuf>) -> Result<Self> {
-        Self::from_tool_paths(discovery::discover_tools(exe_dir, fallout4_override))
+        let overridden = fallout4_override.is_some();
+        let mut probe =
+            Self::from_tool_paths(discovery::discover_tools(exe_dir, fallout4_override))?;
+        probe.fallout4_dir_overridden = overridden;
+        Ok(probe)
     }
 
     /// Build a probe from already-discovered tool paths.
@@ -61,6 +70,9 @@ impl WorkflowToolchainProbe {
             tools,
             fallout4_dir,
             data_dir,
+            // Tool paths alone cannot say where the directory came from; `discover`, which was
+            // handed the override, sets this afterwards.
+            fallout4_dir_overridden: false,
             diagnostics,
         })
     }
@@ -118,9 +130,12 @@ impl WorkflowToolchainProbe {
                 )
             })?;
             validate_xedit_scripts(exe_dir, &fo4edit)?;
-            Some(fo4edit)
+            Some(Fo4EditToolchain {
+                executable: fo4edit,
+                data_dir_override: self.fallout4_dir_overridden.then(|| self.data_dir.clone()),
+            })
         } else {
-            self.tools.fo4edit.clone()
+            None
         };
 
         let archive = if requirements.needs_archive() {
@@ -133,6 +148,7 @@ impl WorkflowToolchainProbe {
             fallout4_dir: self.fallout4_dir.clone(),
             data_dir: self.data_dir.clone(),
             creation_kit,
+            discovered_fo4edit: self.tools.fo4edit.clone(),
             fo4edit,
             archive,
             diagnostics,
@@ -214,7 +230,10 @@ pub struct WorkflowToolchain {
     fallout4_dir: PathBuf,
     data_dir: PathBuf,
     creation_kit: Option<CreationKitToolchain>,
-    fo4edit: Option<PathBuf>,
+    /// The FO4Edit discovery found, whether or not any runnable operation required it.
+    discovered_fo4edit: Option<PathBuf>,
+    /// FO4Edit as prepared for the runnable operations; `None` when none required it.
+    fo4edit: Option<Fo4EditToolchain>,
     archive: Option<PathBuf>,
     diagnostics: Vec<ToolchainDiagnostic>,
 }
@@ -238,10 +257,14 @@ impl WorkflowToolchain {
         &self.diagnostics
     }
 
-    /// Prepared FO4Edit/xEdit executable path when xEdit-backed operations require it.
+    /// The FO4Edit/xEdit executable: the prepared one when xEdit-backed operations require it,
+    /// otherwise whatever discovery found.
     #[must_use]
     pub fn fo4edit_path(&self) -> Option<&Path> {
-        self.fo4edit.as_deref()
+        self.fo4edit
+            .as_ref()
+            .map(|fo4edit| fo4edit.executable.as_path())
+            .or(self.discovered_fo4edit.as_deref())
     }
 
     /// Prepared archive executable path when archive-backed operations require it.
@@ -265,6 +288,21 @@ impl WorkflowToolchain {
             exe: creation_kit.executable.clone(),
             fallout4_dir: self.fallout4_dir.clone(),
             ck_log_path: creation_kit.ck_log_path.clone(),
+            session_log,
+        })
+    }
+
+    /// Resolve the paths an xEdit-backed Workflow Operation's FO4Edit episodes run against.
+    ///
+    /// `session_log` is the Workflow Run's own log, which each episode folds the script's log
+    /// into. Returns [`Error::Fo4EditNotPrepared`] when FO4Edit readiness was never required,
+    /// and so never prepared, for this Workflow Run.
+    pub(crate) fn fo4edit_paths(&self, session_log: PathBuf) -> Result<Fo4EditPaths> {
+        let fo4edit = self.fo4edit.as_ref().ok_or(Error::Fo4EditNotPrepared)?;
+
+        Ok(Fo4EditPaths {
+            exe: fo4edit.executable.clone(),
+            data_dir_override: fo4edit.data_dir_override.clone(),
             session_log,
         })
     }
@@ -310,6 +348,16 @@ impl ToolchainRequirements {
         Self {
             creation_kit: true,
             fo4edit: false,
+            archive: false,
+        }
+    }
+
+    /// Create the static readiness requirement for an FO4Edit-backed operation.
+    #[must_use]
+    pub const fn fo4edit() -> Self {
+        Self {
+            creation_kit: false,
+            fo4edit: true,
             archive: false,
         }
     }
@@ -362,6 +410,14 @@ impl ToolchainRequirements {
 struct CreationKitToolchain {
     executable: PathBuf,
     ck_log_path: PathBuf,
+}
+
+/// FO4Edit as prepared for a Workflow Run whose runnable operations require it.
+#[derive(Debug, Clone)]
+struct Fo4EditToolchain {
+    executable: PathBuf,
+    /// The run's `Data` directory when `-FO4:` was given; see [`Fo4EditPaths`].
+    data_dir_override: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -600,6 +656,114 @@ mod tests {
             ToolchainDiagnostic::CkpeHandleLimitDisabled { setting_key, .. }
                 if setting_key == "BSHandleRefObjectPatch"
         )));
+    }
+
+    /// An `exe_dir` holding FO4Edit and both merge scripts at their required versions, as
+    /// discovery and script validation expect to find them.
+    fn fo4edit_install(exe_dir: &Path) -> PathBuf {
+        let fo4edit = exe_dir.join("FO4Edit.exe");
+        fs::write(&fo4edit, b"").unwrap();
+        let scripts = exe_dir.join("Edit Scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::write(
+            scripts.join("Batch_FO4MergeCombinedObjectsAndCheck.pas"),
+            "{ V1.5 }",
+        )
+        .unwrap();
+        fs::write(
+            scripts.join("Batch_FO4MergePrevisandCleanRefr.pas"),
+            "{ V2.3 }",
+        )
+        .unwrap();
+        fo4edit
+    }
+
+    #[test]
+    fn the_fo4edit_requirement_asks_for_fo4edit_alone() {
+        let requirements = ToolchainRequirements::fo4edit();
+
+        assert!(requirements.needs_fo4edit());
+        assert!(!requirements.needs_creation_kit());
+        assert!(!requirements.needs_archive());
+    }
+
+    /// Discovered through `discover` with `-FO4:`, as `main` does: FO4Edit is then pointed at
+    /// that install's `Data` (batch 498 sets `%ModDir_%` only in `:SetFO4`).
+    #[test]
+    fn a_fallout4_override_points_fo4edit_at_its_data_directory() {
+        let dir = tempdir().unwrap();
+        let fo4edit = fo4edit_install(dir.path());
+        let fo4 = dir.path().join("Fallout4");
+        fs::create_dir_all(&fo4).unwrap();
+        let probe = WorkflowToolchainProbe::discover(dir.path(), Some(fo4.clone())).unwrap();
+
+        let toolchain = probe
+            .prepare(
+                dir.path(),
+                ArchiveTool::Archive2,
+                ToolchainRequirements::fo4edit(),
+            )
+            .unwrap();
+        let session_log = dir.path().join("session.log");
+        let paths = toolchain.fo4edit_paths(session_log.clone()).unwrap();
+
+        assert_eq!(paths.exe, fo4edit);
+        assert_eq!(paths.data_dir_override, Some(fo4.join("Data")));
+        assert_eq!(paths.session_log, session_log);
+    }
+
+    /// A Fallout 4 directory that did not come from `-FO4:` leaves FO4Edit to find `Data`.
+    #[test]
+    fn without_an_override_fo4edit_finds_its_own_data_directory() {
+        let dir = tempdir().unwrap();
+        let fo4edit = fo4edit_install(dir.path());
+        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
+            fo4edit: Some(fo4edit),
+            fallout4_dir: Some(dir.path().join("Fallout4")),
+            ..ToolPaths::default()
+        })
+        .unwrap();
+
+        let toolchain = probe
+            .prepare(
+                dir.path(),
+                ArchiveTool::Archive2,
+                ToolchainRequirements::fo4edit(),
+            )
+            .unwrap();
+        let paths = toolchain
+            .fo4edit_paths(dir.path().join("session.log"))
+            .unwrap();
+
+        assert_eq!(paths.data_dir_override, None);
+    }
+
+    /// FO4Edit discovered but never required is not prepared, so no episode can reach it.
+    #[test]
+    fn fo4edit_paths_need_fo4edit_readiness() {
+        let dir = tempdir().unwrap();
+        let fo4edit = fo4edit_install(dir.path());
+        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
+            fo4edit: Some(fo4edit.clone()),
+            fallout4_dir: Some(dir.path().join("Fallout4")),
+            ..ToolPaths::default()
+        })
+        .unwrap();
+
+        let toolchain = probe
+            .prepare(
+                dir.path(),
+                ArchiveTool::Archive2,
+                ToolchainRequirements::none(),
+            )
+            .unwrap();
+
+        assert!(matches!(
+            toolchain.fo4edit_paths(dir.path().join("session.log")),
+            Err(Error::Fo4EditNotPrepared)
+        ));
+        // Discovery's answer is still reported.
+        assert_eq!(toolchain.fo4edit_path(), Some(fo4edit.as_path()));
     }
 
     #[test]

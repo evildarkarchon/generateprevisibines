@@ -4,12 +4,17 @@ use std::path::Path;
 
 use crate::config::{BuildMode, CkpeConfigKind, PluginIdentity};
 use crate::error::{Error, Result};
+use crate::tools::{MERGE_COMBINED_OBJECTS_SCRIPT, MERGE_PREVIS_SCRIPT};
 
 const RESERVED_NAMES: &[&str] = &["previs", "combinedobjects", "xprevispatch"];
 
+/// The FO4Edit scripts the merge steps run, with the version each must carry (batch 140–141).
+///
+/// The names come from the FO4Edit episode, which runs them, so the script checked here is the
+/// script that runs.
 const REQUIRED_XEDIT_SCRIPTS: &[(&str, &str)] = &[
-    ("Batch_FO4MergePrevisandCleanRefr.pas", "V2.3"),
-    ("Batch_FO4MergeCombinedObjectsAndCheck.pas", "V1.5"),
+    (MERGE_PREVIS_SCRIPT, "V2.3"),
+    (MERGE_COMBINED_OBJECTS_SCRIPT, "V1.5"),
 ];
 
 /// Plugin token allowed by batch `findstr` check (`^[a-z0-9_\.]*$`, case-insensitive).

@@ -32,6 +32,9 @@ pub(super) const DEFINITION: WorkflowOperationDefinition = WorkflowOperationDefi
 /// [`Error::MissingCreationKitOutput`]: crate::error::Error::MissingCreationKitOutput
 /// [`Error::Io`]: crate::error::Error::Io
 pub(super) fn run(run: &WorkflowRun, ports: &OperationPorts<'_>) -> Result<()> {
+    // Reached first, so a run that prepared no Creation Kit (a preparation bug) stops before
+    // anything in the workspace is touched.
+    let ck = ports.ck()?;
     let config = run.config();
 
     // A divergence, for the same reason as Step 4's stale `.csg`: the batch never clears an
@@ -43,7 +46,7 @@ pub(super) fn run(run: &WorkflowRun, ports: &OperationPorts<'_>) -> Result<()> {
         ports.files.remove_file(&cdx)?;
     }
 
-    let ck_run = ports.ck.build_cdx(&config.plugin.file_name)?;
+    let ck_run = ck.build_cdx(&config.plugin.file_name)?;
 
     if !ports.files.is_file(&cdx) {
         return Err(ck_run.missing_output_error(&cdx_name(config)));

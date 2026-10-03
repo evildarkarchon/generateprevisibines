@@ -11,9 +11,10 @@ use crate::files::{FileSpace, SystemFileSpace};
 use crate::logging;
 use crate::toolchain::{ToolchainDiagnostic, WorkflowToolchainProbe};
 use crate::tools::clock::SystemClock;
+use crate::tools::desktop::SystemDesktopWindows;
 use crate::tools::process::SystemProcessRunner;
 use crate::tools::wait::SystemWait;
-use crate::tools::{CkPorts, CreationKitPaths};
+use crate::tools::{CkPorts, CreationKitPaths, Fo4EditPaths, Fo4EditPorts};
 use crate::validation;
 use crate::warning::BuildWarnings;
 use crate::workflow::WorkflowPlan;
@@ -106,6 +107,8 @@ pub struct WorkflowRun {
     config: ProjectConfig,
     /// Resolved Creation Kit paths, or `None` when no runnable step required Creation Kit.
     creation_kit: Option<CreationKitPaths>,
+    /// Resolved FO4Edit paths, or `None` when no runnable step required FO4Edit.
+    fo4edit: Option<Fo4EditPaths>,
     plan: WorkflowPlan,
     diagnostics: Vec<RunDiagnostic>,
     log_path: PathBuf,
@@ -133,7 +136,7 @@ impl WorkflowRun {
     /// Complete preparation from a validated config and registration-resolved workflow state.
     ///
     /// Returns the ready-to-execute run, or propagates toolchain readiness, log initialization,
-    /// and Creation Kit context errors. The plan and requirements must come from the same
+    /// and Creation Kit or FO4Edit context errors. The plan and requirements must come from the same
     /// Workflow Operation registration before this helper is called.
     fn prepare_with_registration(
         config: ProjectConfig,
@@ -174,10 +177,17 @@ impl WorkflowRun {
         } else {
             None
         };
+        // The same for FO4Edit: a run that resumes past both merge steps never resolves it.
+        let fo4edit = if requirements.needs_fo4edit() {
+            Some(toolchain.fo4edit_paths(log_path.clone())?)
+        } else {
+            None
+        };
 
         Ok(Self {
             config,
             creation_kit,
+            fo4edit,
             plan,
             diagnostics,
             log_path,
@@ -186,9 +196,10 @@ impl WorkflowRun {
 
     /// Execute the runnable subset of the prepared workflow through the production ports.
     ///
-    /// Every exit is reported before this returns; see [`Self::execute_with_ports`]. A run whose
-    /// prepared state carries no Creation Kit paths stops with
-    /// [`Error::CreationKitNotPrepared`], reported the same way.
+    /// Every exit is reported before this returns; see [`Self::execute_with_ports`]. Only the tool
+    /// episodes this run prepared are bound; an operation that reaches one that was not stops
+    /// the run with [`Error::CreationKitNotPrepared`] or [`Error::Fo4EditNotPrepared`], reported
+    /// the same way.
     ///
     /// # Errors
     ///
@@ -198,27 +209,35 @@ impl WorkflowRun {
         let process = SystemProcessRunner;
         let wait = SystemWait;
         let clock = SystemClock;
+        let desktop = SystemDesktopWindows;
         let prompts = InteractivePrompts;
         let warnings = BuildWarnings::new(self.log_path.clone(), &files);
 
-        // Every registered Workflow Operation requires Creation Kit today, so a prepared run
-        // that reaches here without its paths is a preparation bug rather than a user state.
-        // The check is not removable as dead code, though: the moment an xEdit-backed operation
-        // is registered, a plan can be runnable without Creation Kit ever being resolved.
-        let Some(creation_kit) = self.creation_kit() else {
-            // The session log exists by now, so this is a stop *of the run* and is reported
-            // like one, not left for `main` to print bare.
-            return Err(self.report_stop(Error::CreationKitNotPrepared, &files));
-        };
-        let ck = creation_kit.bind(CkPorts {
-            process: &process,
-            wait: &wait,
-            clock: &clock,
-            files: &files,
+        // Bind each episode whose paths were prepared, and leave the other absent rather than
+        // failing up front: a resume at Step 2 or Step 7 needs FO4Edit and no Creation Kit. An
+        // operation that reaches an absent episode stops through `ports.ck()?` or
+        // `ports.fo4edit()?`, and `execute_with_ports` reports that stop like any other, since
+        // the session log exists by now.
+        let ck = self.creation_kit().map(|creation_kit| {
+            creation_kit.bind(CkPorts {
+                process: &process,
+                wait: &wait,
+                clock: &clock,
+                files: &files,
+            })
+        });
+        let fo4edit = self.fo4edit().map(|fo4edit| {
+            fo4edit.bind(Fo4EditPorts {
+                process: &process,
+                wait: &wait,
+                desktop: &desktop,
+                files: &files,
+            })
         });
 
         self.execute_with_ports(&OperationPorts {
-            ck: &ck,
+            ck: ck.as_ref(),
+            fo4edit: fo4edit.as_ref(),
             prompts: &prompts,
             files: &files,
             warnings: &warnings,
@@ -320,6 +339,14 @@ impl WorkflowRun {
     /// execution time, so a Workflow Operation is never handed the run back to fish them out.
     pub(crate) const fn creation_kit(&self) -> Option<&CreationKitPaths> {
         self.creation_kit.as_ref()
+    }
+
+    /// Resolved paths this run's FO4Edit episodes run against.
+    ///
+    /// `None` when no runnable Workflow Operation required FO4Edit readiness, so nothing was
+    /// resolved. Narrow for the same reason as [`Self::creation_kit`].
+    pub(crate) const fn fo4edit(&self) -> Option<&Fo4EditPaths> {
+        self.fo4edit.as_ref()
     }
 }
 
@@ -483,7 +510,8 @@ mod tests {
 
         assert_eq!(run.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
         run.execute_with_ports(&OperationPorts {
-            ck: &ck,
+            ck: Some(&ck),
+            fo4edit: None,
             prompts: &prompts,
             files: &fixture.files,
             warnings: &warnings,
@@ -534,7 +562,8 @@ mod tests {
         let warnings = BuildWarnings::new(run.log_path().to_path_buf(), files);
 
         run.execute_with_ports(&OperationPorts {
-            ck: &ck,
+            ck: Some(&ck),
+            fo4edit: None,
             prompts: &prompts,
             files,
             warnings: &warnings,
@@ -608,6 +637,61 @@ mod tests {
         let session = fixture.files.read_lossy(run.log_path()).unwrap();
         assert!(!session.contains("ERROR - "), "session log: {session}");
         assert!(!session.contains("failed."), "session log: {session}");
+    }
+
+    /// Step 1 needs no FO4Edit, so none is resolved even where one could be found.
+    #[test]
+    fn a_run_without_fo4edit_steps_prepares_no_fo4edit() {
+        let fixture = ready_workflow_fixture();
+
+        let run = prepared_run(&fixture);
+
+        assert!(run.fo4edit().is_none());
+    }
+
+    /// A run whose runnable operations require FO4Edit gets its paths, logging into the run's
+    /// own session log, and needs no Creation Kit for it.
+    #[test]
+    fn a_run_requiring_fo4edit_prepares_its_paths() {
+        let fixture = ready_workflow_fixture();
+        let fo4edit = fixture.directory.path().join("FO4Edit.exe");
+        fs::write(&fo4edit, b"").unwrap();
+        let scripts = fixture.directory.path().join("Edit Scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::write(
+            scripts.join("Batch_FO4MergeCombinedObjectsAndCheck.pas"),
+            "V1.5",
+        )
+        .unwrap();
+        fs::write(scripts.join("Batch_FO4MergePrevisandCleanRefr.pas"), "V2.3").unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
+            fo4edit: Some(fo4edit.clone()),
+            fallout4_dir: Some(fixture.fallout4_directory.clone()),
+            ..ToolPaths::default()
+        })
+        .unwrap();
+        let config = fixture.request.to_project_config(&probe).unwrap();
+        let plan =
+            crate::workflow::operations::production_workflow_plan(BuildMode::Clean, None).unwrap();
+        let preparation = ProductionWorkflowPreparation::from_parts(
+            plan,
+            crate::toolchain::ToolchainRequirements::fo4edit(),
+        );
+
+        let run = WorkflowRun::prepare_with_registration(
+            config,
+            fixture.directory.path(),
+            &probe,
+            preparation,
+            &fixture.files,
+        )
+        .unwrap();
+
+        let paths = run.fo4edit().unwrap();
+        assert_eq!(paths.exe, fo4edit);
+        assert_eq!(paths.data_dir_override, None);
+        assert_eq!(paths.session_log, run.log_path());
+        assert!(run.creation_kit().is_none());
     }
 
     #[test]

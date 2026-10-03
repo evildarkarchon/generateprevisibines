@@ -91,11 +91,52 @@ pub enum Error {
     #[error("Creation Kit was not prepared for this Workflow Run")]
     CreationKitNotPrepared,
 
+    // The FO4Edit twin of `CreationKitNotPrepared`, and a preparation bug for the same reason: a
+    // Workflow Run resolves FO4Edit paths only when a runnable Workflow Operation asked for
+    // FO4Edit readiness.
+    #[error("FO4Edit was not prepared for this Workflow Run")]
+    Fo4EditNotPrepared,
+
+    // A divergence: the batch polls for the log forever (548–550), so a FO4Edit that crashed or
+    // was closed before its script finished left the run hanging. `script` is the bare `.pas`
+    // name, as the batch's `%2` prints it.
+    #[error(
+        "FO4Edit exited before script {script} wrote its log (exit code {})",
+        exit_code_text(*.code)
+    )]
+    Fo4EditExitedEarly {
+        script: &'static str,
+        code: Option<i32>,
+    },
+
+    // FO4Edit is never killed, because xEdit saves the merged plugin on its own close path. A
+    // FO4Edit that ignored both close requests is left for the operator to close.
+    #[error(
+        "FO4Edit (PID {pid}) is still running after two close requests. Close it, then rerun this step."
+    )]
+    Fo4EditStillRunning { pid: u32 },
+
+    // The log was there when the poll ended and gone when the episode came to read it, after
+    // about 35 seconds of close delays. Something other than FO4Edit removed it, so there is
+    // nothing left to judge the script run by.
+    #[error("FO4Edit's log {} was gone when the run came to read it", .path.display())]
+    UnattendedLogMissing { path: std::path::PathBuf },
+
+    // The batch's own wording (`GeneratePrevisibines.bat:561`).
+    #[error(
+        "FO4Edit script {script} failed [missing files, Probably due to MO2]. Rerun this phase to fix"
+    )]
+    Fo4EditScriptMissingModules { script: &'static str },
+
+    // The batch's own wording (`GeneratePrevisibines.bat:563`).
+    #[error("FO4Edit script {script} failed")]
+    Fo4EditScriptFailed { script: &'static str },
+
     #[error("{0}")]
     Other(String),
 }
 
-/// Render a Creation Kit exit code as the batch's `%Err_%` would print it.
+/// Render an external tool's exit code as the batch's `%Err_%` would print it.
 ///
 /// The batch always has an `%ERRORLEVEL%` to print. A missing code is only reachable off
 /// Windows (a signal-terminated process), and "unknown" says so rather than inventing a number.
@@ -128,6 +169,51 @@ mod tests {
         assert_eq!(
             Error::VisUvdFilesExist.to_string(),
             "Previs directory (Data\\vis) not empty"
+        );
+    }
+
+    /// Batch lines 561 and 563, minus the `ERROR - ` prefix.
+    #[test]
+    fn the_shared_fo4edit_fatals_read_as_the_batch_wording() {
+        let script = "Batch_FO4MergePrevisandCleanRefr.pas";
+
+        assert_eq!(
+            Error::Fo4EditScriptMissingModules { script }.to_string(),
+            "FO4Edit script Batch_FO4MergePrevisandCleanRefr.pas failed [missing files, \
+             Probably due to MO2]. Rerun this phase to fix"
+        );
+        assert_eq!(
+            Error::Fo4EditScriptFailed { script }.to_string(),
+            "FO4Edit script Batch_FO4MergePrevisandCleanRefr.pas failed"
+        );
+    }
+
+    #[test]
+    fn an_early_fo4edit_exit_names_the_script_and_renders_an_unknown_code() {
+        let script = "Batch_FO4MergeCombinedObjectsAndCheck.pas";
+
+        assert_eq!(
+            Error::Fo4EditExitedEarly {
+                script,
+                code: Some(3)
+            }
+            .to_string(),
+            "FO4Edit exited before script Batch_FO4MergeCombinedObjectsAndCheck.pas wrote its \
+             log (exit code 3)"
+        );
+        assert_eq!(
+            Error::Fo4EditExitedEarly { script, code: None }.to_string(),
+            "FO4Edit exited before script Batch_FO4MergeCombinedObjectsAndCheck.pas wrote its \
+             log (exit code unknown)"
+        );
+    }
+
+    #[test]
+    fn a_fo4edit_still_running_names_its_pid() {
+        assert_eq!(
+            Error::Fo4EditStillRunning { pid: 4242 }.to_string(),
+            "FO4Edit (PID 4242) is still running after two close requests. Close it, then \
+             rerun this step."
         );
     }
 

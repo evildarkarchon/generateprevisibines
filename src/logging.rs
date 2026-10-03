@@ -19,21 +19,19 @@ pub fn session_log_path(plugin: &PluginIdentity, files: &dyn FileSpace) -> PathB
     files.temp_dir().join(format!("{}.log", plugin.base_name))
 }
 
+/// The file name of the log FO4Edit's merge scripts write (batch `%UnattenedLogfile_%`).
+///
+/// A bare name, because the FO4Edit episode passes it to `-log:` relative to FO4Edit's working
+/// directory; see [`unattended_log_path`] for where that puts it.
+pub(crate) const UNATTENDED_LOG_FILE_NAME: &str = "UnattendedScript.log";
+
 /// Path matching batch unattended xEdit log location, rooted in `files`' temporary directory.
-// No production caller since the Creation Kit paths stopped travelling in a shared tool
-// context: this log belongs to the xEdit runs, and the Workflow Operations that launch them
-// are not ported. It stays live through its test until the step 2 xEdit adapter names it
-// again (deferred to Phase B by ADR-0002).
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the unattended xEdit log arrives with the xEdit-backed Workflow Operations"
-    )
-)]
+///
+/// The FO4Edit episode runs FO4Edit with `files`' temporary directory as its working directory
+/// and a relative `-log:`, so this is where the log lands.
 #[must_use]
 pub fn unattended_log_path(files: &dyn FileSpace) -> PathBuf {
-    files.temp_dir().join("UnattendedScript.log")
+    files.temp_dir().join(UNATTENDED_LOG_FILE_NAME)
 }
 
 /// Append a banner line, plus its line terminator, to the session log at `path`.
@@ -77,6 +75,9 @@ pub fn init_session_log(
 /// up against one the batch produced. Trailing whitespace is the one thing not reproduced: every
 /// `echo … >> "%Logfile_%"` in `:RunCK` leaves a space before the redirect, and `init_session_log`
 /// already drops the batch header's two.
+///
+/// `:RunScript` writes the same rule under its FO4Edit banner (line 541), so
+/// [`append_xedit_run_header`] uses it too.
 const CK_RUN_SEPARATOR: &str = "====================================";
 
 /// Open one Creation Kit run's session-log entry (batch `:RunCK` lines 461–463).
@@ -143,6 +144,64 @@ pub fn append_ck_log(
         );
     };
 
+    append_tool_log_contents(session_log, contents, files)
+}
+
+/// Open one FO4Edit script run's session-log entry (batch `:RunScript` lines 539–541).
+///
+/// `script` is the bare `.pas` name and `plugins_txt` the plugin list FO4Edit is pointed at.
+/// `data_dir_override` adds the batch's `%ModDir_%` (` -D:"<data>"`), which is set only when
+/// `-FO4:` was given. The quotes are the batch's, written into the log as it writes them; they
+/// never reach FO4Edit's argv.
+///
+/// Written before the episode's first delay, so a FO4Edit that hangs or never launches still
+/// leaves a record of which script was attempted, the same reason the Creation Kit header is
+/// written before its spawn. Trailing spaces from the batch's `echo … >>` are dropped, as
+/// [`CK_RUN_SEPARATOR`] explains.
+///
+/// Returns [`crate::error::Error::Io`] when the session log cannot be extended.
+pub(crate) fn append_xedit_run_header(
+    session_log: &Path,
+    script: &str,
+    plugin_file: &str,
+    plugins_txt: &Path,
+    data_dir_override: Option<&Path>,
+    files: &dyn FileSpace,
+) -> Result<()> {
+    let data_dir = data_dir_override
+        .map(|data_dir| format!(" -D:\"{}\"", data_dir.display()))
+        .unwrap_or_default();
+    files.append(
+        session_log,
+        &format!(
+            "Running xEdit script {script} against {plugin_file}\n\
+             Params -fo4 -autoexit -P:\"{}\"{data_dir}\n\
+             {CK_RUN_SEPARATOR}\n",
+            plugins_txt.display()
+        ),
+    )
+}
+
+/// Append FO4Edit's unattended log to the session log (batch `:RunScript` line 559).
+///
+/// The same newline normalisation as [`append_ck_log`]: a log with no final newline gets one,
+/// so whatever follows it starts on its own line, and an empty log adds nothing.
+///
+/// Returns [`crate::error::Error::Io`] when the session log cannot be extended.
+pub(crate) fn append_unattended_log(
+    session_log: &Path,
+    contents: &str,
+    files: &dyn FileSpace,
+) -> Result<()> {
+    append_tool_log_contents(session_log, contents, files)
+}
+
+/// Append an external tool's log `contents` so the session log ends on a newline.
+fn append_tool_log_contents(
+    session_log: &Path,
+    contents: &str,
+    files: &dyn FileSpace,
+) -> Result<()> {
     // Assembled before the single append so the log and the newline that normalises it are one
     // write, whatever `FileSpace` backs it. An empty log is left alone: the batch's `type` of an
     // empty file appends nothing, and a blank line would claim content that is not there.
@@ -358,6 +417,79 @@ mod tests {
              Start 09:00:00.00\n\
              Ended 09:04:12.34\n\
              second\n"
+        );
+    }
+
+    /// Batch 539–541, without `%ModDir_%`: no `-FO4:` was given, so FO4Edit finds `Data` itself.
+    #[test]
+    fn an_xedit_run_header_names_the_script_plugin_and_plugin_list() {
+        let files = InMemoryFileSpace::new();
+        let session_log = files.temp_dir().join("MyMod.log");
+        let plugins_txt = PathBuf::from(r"C:\Temp\Plugins.txt");
+
+        append_xedit_run_header(
+            &session_log,
+            "Batch_FO4MergeCombinedObjectsAndCheck.pas",
+            "MyMod.esp",
+            &plugins_txt,
+            None,
+            &files,
+        )
+        .unwrap();
+
+        assert_eq!(
+            files.read_lossy(&session_log).unwrap(),
+            format!(
+                "Running xEdit script Batch_FO4MergeCombinedObjectsAndCheck.pas against MyMod.esp\n\
+                 Params -fo4 -autoexit -P:\"{}\"\n\
+                 ====================================\n",
+                plugins_txt.display()
+            )
+        );
+    }
+
+    /// With `-FO4:`, the batch's `%ModDir_%` follows the plugin list, quoted as it writes it.
+    #[test]
+    fn an_xedit_run_header_carries_the_data_override() {
+        let files = InMemoryFileSpace::new();
+        let session_log = files.temp_dir().join("MyMod.log");
+        let plugins_txt = PathBuf::from(r"C:\Temp\Plugins.txt");
+        let data_dir = PathBuf::from(r"D:\Games\Fallout4\Data");
+
+        append_xedit_run_header(
+            &session_log,
+            "Batch_FO4MergePrevisandCleanRefr.pas",
+            "MyMod.esp",
+            &plugins_txt,
+            Some(&data_dir),
+            &files,
+        )
+        .unwrap();
+
+        let session = files.read_lossy(&session_log).unwrap();
+        assert!(
+            session.contains(&format!(
+                "Params -fo4 -autoexit -P:\"{}\" -D:\"{}\"\n",
+                plugins_txt.display(),
+                data_dir.display()
+            )),
+            "session log: {session}"
+        );
+    }
+
+    /// The unattended log is folded with the Creation Kit log's newline rules.
+    #[test]
+    fn an_unattended_log_is_folded_ending_on_a_newline() {
+        let files = InMemoryFileSpace::new();
+        let session_log = files.temp_dir().join("MyMod.log");
+
+        append_unattended_log(&session_log, "Completed: No Errors.", &files).unwrap();
+        append_unattended_log(&session_log, "", &files).unwrap();
+        append_unattended_log(&session_log, "second\n", &files).unwrap();
+
+        assert_eq!(
+            files.read_lossy(&session_log).unwrap(),
+            "Completed: No Errors.\nsecond\n"
         );
     }
 

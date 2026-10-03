@@ -16,6 +16,22 @@ pub(crate) const MO2_DELAY_AFTER_CK_SECS: u64 = 10;
 /// Delay after copying seed plugin when the file is not immediately visible.
 pub(crate) const MO2_DELAY_AFTER_SEED_COPY_SECS: u64 = 5;
 
+/// Delay before FO4Edit is launched, once `Plugins.txt` is written (batch 542).
+pub(crate) const MO2_DELAY_BEFORE_FO4EDIT_SECS: u64 = 10;
+
+/// Delay between launching FO4Edit and the first look for its log (batch 545).
+pub(crate) const FO4EDIT_STARTUP_DELAY_SECS: u64 = 5;
+
+/// Delay between two looks for FO4Edit's log (batch 549).
+pub(crate) const FO4EDIT_POLL_INTERVAL_SECS: u64 = 5;
+
+/// The three delays of FO4Edit's close sequence, in order: before the first close request
+/// (552), before the second (555), and before the log is read (558).
+///
+/// Kept even when FO4Edit has already exited, because they give MO2 time to move the merged
+/// plugin, not FO4Edit time to close (docs/workarounds.md §2).
+pub(crate) const FO4EDIT_CLOSE_DELAYS_SECS: [u64; 3] = [10, 15, 10];
+
 /// Pause so the MO2 virtual filesystem can settle.
 ///
 /// Implementors must be `Debug` so the adapters that hold a `Wait` can keep deriving `Debug`.
@@ -117,7 +133,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        MO2_DELAY_AFTER_CK_SECS, MO2_DELAY_AFTER_SEED_COPY_SECS, RecordingWait, SystemWait, Wait,
+        FO4EDIT_CLOSE_DELAYS_SECS, FO4EDIT_POLL_INTERVAL_SECS, FO4EDIT_STARTUP_DELAY_SECS,
+        MO2_DELAY_AFTER_CK_SECS, MO2_DELAY_AFTER_SEED_COPY_SECS, MO2_DELAY_BEFORE_FO4EDIT_SECS,
+        RecordingWait, SystemWait, Wait,
     };
     use crate::files::{FileSpace, InMemoryFileSpace};
 
@@ -125,6 +143,11 @@ mod tests {
     fn mandated_delays_keep_their_batch_durations() {
         assert_eq!(MO2_DELAY_AFTER_CK_SECS, 10);
         assert_eq!(MO2_DELAY_AFTER_SEED_COPY_SECS, 5);
+        // Batch `:RunScript`, 542–558.
+        assert_eq!(MO2_DELAY_BEFORE_FO4EDIT_SECS, 10);
+        assert_eq!(FO4EDIT_STARTUP_DELAY_SECS, 5);
+        assert_eq!(FO4EDIT_POLL_INTERVAL_SECS, 5);
+        assert_eq!(FO4EDIT_CLOSE_DELAYS_SECS, [10, 15, 10]);
     }
 
     #[test]
