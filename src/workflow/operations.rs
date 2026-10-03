@@ -3,7 +3,7 @@
 //! A Workflow Operation owns the domain flow for a step. External tools stay behind ports so
 //! tests can exercise ordering and postconditions without launching CK.
 
-use std::path::Path;
+use std::path::PathBuf;
 
 use crate::config::{BuildMode, WorkflowStep};
 use crate::error::{Error, Result};
@@ -18,7 +18,9 @@ use crate::workflow::WorkflowPlan;
 mod build_cdx;
 mod compress_psg;
 mod generate_precombines;
+mod generate_previs;
 mod precombine_workspace;
+mod previs_workspace;
 
 /// The shared recording adapters, crate-visible so the Workflow Run tests reach them too.
 #[cfg(test)]
@@ -35,6 +37,7 @@ register_production_operations!(
     generate_precombines::DEFINITION,
     compress_psg::DEFINITION,
     build_cdx::DEFINITION,
+    generate_previs::DEFINITION,
 );
 
 type OperationExecution = fn(&WorkflowRun, &OperationPorts<'_>) -> Result<()>;
@@ -232,17 +235,32 @@ pub(crate) struct OperationPorts<'a> {
     pub(crate) warnings: &'a BuildWarnings<'a>,
 }
 
+/// A yes/no question a Workflow Operation puts to the operator.
+///
+/// Each variant names *what* is being confirmed and carries the artifact it is about; the
+/// console wording and default for each live in [`crate::interactive`], so an operation states
+/// the decision it needs and never phrases the question. Finish adds `RemoveWorkingFiles`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Confirmation {
+    /// Clear existing precombined meshes before Step 1 regenerates them (`:RePrecomb`).
+    ClearPrecombined(PathBuf),
+    /// Clear a non-empty `Data\vis` before Step 6 regenerates previs (`:RePreVis`, batch 246).
+    ClearVis(PathBuf),
+}
+
 /// The operator confirmations a Workflow Operation asks for.
 ///
-/// Deliberately one method rather than a general `confirm(Question)`: there is one caller. The
-/// full workflow has three confirmations — clear precombined here, clear vis at step 6, remove
-/// working files at finish — and they are structurally identical, so generalising is mechanical
-/// once step 6 gives the enum a second variant with a real caller.
+/// One method over a [`Confirmation`] rather than one method per question: the workflow's
+/// confirmations — clear precombined at Step 1, clear vis at Step 6, remove working files at
+/// Finish — are structurally identical, so a new one is a new variant rather than a new
+/// method every implementor has to grow.
 ///
 /// Implementors must be `Debug` so [`OperationPorts`] can keep deriving it.
 pub(crate) trait Prompts: std::fmt::Debug {
-    /// Ask whether existing precombined meshes should be cleared before Step 1 resumes.
-    fn confirm_clear_precombined(&self, precombined_dir: &Path) -> Result<bool>;
+    /// Ask the operator `confirmation`, returning `true` when they consent.
+    ///
+    /// Returns [`Error::Prompt`] when the console cannot be read.
+    fn confirm(&self, confirmation: &Confirmation) -> Result<bool>;
 }
 
 /// The production [`Prompts`], backed by the interactive console.
@@ -250,8 +268,14 @@ pub(crate) trait Prompts: std::fmt::Debug {
 pub(crate) struct InteractivePrompts;
 
 impl Prompts for InteractivePrompts {
-    fn confirm_clear_precombined(&self, precombined_dir: &Path) -> Result<bool> {
-        interactive::confirm_clear_precombined(precombined_dir)
+    fn confirm(&self, confirmation: &Confirmation) -> Result<bool> {
+        match confirmation {
+            Confirmation::ClearPrecombined(precombined_dir) => {
+                interactive::confirm_clear_precombined(precombined_dir)
+            }
+            // The batch's question names `Data\vis` itself (246), so the path is not shown.
+            Confirmation::ClearVis(_) => interactive::confirm_clear_vis(),
+        }
     }
 }
 
@@ -265,6 +289,7 @@ mod tests {
     use super::recording_adapters::{
         QUIET_CK_LOG, RecordingPrompts, record_successful_cdx_outputs,
         record_successful_compress_outputs, record_successful_precombine_outputs,
+        record_successful_previs_outputs,
     };
     use super::*;
     use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
@@ -294,7 +319,7 @@ mod tests {
     #[test]
     fn production_workflow_plan_rejects_unregistered_resume_step() {
         let cases = [
-            (BuildMode::Clean, WorkflowStep::GeneratePrevis, 6),
+            (BuildMode::Clean, WorkflowStep::AddPrevisToArchive, 8),
             (BuildMode::Filtered, WorkflowStep::MergePrevis, 7),
         ];
 
@@ -416,7 +441,6 @@ mod tests {
         assert!(!requirements.needs_archive());
 
         let unregistered_requirements = source.toolchain_requirements_for_steps(&[
-            WorkflowStep::GeneratePrevis,
             WorkflowStep::MergePrevis,
             WorkflowStep::AddPrevisToArchive,
         ]);
@@ -562,6 +586,19 @@ mod tests {
             self.run_collecting_warnings(build_cdx::run, process)
         }
 
+        /// Drive Step 6 over the real Creation Kit episode; see [`Self::run_step_one`].
+        fn run_step_six(&self, process: &dyn ProcessRunner) -> Result<()> {
+            self.run_step_six_collecting_warnings(process).0
+        }
+
+        /// [`Self::run_step_six`], also returning every Build Warning the run raised.
+        fn run_step_six_collecting_warnings(
+            &self,
+            process: &dyn ProcessRunner,
+        ) -> (Result<()>, Vec<BuildWarning>) {
+            self.run_collecting_warnings(generate_previs::run, process)
+        }
+
         /// Drive `operation` over this fixture's ports and return how it ended, with every
         /// Build Warning it raised.
         ///
@@ -594,6 +631,12 @@ mod tests {
     /// `:BldCDX` (231), past Step 4's `.psg` check.
     fn step_five_fixture(mode: BuildMode) -> OperationFixture {
         operation_fixture(mode, true, Some(WorkflowStep::BuildCdx))
+    }
+
+    /// Prepare a real Workflow Run resumed at Step 6, the one entry (`:RePreVis`, 244–249) on
+    /// which Step 6 may offer to clear a non-empty `Data\vis`.
+    fn step_six_fixture(mode: BuildMode, non_interactive: bool) -> OperationFixture {
+        operation_fixture(mode, non_interactive, Some(WorkflowStep::GeneratePrevis))
     }
 
     /// Prepare a real Workflow Run over a temporary Fallout 4 directory.
@@ -895,7 +938,12 @@ mod tests {
 
         fixture.run_step_one(&process).unwrap();
 
-        assert_eq!(fixture.prompts.clear_prompt_count(), 1);
+        assert_eq!(
+            fixture.prompts.asked(),
+            vec![Confirmation::ClearPrecombined(
+                fixture.run.config().precombined_dir()
+            )]
+        );
         assert!(!fixture.files.is_file(&existing_mesh));
         assert_eq!(process.calls().len(), 1);
     }
@@ -919,7 +967,12 @@ mod tests {
 
         assert!(matches!(err, Error::Other(message) if message
                 == "precombined meshes not cleared - choose another resume step"));
-        assert_eq!(fixture.prompts.clear_prompt_count(), 1);
+        assert_eq!(
+            fixture.prompts.asked(),
+            vec![Confirmation::ClearPrecombined(
+                fixture.run.config().precombined_dir()
+            )]
+        );
         assert!(process.calls().is_empty());
         // A refusal leaves the meshes alone; the run stops rather than clearing anyway.
         assert!(fixture.files.is_file(&existing_mesh));
@@ -941,7 +994,7 @@ mod tests {
         let err = fixture.run_step_one(&process).unwrap_err();
 
         assert!(matches!(err, Error::PrecombinedMeshesExist));
-        assert_eq!(fixture.prompts.clear_prompt_count(), 0);
+        assert_eq!(fixture.prompts.asked(), []);
         assert!(process.calls().is_empty());
     }
 
@@ -962,7 +1015,7 @@ mod tests {
 
         assert!(matches!(err, Error::StepNotImplemented(2)));
         assert!(process.calls().is_empty());
-        assert_eq!(fixture.prompts.clear_prompt_count(), 0);
+        assert_eq!(fixture.prompts.asked(), []);
     }
 
     /// `Data\<base name> - Geometry.psg` for the fixture's plugin.
@@ -1009,10 +1062,10 @@ mod tests {
         assert!(!requirements.needs_archive());
     }
 
-    /// A Clean resume at 4 runs Steps 4 and 5: Step 6 is the first planned step with no
+    /// A Clean resume at 4 runs Steps 4 to 6: Step 7 is the first planned step with no
     /// registered operation.
     #[test]
-    fn a_clean_resume_at_step_four_runs_steps_four_and_five() {
+    fn a_clean_resume_at_step_four_runs_steps_four_to_six() {
         let plan =
             production_workflow_plan(BuildMode::Clean, Some(WorkflowStep::CompressPsg)).unwrap();
 
@@ -1022,13 +1075,17 @@ mod tests {
         );
         assert_eq!(
             plan.runnable_steps(),
-            &[WorkflowStep::CompressPsg, WorkflowStep::BuildCdx]
+            &[
+                WorkflowStep::CompressPsg,
+                WorkflowStep::BuildCdx,
+                WorkflowStep::GeneratePrevis,
+            ]
         );
     }
 
     /// Batch parity: `CHOICE /C:123456780` accepts a hidden 4 in Filtered, and `:CompPSG`
     /// forwards Filtered to `:PreVis` (296), so the run plans from Step 6 — a *non-resume*
-    /// entry to it. Step 6 is not registered yet, so that plan has nothing it can run.
+    /// entry to it, which is why Step 6 hard-stops on a non-empty `vis` there.
     #[test]
     fn a_filtered_resume_at_step_four_plans_from_step_six() {
         assert_eq!(
@@ -1040,13 +1097,10 @@ mod tests {
             ]
         );
 
-        let error = production_workflow_plan(BuildMode::Filtered, Some(WorkflowStep::CompressPsg))
-            .unwrap_err();
+        let plan =
+            production_workflow_plan(BuildMode::Filtered, Some(WorkflowStep::CompressPsg)).unwrap();
 
-        assert!(
-            matches!(error, Error::StepNotImplemented(6)),
-            "error: {error:?}"
-        );
+        assert_eq!(plan.runnable_steps(), &[WorkflowStep::GeneratePrevis]);
     }
 
     /// V2.99 Xbox checks the `.psg` and then skips `CompressPSG` (297–298): the geometry file
@@ -1243,7 +1297,7 @@ mod tests {
         assert!(!requirements.needs_archive());
     }
 
-    /// Registering Steps 4 and 5 leaves a fresh clean build where it was: Step 2 is still the
+    /// Registering Steps 4 to 6 leaves a fresh clean build where it was: Step 2 is still the
     /// first planned step with no registered operation, so only Step 1 runs.
     #[test]
     fn a_fresh_clean_build_still_runs_only_the_contiguous_registered_prefix() {
@@ -1259,31 +1313,28 @@ mod tests {
         }
     }
 
-    /// A Clean or Xbox resume at 5 runs Step 5 alone: Step 6 is not registered yet.
+    /// A Clean or Xbox resume at 5 runs Steps 5 and 6: Step 7 is not registered yet.
     #[test]
-    fn a_clean_build_resumed_at_step_five_runs_step_five() {
+    fn a_clean_build_resumed_at_step_five_runs_steps_five_and_six() {
         for mode in [BuildMode::Clean, BuildMode::Xbox] {
             let plan = production_workflow_plan(mode, Some(WorkflowStep::BuildCdx)).unwrap();
 
             assert_eq!(
                 plan.runnable_steps(),
-                &[WorkflowStep::BuildCdx],
+                &[WorkflowStep::BuildCdx, WorkflowStep::GeneratePrevis],
                 "mode: {mode:?}"
             );
         }
     }
 
     /// Batch parity, as for a hidden 4: `:BldCDX` forwards Filtered to `:PreVis` (305), so a
-    /// Filtered resume at 5 plans from Step 6, which has nothing it can run yet.
+    /// Filtered resume at 5 plans from Step 6.
     #[test]
     fn a_filtered_resume_at_step_five_plans_from_step_six() {
-        let error = production_workflow_plan(BuildMode::Filtered, Some(WorkflowStep::BuildCdx))
-            .unwrap_err();
+        let plan =
+            production_workflow_plan(BuildMode::Filtered, Some(WorkflowStep::BuildCdx)).unwrap();
 
-        assert!(
-            matches!(error, Error::StepNotImplemented(6)),
-            "error: {error:?}"
-        );
+        assert_eq!(plan.runnable_steps(), &[WorkflowStep::GeneratePrevis]);
     }
 
     /// Step 5 has no pre-checks of its own (304–307): a resume at 5 enters at `:BldCDX` (231)
@@ -1412,6 +1463,347 @@ mod tests {
                 &err,
                 Error::MissingCreationKitOutput { operation, file, code }
                     if *operation == "BuildCDX" && file == "MyMod.cdx" && *code == Some(3)
+            ),
+            "error: {err:?}"
+        );
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(!session.contains("WARNING - "), "session log: {session}");
+    }
+
+    /// `Data\vis\old\cluster.uvd`: previs an earlier run left behind.
+    ///
+    /// Nested, and named apart from the cluster the simulated Creation Kit writes, so a test can
+    /// tell a cleared `vis` from one that was never touched.
+    fn stale_vis_uvd(fixture: &OperationFixture) -> PathBuf {
+        fixture
+            .run
+            .config()
+            .vis_dir()
+            .join("old")
+            .join("cluster.uvd")
+    }
+
+    /// `Data\Previs.esp` for the fixture.
+    fn previs_plugin(fixture: &OperationFixture) -> PathBuf {
+        fixture.run.config().fo4edit_data_dir().join("Previs.esp")
+    }
+
+    /// A Creation Kit spawn that leaves a successful `GeneratePreVisData` run's outputs behind,
+    /// with `ck_log` as the log it wrote, or no log at all for `None`.
+    fn previs_spawn<'a>(
+        fixture: &'a OperationFixture,
+        exit_code: i32,
+        ck_log: Option<&'static str>,
+    ) -> RecordingProcessRunner<'a> {
+        let config = fixture.run.config().clone();
+        let ck_log_path = fixture.ck_log_path();
+
+        RecordingProcessRunner::new()
+            .returning_exit_code(exit_code)
+            .with_effects(&fixture.files, move |space| {
+                record_successful_previs_outputs(space, &config, &ck_log_path);
+                match ck_log {
+                    Some(contents) => space.add_file_with_contents(&ck_log_path, contents),
+                    None => space.remove_file(&ck_log_path).unwrap(),
+                }
+            })
+    }
+
+    /// A Creation Kit spawn that leaves a successful, quiet `GeneratePreVisData` run behind.
+    fn successful_previs_spawn(fixture: &OperationFixture) -> RecordingProcessRunner<'_> {
+        previs_spawn(fixture, 0, Some(QUIET_CK_LOG))
+    }
+
+    #[test]
+    fn generate_previs_is_registered_and_requires_creation_kit() {
+        let source = production_operation_source();
+        let requirements = source.toolchain_requirements_for_steps(&[WorkflowStep::GeneratePrevis]);
+
+        assert!(source.contains(WorkflowStep::GeneratePrevis));
+        assert!(requirements.needs_creation_kit());
+        assert!(!requirements.needs_fo4edit());
+        assert!(!requirements.needs_archive());
+    }
+
+    /// A resume at 6 over an empty `vis` runs the whole Creation Kit episode once and leaves a
+    /// fresh `Previs.esp`, with nothing asked and nothing to warn about.
+    #[test]
+    fn step_six_generates_previs_over_an_empty_vis_directory() {
+        let fixture = step_six_fixture(BuildMode::Clean, true);
+        let process = successful_previs_spawn(&fixture);
+
+        let (result, warnings) = fixture.run_step_six_collecting_warnings(&process);
+
+        result.unwrap();
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        assert_eq!(fixture.prompts.asked(), []);
+        assert!(fixture.files.is_file(&previs_plugin(&fixture)));
+        // One spawn of the run's own Creation Kit for the run's own plugin, with the whole
+        // episode around it; the verb itself is pinned in `tools::creation_kit`.
+        let calls = process.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].exe, fixture.run.creation_kit().unwrap().exe);
+        assert!(
+            calls[0]
+                .args
+                .iter()
+                .any(|arg| arg.to_string_lossy().contains("MyMod.esp")),
+            "args: {:?}",
+            calls[0].args
+        );
+        assert_eq!(fixture.wait.delays(), vec![MO2_DELAY_AFTER_CK_SECS]);
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(
+            session.contains("Running CK option GeneratePreVisData:"),
+            "session log: {session}"
+        );
+    }
+
+    /// `clean all` is hardcoded for every Build Mode (317), unlike Step 1's qualifiers, so every
+    /// mode sends Creation Kit the same previs request. Pinned by sameness here; the qualifier
+    /// text itself is pinned in `tools::creation_kit`, which keeps the grammar out of this
+    /// module.
+    #[test]
+    fn step_six_sends_the_same_previs_request_in_every_build_mode() {
+        let argv_for = |mode| {
+            let fixture = step_six_fixture(mode, true);
+            let process = successful_previs_spawn(&fixture);
+            fixture.run_step_six(&process).unwrap();
+            let mut calls = process.calls();
+            assert_eq!(calls.len(), 1, "mode: {mode:?}");
+            calls.remove(0).args
+        };
+
+        let clean = argv_for(BuildMode::Clean);
+
+        assert_eq!(argv_for(BuildMode::Filtered), clean);
+        assert_eq!(argv_for(BuildMode::Xbox), clean);
+    }
+
+    /// `:RePreVis` (245–248): an interactive resume at 6 asks, and **Y** clears the whole `vis`
+    /// before Creation Kit runs.
+    #[test]
+    fn an_interactive_resume_at_step_six_clears_vis_when_the_operator_agrees() {
+        let fixture = step_six_fixture(BuildMode::Clean, false);
+        let stale = stale_vis_uvd(&fixture);
+        fixture.files.add_file(&stale);
+        let stale_at_spawn = std::cell::Cell::new(None);
+        let config = fixture.run.config().clone();
+        let ck_log = fixture.ck_log_path();
+        let process = RecordingProcessRunner::new().with_effects(&fixture.files, |space| {
+            stale_at_spawn.set(Some(space.is_file(&stale)));
+            record_successful_previs_outputs(space, &config, &ck_log);
+        });
+
+        fixture.run_step_six(&process).unwrap();
+
+        assert_eq!(
+            fixture.prompts.asked(),
+            vec![Confirmation::ClearVis(fixture.run.config().vis_dir())]
+        );
+        assert_eq!(stale_at_spawn.get(), Some(false));
+        assert!(!fixture.files.is_file(&stale));
+        assert_eq!(process.calls().len(), 1);
+    }
+
+    /// **N** stops the run before anything is deleted or spawned, telling the operator to pick
+    /// another resume step, as Step 1's refusal does.
+    #[test]
+    fn an_interactive_resume_at_step_six_stops_when_the_operator_refuses() {
+        let fixture = OperationFixture {
+            prompts: RecordingPrompts::new().refusing_clear_vis(),
+            ..step_six_fixture(BuildMode::Clean, false)
+        };
+        let stale = stale_vis_uvd(&fixture);
+        fixture.files.add_file(&stale);
+        fixture.files.add_file(previs_plugin(&fixture));
+        let process = successful_previs_spawn(&fixture);
+
+        let err = fixture.run_step_six(&process).unwrap_err();
+
+        assert!(
+            matches!(&err, Error::Other(message)
+                if message == "previs directory not cleared - choose another resume step"),
+            "error: {err:?}"
+        );
+        assert_eq!(
+            fixture.prompts.asked(),
+            vec![Confirmation::ClearVis(fixture.run.config().vis_dir())]
+        );
+        assert_eq!(process.calls().len(), 0);
+        assert!(fixture.files.is_file(&stale));
+        // The precondition runs before the stale-plugin delete, so a refusal touches nothing.
+        assert!(fixture.files.is_file(&previs_plugin(&fixture)));
+    }
+
+    /// An unattended resume at 6 never blocks on a prompt: it stops for the operator to clear
+    /// `vis` themselves.
+    #[test]
+    fn a_non_interactive_resume_at_step_six_stops_on_a_non_empty_vis_without_asking() {
+        let fixture = step_six_fixture(BuildMode::Clean, true);
+        let stale = stale_vis_uvd(&fixture);
+        fixture.files.add_file(&stale);
+        let process = successful_previs_spawn(&fixture);
+
+        let err = fixture.run_step_six(&process).unwrap_err();
+
+        assert!(matches!(err, Error::VisUvdFilesExist), "error: {err:?}");
+        assert_eq!(fixture.prompts.asked(), []);
+        assert_eq!(process.calls().len(), 0);
+        assert_eq!(fixture.wait.delays(), []);
+        assert!(fixture.files.is_file(&stale));
+    }
+
+    /// Every entry other than a resume at 6 is `:PreVis`, which hard-stops on a non-empty `vis`
+    /// (311–313) even when interactive: a fresh run, and resumes at 4 or 5 — including a
+    /// Filtered resume at 4 or 5, which is forwarded to `:PreVis` (296, 305).
+    #[test]
+    fn any_other_entry_to_step_six_stops_on_a_non_empty_vis_without_asking() {
+        let entries = [
+            (BuildMode::Clean, None),
+            (BuildMode::Clean, Some(WorkflowStep::CompressPsg)),
+            (BuildMode::Clean, Some(WorkflowStep::BuildCdx)),
+            (BuildMode::Filtered, Some(WorkflowStep::CompressPsg)),
+            (BuildMode::Filtered, Some(WorkflowStep::BuildCdx)),
+        ];
+
+        for (mode, resume_from) in entries {
+            let fixture = operation_fixture(mode, false, resume_from);
+            let stale = stale_vis_uvd(&fixture);
+            fixture.files.add_file(&stale);
+            let process = successful_previs_spawn(&fixture);
+
+            let err = fixture.run_step_six(&process).unwrap_err();
+
+            let entry = format!("mode: {mode:?}, resume: {resume_from:?}");
+            assert!(
+                matches!(err, Error::VisUvdFilesExist),
+                "{entry}, error: {err:?}"
+            );
+            assert!(fixture.prompts.asked().is_empty(), "{entry}");
+            assert!(process.calls().is_empty(), "{entry}");
+            assert!(fixture.files.is_file(&stale), "{entry}");
+        }
+    }
+
+    /// A `Previs.esp` from an earlier run is gone by the time Creation Kit is spawned (315).
+    #[test]
+    fn step_six_deletes_a_stale_previs_plugin_before_creation_kit_runs() {
+        let fixture = step_six_fixture(BuildMode::Clean, true);
+        fixture
+            .files
+            .add_file_with_contents(previs_plugin(&fixture), "stale");
+        let config = fixture.run.config().clone();
+        let ck_log = fixture.ck_log_path();
+        let previs = previs_plugin(&fixture);
+        let stale_at_spawn = std::cell::Cell::new(None);
+        let process = RecordingProcessRunner::new().with_effects(&fixture.files, |space| {
+            stale_at_spawn.set(Some(space.is_file(&previs)));
+            record_successful_previs_outputs(space, &config, &ck_log);
+        });
+
+        fixture.run_step_six(&process).unwrap();
+
+        assert_eq!(stale_at_spawn.get(), Some(false));
+        assert!(fixture.files.is_file(&previs_plugin(&fixture)));
+    }
+
+    /// A stale `Previs.esp` must not pass for this run's output, or Step 7 would merge the
+    /// wrong plugin: a Creation Kit that writes nothing stops the run, non-interactively, with
+    /// the shared missing-output error.
+    #[test]
+    fn a_stale_previs_plugin_never_passes_for_a_silent_creation_kit_run() {
+        let fixture = step_six_fixture(BuildMode::Clean, true);
+        assert!(fixture.run.config().non_interactive);
+        fixture.files.add_file(previs_plugin(&fixture));
+        // Creation Kit ran, exited cleanly, and wrote nothing at all.
+        let process = RecordingProcessRunner::new();
+
+        let (result, warnings) = fixture.run_step_six_collecting_warnings(&process);
+
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "GeneratePreVisData failed to create file Previs.esp with exit status 0"
+        );
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        assert_eq!(process.calls().len(), 1);
+        assert!(!fixture.files.is_file(&previs_plugin(&fixture)));
+    }
+
+    /// With `Previs.esp` confirmed, both warnings are raised: visibility first, then the
+    /// non-zero exit, on the console and in the session log in that order.
+    #[test]
+    fn step_six_raises_the_visibility_warning_before_the_exit_warning() {
+        let fixture = step_six_fixture(BuildMode::Clean, true);
+        let process = previs_spawn(
+            &fixture,
+            3,
+            Some("Masterfile: Fallout4.esm\nDEFAULT: ERROR: visibility task did not complete.\n"),
+        );
+
+        let (result, warnings) = fixture.run_step_six_collecting_warnings(&process);
+
+        result.unwrap();
+        assert_eq!(
+            warnings,
+            vec![
+                BuildWarning::VisibilityTaskIncomplete,
+                BuildWarning::CreationKitNonZeroExit {
+                    operation: "GeneratePreVisData",
+                    code: Some(3),
+                },
+            ]
+        );
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(
+            session.ends_with(
+                "WARNING - GeneratePreVisData failed to build at least one Cluster uvd\n\
+                 WARNING - GeneratePreVisData ended with error 3 but seemed to finish so error ignored.\n"
+            ),
+            "session log: {session}"
+        );
+    }
+
+    /// The batch skips the visibility scan when Creation Kit wrote no log (318).
+    #[test]
+    fn step_six_raises_no_visibility_warning_when_creation_kit_wrote_no_log() {
+        let fixture = step_six_fixture(BuildMode::Clean, true);
+        let process = previs_spawn(&fixture, 0, None);
+
+        let (result, warnings) = fixture.run_step_six_collecting_warnings(&process);
+
+        result.unwrap();
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+    }
+
+    /// A missing `Previs.esp` stops the run and raises neither warning, even with a non-zero
+    /// exit and the visibility marker in the log (471 before 472 and 319–320).
+    #[test]
+    fn step_six_raises_no_warning_when_its_previs_plugin_is_missing() {
+        let fixture = step_six_fixture(BuildMode::Clean, true);
+        let config = fixture.run.config().clone();
+        let ck_log = fixture.ck_log_path();
+        let previs = previs_plugin(&fixture);
+        let process = RecordingProcessRunner::new()
+            .returning_exit_code(3)
+            .with_effects(&fixture.files, move |space| {
+                record_successful_previs_outputs(space, &config, &ck_log);
+                space.add_file_with_contents(&ck_log, "ERROR: visibility task did not complete.\n");
+                space.remove_file(&previs).unwrap();
+            });
+
+        let (result, warnings) = fixture.run_step_six_collecting_warnings(&process);
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                Error::MissingCreationKitOutput { operation, file, code }
+                    if *operation == "GeneratePreVisData"
+                        && file == "Previs.esp"
+                        && *code == Some(3)
             ),
             "error: {err:?}"
         );

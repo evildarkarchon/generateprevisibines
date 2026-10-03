@@ -358,7 +358,13 @@ path (`:RePrecomb`, `:RePreVis`).
   One divergence, for the same reason as step 4's `.csg`: the port deletes a stale
   `<plugin>.cdx` **before** the spawn, so the 471 output check can only pass on this run's file.
 - **Step 6**: non-resume entry with a non-empty `Data\vis` is a hard stop via `:Done`, not a
-  `failed` (311–313).
+  `failed` (311–313). The port asks the `:RePreVis` question (246) only when the run was
+  resumed at 6 and is interactive; every other entry — a fresh run, a resume at 1–5, and a
+  Filtered resume at 4 or 5 forwarded to `:PreVis` — stops with `Previs directory (Data\vis)
+  not empty`. The stale `Previs.esp` delete (315) is the batch's own, so the 471 output check
+  can only pass on this run's plugin. When both warnings fire, the port raises the visibility
+  warning (320) before the non-zero-exit warning (472); the batch prints them the other way
+  round only because its exit warning is raised inside `:RunCK`.
 - **Step 7 preconditions**: no `.uvd` files → `failed` (323); no `Previs.esp` → `failed` (324).
   Contrast step 8's warning for the same missing `.uvd` files.
 - **Step 8**: no `.uvd` files → **warning** and jump to `:Fin`, not a failure (333). Missing

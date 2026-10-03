@@ -52,6 +52,7 @@ Ordered slices recommended for parity work:
 5. **Steps 4–5 — PSG / CDX** (clean and xbox; filtered skips both) — `- Geometry.psg` presence check on step-4 entry, then `CompressPSG` and delete the intermediate `.psg` (clean only — xbox skips straight to step 5 and keeps the `.psg`), then `BuildCDX`. Mode gates are in [episodes.md](episodes.md) § *Per-step notes*.
    Step 4 is implemented as the `compress_psg` Workflow Operation and Step 5 as `build_cdx`.
 6. **Step 6 — Generate previs** — empty `Data\vis`, `GeneratePreVisData`, visibility task warning.
+   Implemented as the `generate_previs` Workflow Operation; the Previs Workspace owns `Data\vis` and `Previs.esp` for Steps 1, 6, 7 and 8.
 7. **Step 7 — Merge previs** — `Batch_FO4MergePrevisandCleanRefr.pas`, success string check.
 8. **Step 8 — Add previs to archive** — `AddToArchive` with extract-repack path for Archive2.
    - Archive2 has no append verb: extract, wait 5s, delete the archive, re-pack (see [workarounds.md](workarounds.md) §4).
@@ -92,9 +93,11 @@ Manual integration checklist (minimum):
 - [ ] Interactive: seed copy from `Data\xPrevisPatch.esp` (5s MO2 delay if file not visible immediately)
 - [ ] Interactive: existing plugin Y/N/C; **C** shows resume menu; **0** re-prompts plugin name
 - [ ] Interactive: resume step 1 with existing `meshes\precombined\*.nif` prompts to delete folder
-- [ ] Non-interactive: `generateprevisibines.exe MyMod.esp` runs Step 1 only; errors if `--resume-from` names a step with no registered operation (2, 3, 6–8 today)
-- [ ] Clean `--resume-from 4` runs Steps 4 and 5 and the diagnostic names both; Xbox keeps `- Geometry.psg` and skips `CompressPSG`; Filtered `--resume-from 4` plans from Step 6
+- [ ] Non-interactive: `generateprevisibines.exe MyMod.esp` runs Step 1 only; errors if `--resume-from` names a step with no registered operation (2, 3, 7, 8 today)
+- [ ] Clean `--resume-from 4` runs Steps 4 to 6 and the diagnostic names all three; Xbox keeps `- Geometry.psg` and skips `CompressPSG`; Filtered `--resume-from 4` plans from Step 6
 - [ ] `--resume-from 5` with no `- Geometry.psg` still runs `BuildCDX` and leaves `{plugin}.cdx`; Filtered `--resume-from 5` plans from Step 6
+- [ ] Interactive `--resume-from 6` with `Data\vis\*.uvd` asks "Previs directory (Data\vis) needs to be empty. Clean it?"; **N** stops; a non-interactive resume at 6, or any other entry to Step 6, stops with "Previs directory (Data\vis) not empty"
+- [ ] Step 6 leaves a fresh `Previs.esp`; a CK log containing `ERROR: visibility task did not complete.` gives the "failed to build at least one Cluster uvd" warning
 - [ ] Clean/Xbox mode: CK qualifiers `clean all`; PSG `{plugin} - Geometry.psg` required after CK
 - [ ] Filtered: CK qualifiers `filtered all`; no PSG check
 - (The two items above are V2.99 behaviour. V2.98 grouped Xbox with Filtered here; Step 1 was

@@ -47,7 +47,9 @@ pub enum Error {
     )]
     PrecombinedMeshesExist,
 
-    #[error("vis folder contains .uvd files — remove them before generating precombines")]
+    // The batch's own wording, printed both where Step 1 (259) and Step 6 (312) find `.uvd`
+    // files left in `Data\vis`, so it reads correctly from either step.
+    #[error("Previs directory (Data\\vis) not empty")]
     VisUvdFilesExist,
 
     // The batch's own wording (`GeneratePrevisibines.bat:277`), which never shows the user the
@@ -117,6 +119,15 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "CompressPSG failed to create file MyMod - Geometry.csg with exit status 0"
+        );
+    }
+
+    /// Batch lines 259 and 312, minus the `ERROR - ` prefix.
+    #[test]
+    fn a_non_empty_vis_directory_reads_as_the_batch_wording() {
+        assert_eq!(
+            Error::VisUvdFilesExist.to_string(),
+            "Previs directory (Data\\vis) not empty"
         );
     }
 

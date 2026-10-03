@@ -256,6 +256,16 @@ pub fn confirm_clear_precombined(precombined_dir: &Path) -> Result<bool> {
         .interact()?)
 }
 
+/// Interactive Y/N confirmation for clearing a non-empty `Data\vis` (`:RePreVis`, batch 246).
+///
+/// No default, because the batch's `CHOICE /C:YN` has none: the operator must answer one way
+/// or the other before any previs is deleted.
+pub fn confirm_clear_vis() -> Result<bool> {
+    Ok(Confirm::new()
+        .with_prompt("Previs directory (Data\\vis) needs to be empty. Clean it?")
+        .interact()?)
+}
+
 /// Orchestrate plugin existence, seed copy, archive guard, and resume prompts.
 pub fn ensure_plugin_ready(readiness: &PluginReadiness) -> Result<ExistingPluginAction> {
     let plugin_path = readiness.plugin_path();

@@ -9,7 +9,7 @@ use crate::run::WorkflowRun;
 use crate::toolchain::ToolchainRequirements;
 
 use super::precombine_workspace::PrecombineWorkspace;
-use super::{OperationPorts, WorkflowOperationDefinition};
+use super::{Confirmation, OperationPorts, WorkflowOperationDefinition};
 
 pub(super) const DEFINITION: WorkflowOperationDefinition = WorkflowOperationDefinition::new(
     WorkflowStep::GeneratePrecombines,
@@ -67,7 +67,10 @@ fn maybe_clear_precombined_on_resume(
     }
 
     let precombined = workspace.precombined_dir();
-    if !ports.prompts.confirm_clear_precombined(&precombined)? {
+    if !ports
+        .prompts
+        .confirm(&Confirmation::ClearPrecombined(precombined))?
+    {
         return Err(Error::Other(
             "precombined meshes not cleared - choose another resume step".into(),
         ));
