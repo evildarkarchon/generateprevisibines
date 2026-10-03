@@ -358,7 +358,9 @@ mod tests {
     use super::*;
     use crate::files::InMemoryFileSpace;
     use crate::tools::clock::ScriptedClock;
-    use crate::tools::process::{RecordedProcessCall, RecordingProcessRunner};
+    use crate::tools::process::{
+        ProcessCallKind, RecordedProcessCall, RecordingProcessRunner, RunningProcess,
+    };
     use crate::tools::wait::RecordingWait;
     use crate::warning::BuildWarning;
 
@@ -447,7 +449,7 @@ mod tests {
         calls.remove(0)
     }
 
-    /// A [`ProcessRunner`] whose spawn fails, standing in for an unlaunchable `CreationKit.exe`.
+    /// A [`ProcessRunner`] whose `run` fails, standing in for an unlaunchable `CreationKit.exe`.
     #[derive(Debug)]
     struct FailingProcessRunner;
 
@@ -458,6 +460,16 @@ mod tests {
                 "CreationKit.exe could not be launched",
             )
             .into())
+        }
+
+        // Creation Kit is only ever `run`; a spawn here would mean the episode changed shape.
+        fn spawn(
+            &self,
+            _exe: &Path,
+            _args: &[OsString],
+            _cwd: &Path,
+        ) -> Result<Box<dyn RunningProcess>> {
+            unreachable!("the Creation Kit episode waits for CreationKit.exe; it never spawns")
         }
     }
 
@@ -662,6 +674,7 @@ mod tests {
                     OsString::from("all"),
                 ],
                 cwd: fallout4_dir(),
+                kind: ProcessCallKind::Run,
             }
         );
     }

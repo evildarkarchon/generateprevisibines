@@ -1,21 +1,28 @@
-//! The `ProcessRunner` seam: spawning an external tool and waiting for it to exit.
+//! The `ProcessRunner` seam: starting an external tool, then either waiting for it to exit or
+//! handing back the live process.
 //!
 //! An internal seam, private to the tools layer. It exists so the *ordering* an external-tool
 //! episode is obliged to keep — DLL guard, log delete, spawn, MO2 delay, log append — becomes
 //! assertable without launching Creation Kit. It is deliberately absent from what a Workflow
 //! Operation is handed: a Workflow Operation states build meaning, not how a process starts.
 //!
-//! The interface is deliberately minimal. `FO4Edit` will need an async spawn plus a process
-//! handle (`AppActivate` / `CloseMainWindow` / `TaskKill` / poll); that widening happens
-//! against a real caller rather than being guessed at now.
+//! There are two ways to start a tool, matching the batch's two `START` forms. [`run`] is
+//! `START /wait`, used by every Creation Kit and Archive2 call. [`spawn`] is `START /B`, used by
+//! the FO4Edit episode: it starts FO4Edit, polls for the log FO4Edit's script writes, and then
+//! asks FO4Edit to close, so it needs the running process's id and a non-blocking exit check.
+//! The window work (dismissing Module Selection, the close request) is not this seam's job;
+//! it targets windows by the process id a [`RunningProcess`] reports.
+//!
+//! [`run`]: ProcessRunner::run
+//! [`spawn`]: ProcessRunner::spawn
 
 use std::ffi::OsString;
 use std::path::Path;
-use std::process::{Command, ExitStatus};
+use std::process::{Child, Command, ExitStatus};
 
 use crate::error::Result;
 
-/// Spawn an external tool and wait for it.
+/// Start an external tool, and either wait for it or hand back the running process.
 ///
 /// Implementors must be `Debug` so the adapters that hold a `ProcessRunner` can keep
 /// deriving `Debug`.
@@ -29,6 +36,46 @@ pub(crate) trait ProcessRunner: std::fmt::Debug {
     /// `cwd` is not optional: every Creation Kit invocation sets `/D"<fo4dir>"` and every
     /// Archive2 call runs with the working directory set to `Data`.
     fn run(&self, exe: &Path, args: &[OsString], cwd: &Path) -> Result<ExitStatus>;
+
+    /// Spawn `exe` with `args`, working directory `cwd`, and return without waiting.
+    ///
+    /// Equivalent to the batch `START /B`, which launches FO4Edit. `args` and `cwd` are
+    /// handled exactly as in [`run`](Self::run). Fails only when the process cannot be
+    /// started; how the process later exits is read through [`RunningProcess::try_wait`].
+    // Called only by tests until the FO4Edit episode lands (issue #58).
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "the FO4Edit episode, the first caller of `spawn`, is not ported yet"
+        )
+    )]
+    fn spawn(&self, exe: &Path, args: &[OsString], cwd: &Path) -> Result<Box<dyn RunningProcess>>;
+}
+
+/// A process started by [`ProcessRunner::spawn`] that may still be running.
+///
+/// There is deliberately no `kill`. xEdit saves its merge only on its close path, so the
+/// FO4Edit episode asks it to close and never kills it, and nothing else needs to. Dropping a
+/// `RunningProcess` leaves the process running; the handle is only a way to observe it.
+// Exercised only by tests until the FO4Edit episode, its first caller, lands (issue #58).
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "the FO4Edit episode, the first caller of `spawn`, is not ported yet"
+    )
+)]
+pub(crate) trait RunningProcess: std::fmt::Debug {
+    /// The operating system's process id, which window lookups target.
+    fn id(&self) -> u32;
+
+    /// Report the exit status if the process has exited, without blocking.
+    ///
+    /// `None` while the process is still running. Once it has exited, every later call keeps
+    /// reporting the same status. As with [`ProcessRunner::run`], a non-zero status is not an
+    /// error here.
+    fn try_wait(&mut self) -> Result<Option<ExitStatus>>;
 }
 
 /// The production `ProcessRunner`, backed by [`std::process::Command`].
@@ -39,38 +86,134 @@ impl ProcessRunner for SystemProcessRunner {
     fn run(&self, exe: &Path, args: &[OsString], cwd: &Path) -> Result<ExitStatus> {
         Ok(Command::new(exe).current_dir(cwd).args(args).status()?)
     }
+
+    fn spawn(&self, exe: &Path, args: &[OsString], cwd: &Path) -> Result<Box<dyn RunningProcess>> {
+        let child = Command::new(exe).current_dir(cwd).args(args).spawn()?;
+        Ok(Box::new(SystemRunningProcess { child }))
+    }
+}
+
+/// The production [`RunningProcess`], wrapping a [`std::process::Child`].
+///
+/// Relies on `Child`'s drop behaviour: dropping a `Child` neither kills nor waits for the
+/// process, which is exactly the "dropping leaves it running" contract.
+// Constructed only by `spawn`, which has no production caller until issue #58.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "the FO4Edit episode, the first caller of `spawn`, is not ported yet"
+    )
+)]
+#[derive(Debug)]
+struct SystemRunningProcess {
+    child: Child,
+}
+
+impl RunningProcess for SystemRunningProcess {
+    fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    fn try_wait(&mut self) -> Result<Option<ExitStatus>> {
+        Ok(self.child.try_wait()?)
+    }
 }
 
 #[cfg(test)]
-pub(crate) use recording::{RecordedProcessCall, RecordingProcessRunner};
+pub(crate) use recording::{
+    ExitFlag, ProcessCallKind, RECORDED_PROCESS_ID, RecordedProcessCall, RecordingProcessRunner,
+    ScriptedExit,
+};
 
 #[cfg(test)]
 mod recording {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::ffi::OsString;
     use std::fmt;
     use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
+    use std::rc::Rc;
 
-    use super::ProcessRunner;
+    use super::{ProcessRunner, RunningProcess};
     use crate::error::Result;
     use crate::files::FileSpace;
 
-    /// One external-tool spawn, as the caller under test issued it.
+    /// The process id every recorded spawn reports.
+    ///
+    /// Fixed, so a test can assert that a window lookup or close request targeted *this* run's
+    /// process. Not a value any real process is likely to hold, so it reads as fake in output.
+    pub(crate) const RECORDED_PROCESS_ID: u32 = 4242;
+
+    /// One external-tool start, as the caller under test issued it.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub(crate) struct RecordedProcessCall {
         pub(crate) exe: PathBuf,
         pub(crate) args: Vec<OsString>,
         pub(crate) cwd: PathBuf,
+        pub(crate) kind: ProcessCallKind,
     }
 
-    /// A test [`ProcessRunner`] that records every spawn and launches nothing.
+    /// Which [`ProcessRunner`] method started a [`RecordedProcessCall`].
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum ProcessCallKind {
+        /// [`ProcessRunner::run`]: started and waited for (`START /wait`).
+        Run,
+        /// [`ProcessRunner::spawn`]: started and left running (`START /B`).
+        Spawn,
+    }
+
+    /// How a process returned by [`RecordingProcessRunner::spawn`] exits.
+    ///
+    /// Each spawn gets its own copy, so poll counts are per process. A [`ExitFlag`] clones
+    /// by sharing, so every process spawned with the same flag exits together.
+    #[derive(Debug, Clone)]
+    pub(crate) enum ScriptedExit {
+        /// The process never exits: `try_wait` reports `None` forever.
+        Never,
+        /// The first `polls` calls to `try_wait` report `None`; every later call reports `code`.
+        /// `polls: 0` is a process that has already exited by its first poll.
+        AfterPolls { polls: usize, code: i32 },
+        /// `try_wait` reports `None` until `flag` is set, and `code` from then on.
+        WhenFlagged { flag: ExitFlag, code: i32 },
+    }
+
+    /// A shared switch that makes [`ScriptedExit::WhenFlagged`] processes exit.
+    ///
+    /// Clones share one switch. It lets something other than the test body decide when the
+    /// process exits — the FO4Edit episode tests make "FO4Edit exits when asked to close" an
+    /// effect of the recording window double, which holds a clone and sets it.
+    #[derive(Debug, Clone, Default)]
+    pub(crate) struct ExitFlag(Rc<Cell<bool>>);
+
+    impl ExitFlag {
+        /// A switch that is not yet set.
+        #[must_use]
+        pub(crate) fn new() -> Self {
+            Self::default()
+        }
+
+        /// Set the switch. Every process scripted on this flag (or a clone) exits from its
+        /// next poll on. Setting it again changes nothing.
+        pub(crate) fn set(&self) {
+            self.0.set(true);
+        }
+
+        /// Whether the switch has been set.
+        #[must_use]
+        pub(crate) fn is_set(&self) -> bool {
+            self.0.get()
+        }
+    }
+
+    /// A test [`ProcessRunner`] that records every run and spawn and launches nothing.
     ///
     /// Interior mutability, like the other recording adapters: the caller under test holds
     /// the runner by shared reference across the whole episode.
     pub(crate) struct RecordingProcessRunner<'a> {
         calls: RefCell<Vec<RecordedProcessCall>>,
         status: ExitStatus,
+        spawned_exit: ScriptedExit,
         effects: Option<Box<dyn Fn() + 'a>>,
     }
 
@@ -79,6 +222,7 @@ mod recording {
             Self {
                 calls: RefCell::new(Vec::new()),
                 status: exit_status_with_code(0),
+                spawned_exit: ScriptedExit::Never,
                 effects: None,
             }
         }
@@ -101,6 +245,19 @@ mod recording {
             self
         }
 
+        /// Script how every process this runner spawns exits.
+        ///
+        /// Defaults to [`ScriptedExit::Never`]: FO4Edit stays open until something asks it to
+        /// close, so a test has to say when it goes away. Has no bearing on [`run`], whose
+        /// status comes from [`returning_exit_code`](Self::returning_exit_code).
+        ///
+        /// [`run`]: ProcessRunner::run
+        #[must_use]
+        pub(crate) fn spawning(mut self, exit: ScriptedExit) -> Self {
+            self.spawned_exit = exit;
+            self
+        }
+
         /// Simulate the tool's filesystem effects into the space the caller observes.
         ///
         /// The external tools this port stands in for return nothing useful — they *write
@@ -119,19 +276,19 @@ mod recording {
             self
         }
 
-        /// The spawns recorded so far, in call order.
+        /// The runs and spawns recorded so far, in one list, in call order.
         #[must_use]
         pub(crate) fn calls(&self) -> Vec<RecordedProcessCall> {
             self.calls.borrow().clone()
         }
-    }
 
-    impl ProcessRunner for RecordingProcessRunner<'_> {
-        fn run(&self, exe: &Path, args: &[OsString], cwd: &Path) -> Result<ExitStatus> {
+        /// Record a start of either kind, then apply the simulated effects.
+        fn start(&self, exe: &Path, args: &[OsString], cwd: &Path, kind: ProcessCallKind) {
             self.calls.borrow_mut().push(RecordedProcessCall {
                 exe: exe.to_path_buf(),
                 args: args.to_vec(),
                 cwd: cwd.to_path_buf(),
+                kind,
             });
 
             // Recorded before the effects run, so a callback that inspects the space sees a
@@ -139,8 +296,59 @@ mod recording {
             if let Some(effects) = &self.effects {
                 effects();
             }
+        }
+    }
 
+    impl ProcessRunner for RecordingProcessRunner<'_> {
+        fn run(&self, exe: &Path, args: &[OsString], cwd: &Path) -> Result<ExitStatus> {
+            self.start(exe, args, cwd, ProcessCallKind::Run);
             Ok(self.status)
+        }
+
+        fn spawn(
+            &self,
+            exe: &Path,
+            args: &[OsString],
+            cwd: &Path,
+        ) -> Result<Box<dyn RunningProcess>> {
+            // Effects apply at spawn time, as for `run`. A test that needs output to appear
+            // later (on a dismissal, on the Nth poll) installs it as an effect of that later
+            // seam instead.
+            self.start(exe, args, cwd, ProcessCallKind::Spawn);
+            Ok(Box::new(RecordingRunningProcess {
+                exit: self.spawned_exit.clone(),
+                polls: 0,
+            }))
+        }
+    }
+
+    /// The process a [`RecordingProcessRunner`] spawn returns: nothing runs, it only follows
+    /// its [`ScriptedExit`].
+    #[derive(Debug)]
+    struct RecordingRunningProcess {
+        exit: ScriptedExit,
+        /// `try_wait` calls so far, counted for [`ScriptedExit::AfterPolls`].
+        polls: usize,
+    }
+
+    impl RunningProcess for RecordingRunningProcess {
+        fn id(&self) -> u32 {
+            RECORDED_PROCESS_ID
+        }
+
+        fn try_wait(&mut self) -> Result<Option<ExitStatus>> {
+            let exit_code = match &self.exit {
+                ScriptedExit::Never => None,
+                ScriptedExit::AfterPolls {
+                    polls: exit_after,
+                    code,
+                } => (self.polls >= *exit_after).then_some(*code),
+                ScriptedExit::WhenFlagged { flag, code } => flag.is_set().then_some(*code),
+            };
+            // Counted after the check, so `AfterPolls { polls: n }` reports `None` on exactly
+            // the first n polls.
+            self.polls += 1;
+            Ok(exit_code.map(exit_status_with_code))
         }
     }
 
@@ -151,6 +359,7 @@ mod recording {
             f.debug_struct("RecordingProcessRunner")
                 .field("calls", &self.calls)
                 .field("status", &self.status)
+                .field("spawned_exit", &self.spawned_exit)
                 .field("effects", &self.effects.is_some())
                 .finish()
         }
@@ -184,7 +393,10 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{ProcessRunner, RecordedProcessCall, RecordingProcessRunner, SystemProcessRunner};
+    use super::{
+        ExitFlag, ProcessCallKind, ProcessRunner, RECORDED_PROCESS_ID, RecordedProcessCall,
+        RecordingProcessRunner, RunningProcess, ScriptedExit, SystemProcessRunner,
+    };
     use crate::files::{FileSpace, InMemoryFileSpace};
 
     #[test]
@@ -219,11 +431,13 @@ mod tests {
                         OsString::from("all"),
                     ],
                     cwd: cwd.clone(),
+                    kind: ProcessCallKind::Run,
                 },
                 RecordedProcessCall {
                     exe,
                     args: vec![OsString::from("-BuildCDX:My Mod.esp")],
                     cwd,
+                    kind: ProcessCallKind::Run,
                 },
             ]
         );
@@ -272,6 +486,144 @@ mod tests {
         );
     }
 
+    #[test]
+    fn recording_runner_records_spawns_and_runs_in_one_ordered_list() {
+        let runner = RecordingProcessRunner::new();
+        let ck = PathBuf::from(r"C:\Games\Fallout4\CreationKit.exe");
+        let fo4edit = PathBuf::from(r"C:\Tools\FO4Edit\FO4Edit.exe");
+        let fo4dir = PathBuf::from(r"C:\Games\Fallout4");
+        let temp = PathBuf::from(r"C:\Users\me\AppData\Local\Temp");
+
+        runner
+            .run(&ck, &[OsString::from("-BuildCDX:My Mod.esp")], &fo4dir)
+            .unwrap();
+        runner
+            .spawn(&fo4edit, &[OsString::from("-fo4")], &temp)
+            .unwrap();
+        runner
+            .run(
+                &ck,
+                &[OsString::from("-GeneratePreVisData:My Mod.esp")],
+                &fo4dir,
+            )
+            .unwrap();
+
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedProcessCall {
+                    exe: ck.clone(),
+                    args: vec![OsString::from("-BuildCDX:My Mod.esp")],
+                    cwd: fo4dir.clone(),
+                    kind: ProcessCallKind::Run,
+                },
+                RecordedProcessCall {
+                    exe: fo4edit,
+                    args: vec![OsString::from("-fo4")],
+                    cwd: temp,
+                    kind: ProcessCallKind::Spawn,
+                },
+                RecordedProcessCall {
+                    exe: ck,
+                    args: vec![OsString::from("-GeneratePreVisData:My Mod.esp")],
+                    cwd: fo4dir,
+                    kind: ProcessCallKind::Run,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn recording_runner_applies_simulated_effects_at_spawn_time() {
+        let space = InMemoryFileSpace::new();
+        let log = PathBuf::from(r"C:\Temp\UnattendedScript.log");
+        let runner = {
+            let log = log.clone();
+            RecordingProcessRunner::new().with_effects(&space, move |space| {
+                space.add_file_with_contents(&log, "Completed: No Errors.\n");
+            })
+        };
+
+        let _process = runner
+            .spawn(Path::new("FO4Edit.exe"), &[], Path::new(r"C:\Temp"))
+            .unwrap();
+
+        // Applied by the spawn itself, before the caller has polled the process even once.
+        assert!(space.is_file(&log));
+    }
+
+    #[test]
+    fn a_recorded_process_reports_the_fixed_fake_pid() {
+        let runner = RecordingProcessRunner::new();
+
+        let process = spawn_fo4edit(&runner);
+
+        assert_eq!(process.id(), RECORDED_PROCESS_ID);
+    }
+
+    #[test]
+    fn a_recorded_process_scripted_never_to_exit_keeps_running() {
+        let runner = RecordingProcessRunner::new().spawning(ScriptedExit::Never);
+        let mut process = spawn_fo4edit(&runner);
+
+        for _ in 0..100 {
+            assert!(process.try_wait().unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn a_recorded_process_exits_after_the_scripted_number_of_polls() {
+        let runner =
+            RecordingProcessRunner::new().spawning(ScriptedExit::AfterPolls { polls: 2, code: 3 });
+        let mut process = spawn_fo4edit(&runner);
+
+        assert!(process.try_wait().unwrap().is_none());
+        assert!(process.try_wait().unwrap().is_none());
+        assert_eq!(process.try_wait().unwrap().unwrap().code(), Some(3));
+        // Like `Child::try_wait`, an exited process keeps reporting its exit status.
+        assert_eq!(process.try_wait().unwrap().unwrap().code(), Some(3));
+    }
+
+    #[test]
+    fn each_recorded_spawn_counts_its_own_polls() {
+        let runner =
+            RecordingProcessRunner::new().spawning(ScriptedExit::AfterPolls { polls: 1, code: 0 });
+        let mut first = spawn_fo4edit(&runner);
+        assert!(first.try_wait().unwrap().is_none());
+        assert!(first.try_wait().unwrap().is_some());
+
+        let mut second = spawn_fo4edit(&runner);
+
+        assert!(second.try_wait().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_recorded_process_exits_once_its_external_flag_is_set() {
+        let flag = ExitFlag::new();
+        let runner = RecordingProcessRunner::new().spawning(ScriptedExit::WhenFlagged {
+            flag: flag.clone(),
+            code: 0,
+        });
+        let mut process = spawn_fo4edit(&runner);
+
+        assert!(process.try_wait().unwrap().is_none());
+        assert!(process.try_wait().unwrap().is_none());
+
+        // Whoever holds a clone — in the FO4Edit episode tests, the recording window double
+        // asked to close FO4Edit — makes the process exit.
+        flag.set();
+
+        assert!(process.try_wait().unwrap().unwrap().success());
+    }
+
+    /// Spawn a stand-in FO4Edit on a recording runner; the exe, args and cwd are irrelevant
+    /// to the tests that use it, which only exercise the returned process.
+    fn spawn_fo4edit(runner: &RecordingProcessRunner<'_>) -> Box<dyn RunningProcess> {
+        runner
+            .spawn(Path::new("FO4Edit.exe"), &[], Path::new("Temp"))
+            .unwrap()
+    }
+
     /// The system adapter, against a real child process.
     ///
     /// Asserts all three inputs at once: the executable is found, `args` reach it as distinct
@@ -302,6 +654,75 @@ mod tests {
         );
     }
 
+    /// The spawning half of the system adapter, against a real child process.
+    ///
+    /// The same marker-file probe as the `run` test, so a wrong `cwd` or mangled `args` changes
+    /// the exit code `try_wait` eventually reports.
+    #[test]
+    fn system_runner_spawns_a_live_process_with_the_given_args_and_working_directory() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("marker.txt"), b"marker").unwrap();
+        let runner = SystemProcessRunner;
+
+        let mut process = runner
+            .spawn(Path::new(SHELL), &marker_probe_args(), dir.path())
+            .unwrap();
+
+        assert_ne!(process.id(), 0);
+        let status = poll_until(|| process.try_wait().unwrap())
+            .expect("the probe shell should exit within the poll budget");
+        assert_eq!(status.code(), Some(7));
+    }
+
+    #[test]
+    fn system_runner_spawn_surfaces_a_missing_executable_as_an_error() {
+        let dir = tempdir().unwrap();
+        let runner = SystemProcessRunner;
+
+        assert!(
+            runner
+                .spawn(&dir.path().join("no-such-tool.exe"), &[], dir.path())
+                .is_err()
+        );
+    }
+
+    /// Dropping the handle must not take the process with it: FO4Edit saves its merge only on
+    /// its own close path. The child writes `done.txt` only after a short delay, so a drop that
+    /// killed it would leave the file missing.
+    #[test]
+    fn dropping_a_spawned_process_leaves_it_running() {
+        let dir = tempdir().unwrap();
+        let done = dir.path().join("done.txt");
+        let runner = SystemProcessRunner;
+
+        let process = runner
+            .spawn(Path::new(SHELL), &delayed_marker_args(), dir.path())
+            .unwrap();
+        drop(process);
+
+        assert!(
+            !done.exists(),
+            "the child should still be in its delay when the handle is dropped"
+        );
+        assert!(
+            poll_until(|| done.exists().then_some(())).is_some(),
+            "the child should finish and write done.txt after its handle was dropped"
+        );
+    }
+
+    /// Call `probe` every 20 ms until it returns `Some`, giving up after about 10 seconds.
+    ///
+    /// Bounded so a child that never exits fails the test instead of hanging the suite.
+    fn poll_until<T>(mut probe: impl FnMut() -> Option<T>) -> Option<T> {
+        for _ in 0..500 {
+            if let Some(value) = probe() {
+                return Some(value);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        None
+    }
+
     #[cfg(windows)]
     const SHELL: &str = "cmd.exe";
     #[cfg(not(windows))]
@@ -325,6 +746,39 @@ mod tests {
         vec![
             OsString::from("-c"),
             OsString::from("test -f marker.txt && exit 7"),
+        ]
+    }
+
+    /// Arguments for a shell that waits about two seconds, then writes `done.txt` into its
+    /// working directory.
+    ///
+    /// `ping` stands in for a sleep because `timeout` refuses to run without console input.
+    /// Its output goes to a file in the temporary directory rather than into the test output.
+    /// Bare tokens again, for the reason given on [`marker_probe_args`]; the `&` reaches `cmd`
+    /// unquoted and separates the two commands.
+    #[cfg(windows)]
+    fn delayed_marker_args() -> Vec<OsString> {
+        [
+            "/C",
+            "ping",
+            "-n",
+            "3",
+            "127.0.0.1",
+            ">ping.txt",
+            "&",
+            "echo",
+            "done>done.txt",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect()
+    }
+
+    #[cfg(not(windows))]
+    fn delayed_marker_args() -> Vec<OsString> {
+        vec![
+            OsString::from("-c"),
+            OsString::from("sleep 2; echo done > done.txt"),
         ]
     }
 }
