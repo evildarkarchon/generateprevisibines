@@ -38,7 +38,7 @@ fn legacy_and_modern_arguments_share_the_production_dry_run_path() {
     );
     assert!(
         stdout.contains(
-            "Note: current production capability (Step 1) would execute 1 of 6 planned steps."
+            "Note: current production capability (Steps 1 and 2) would execute 2 of 6 planned steps."
         ),
         "stdout: {stdout}"
     );
@@ -85,7 +85,7 @@ fn an_xbox_dry_run_lists_all_eight_planned_steps() {
     );
     assert!(
         stdout.contains(
-            "Note: current production capability (Step 1) would execute 1 of 8 planned steps."
+            "Note: current production capability (Steps 1 and 2) would execute 2 of 8 planned steps."
         ),
         "stdout: {stdout}"
     );

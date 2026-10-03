@@ -159,6 +159,12 @@ closing. Sources: `docs/research/fo4edit-window-automation.md` on branch
   still running after the close sequence, the run stops.
 - Step 2 checks for `CombinedObjects.esp` before launching FO4Edit, mirroring Step 7's
   `Previs.esp` check at 324. The batch does not check it at all.
+- Plugin validation rejects a plugin file name longer than **60 characters**, extension
+  included, in every Build Mode, before Step 1 runs. The PJM scripts cut `-mod:` at 60 (Delphi's
+  `copy`, so the port counts UTF-16 code units, as `copy` does), so a longer name sends the
+  script looking for the wrong plugin, and the batch fails only at Step 2, with the misleading
+  "missing files, Probably due to MO2" fatal, after Step 1's Creation Kit run. The batch accepts
+  any length. Decided on #42.
 - The two shared fatal checks (560–563) stop every run.
 
 The port keeps every delay, keeps `-autoexit`, and writes `Plugins.txt` without the trailing

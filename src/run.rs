@@ -357,11 +357,15 @@ mod tests {
     use crate::discovery::ToolPaths;
     use crate::error::Error;
     use crate::files::InMemoryFileSpace;
+    use crate::toolchain::write_fo4edit_install;
     use crate::tools::clock::ScriptedClock;
-    use crate::tools::process::{RecordedProcessCall, RecordingProcessRunner};
+    use crate::tools::process::{
+        ExitFlag, ProcessCallKind, RecordedProcessCall, RecordingProcessRunner,
+    };
     use crate::tools::wait::{MO2_DELAY_AFTER_CK_SECS, RecordingWait};
     use crate::workflow::operations::recording_adapters::{
-        RecordingPrompts, record_successful_precombine_outputs,
+        ONE_POLL_MERGE_DELAYS, RecordingPrompts, behaving_fo4edit_windows, fo4edit_exiting_when,
+        record_successful_combined_objects_merge, record_successful_precombine_outputs,
     };
     use std::fs;
     use tempfile::{TempDir, tempdir};
@@ -378,7 +382,8 @@ mod tests {
         files: InMemoryFileSpace,
     }
 
-    /// Build a real filesystem fixture with the production Step 1 toolchain ready.
+    /// Build a real filesystem fixture with the production toolchain for a fresh run ready:
+    /// Creation Kit for Step 1 and FO4Edit for Step 2.
     fn ready_workflow_fixture() -> ReadyWorkflowFixture {
         let directory = tempdir().unwrap();
         let fallout4_directory = directory.path().join("Fallout4");
@@ -393,6 +398,7 @@ mod tests {
         let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
             fallout4_dir: Some(fallout4_directory.clone()),
             creation_kit: Some(fallout4_directory.join("CreationKit.exe")),
+            fo4edit: Some(write_fo4edit_install(&directory.path().join("FO4Edit"))),
             ..ToolPaths::default()
         })
         .unwrap();
@@ -435,8 +441,14 @@ mod tests {
         assert_eq!(config.data_dir, PathBuf::from(r"D:\Games\Fallout4\Data"));
     }
 
+    /// The steps a fresh run executes while Step 3 is the first unregistered one.
+    const FRESH_RUN_STEPS: [WorkflowStep; 2] = [
+        WorkflowStep::GeneratePrecombines,
+        WorkflowStep::MergePrecombineObjects,
+    ];
+
     #[test]
-    fn prepare_creates_runnable_step_one_run() {
+    fn prepare_creates_a_run_of_the_registered_prefix() {
         let fixture = ready_workflow_fixture();
 
         let run = WorkflowRun::prepare(
@@ -447,18 +459,15 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(run.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
-        assert_eq!(
-            run.plan().runnable_steps(),
-            &[WorkflowStep::GeneratePrecombines]
-        );
+        assert_eq!(run.runnable_steps(), &FRESH_RUN_STEPS);
+        assert_eq!(run.plan().runnable_steps(), &FRESH_RUN_STEPS);
         assert!(run.planned_steps().len() > run.runnable_steps().len());
         assert!(
             run.diagnostics()
                 .contains(&RunDiagnostic::LaterStepsNotImplemented {
-                    skipped: 7,
+                    skipped: 6,
                     planned: 8,
-                    runnable: vec![WorkflowStep::GeneratePrecombines],
+                    runnable: FRESH_RUN_STEPS.to_vec(),
                 })
         );
         assert_eq!(
@@ -474,100 +483,186 @@ mod tests {
         );
     }
 
-    /// The prepared run dispatches Step 1 and hands Creation Kit the run's Clean build mode.
+    /// What one execution over recording ports did, for the dispatch assertions.
+    struct RecordedExecution {
+        result: std::result::Result<(), RunStopped>,
+        delays: Vec<u64>,
+        prompts_asked: Vec<crate::workflow::operations::Confirmation>,
+    }
+
+    /// Execute a prepared run over recording ports, with `process` standing in for Creation
+    /// Kit and FO4Edit, and hand back how the run ended.
     ///
-    /// Artifact assertions belong to the Workflow Operation and Precombine Workspace tests.
-    /// The subject here is the Workflow Run's own dispatch, so checking for files the simulated
-    /// Creation Kit wrote moments earlier — through the same accessors the assertions used —
-    /// would only report confidence this test has not earned.
-    #[test]
-    fn prepared_run_dispatches_step_one_with_the_runs_clean_build_mode() {
-        let fixture = ready_workflow_fixture();
-        let run = WorkflowRun::prepare(
-            &fixture.request,
-            fixture.directory.path(),
-            &fixture.probe,
-            &fixture.files,
-        )
-        .unwrap();
-        let config = run.config().clone();
-        let ck_log = run.creation_kit().unwrap().ck_log_path.clone();
-        let process = RecordingProcessRunner::new().with_effects(&fixture.files, move |space| {
-            record_successful_precombine_outputs(space, &config, &ck_log);
-        });
+    /// Each episode the run prepared is bound, as `execute` binds them, and the other is left
+    /// absent. FO4Edit behaves: its Module Selection is dismissed by its `OK`, its script
+    /// leaves a clean log, and it exits when asked to close — provided `process` spawns it with
+    /// [`fo4edit_exit`] as its exit flag. The ports are assembled here rather than in each test
+    /// because the episodes and the warnings collector borrow the fixture's space, so the chain
+    /// has to live in one frame.
+    fn execute_over_recording_ports(
+        run: &WorkflowRun,
+        files: &InMemoryFileSpace,
+        process: &RecordingProcessRunner<'_>,
+        fo4edit_exit: &ExitFlag,
+    ) -> RecordedExecution {
         let wait = RecordingWait::new();
         // The subject here is the run's dispatch, not the session log, so a clock that never
         // moves is all this needs.
         let clock = ScriptedClock::fixed();
         let prompts = RecordingPrompts::new();
-        let ck = run.creation_kit().unwrap().bind(CkPorts {
-            process: &process,
-            wait: &wait,
-            clock: &clock,
-            files: &fixture.files,
+        let desktop = behaving_fo4edit_windows(fo4edit_exit, || {
+            record_successful_combined_objects_merge(files);
         });
-        let warnings = BuildWarnings::new(run.log_path().to_path_buf(), &fixture.files);
-
-        assert_eq!(run.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
-        run.execute_with_ports(&OperationPorts {
-            ck: Some(&ck),
-            fo4edit: None,
-            prompts: &prompts,
-            files: &fixture.files,
-            warnings: &warnings,
-        })
-        .unwrap();
-
-        // One spawn, of the run's own Creation Kit, naming the run's own plugin. What the
-        // Clean build mode turns into on that command line is asserted where the mapping
-        // lives, in `tools::creation_kit`; the subject here is the run's dispatch.
-        let calls = process.calls();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].exe, run.creation_kit().unwrap().exe);
-        assert!(
-            calls[0]
-                .args
-                .iter()
-                .any(|arg| arg.to_string_lossy().contains("MyMod.esp")),
-            "args: {:?}",
-            calls[0].args
-        );
-        // Dispatching Step 1 dispatches the whole episode, mandated delay included.
-        assert_eq!(wait.delays(), vec![MO2_DELAY_AFTER_CK_SECS]);
-        // A fresh fixture has nothing to clear, so the resume prompt must never fire. This is
-        // a dispatch fact about the run, not an artifact check: the simulated Creation Kit
-        // established no prior meshes, so nothing here asserts what the test put in place.
-        assert_eq!(prompts.asked(), []);
-    }
-
-    /// Execute a prepared run's Step 1 over recording ports, with `process` standing in for
-    /// Creation Kit, and hand back how the run ended.
-    ///
-    /// The ports are assembled here rather than in each test because `CreationKitOps` and the
-    /// warnings collector borrow the fixture's space, so the chain has to live in one frame.
-    fn execute_over_recording_ports(
-        run: &WorkflowRun,
-        files: &InMemoryFileSpace,
-        process: &RecordingProcessRunner<'_>,
-    ) -> std::result::Result<(), RunStopped> {
-        let wait = RecordingWait::new();
-        let clock = ScriptedClock::fixed();
-        let prompts = RecordingPrompts::new();
-        let ck = run.creation_kit().unwrap().bind(CkPorts {
-            process,
-            wait: &wait,
-            clock: &clock,
-            files,
+        let ck = run.creation_kit().map(|paths| {
+            paths.bind(CkPorts {
+                process,
+                wait: &wait,
+                clock: &clock,
+                files,
+            })
+        });
+        let fo4edit = run.fo4edit().map(|paths| {
+            paths.bind(Fo4EditPorts {
+                process,
+                wait: &wait,
+                desktop: &desktop,
+                files,
+            })
         });
         let warnings = BuildWarnings::new(run.log_path().to_path_buf(), files);
 
-        run.execute_with_ports(&OperationPorts {
-            ck: Some(&ck),
-            fo4edit: None,
+        let result = run.execute_with_ports(&OperationPorts {
+            ck: ck.as_ref(),
+            fo4edit: fo4edit.as_ref(),
             prompts: &prompts,
             files,
             warnings: &warnings,
+        });
+        RecordedExecution {
+            result,
+            delays: wait.delays(),
+            prompts_asked: prompts.asked(),
+        }
+    }
+
+    /// A process runner whose Creation Kit runs leave a successful precombine behind, and whose
+    /// FO4Edit spawns exit once `fo4edit_exit` is set.
+    fn successful_fresh_run_process<'a>(
+        run: &WorkflowRun,
+        files: &'a InMemoryFileSpace,
+        fo4edit_exit: &ExitFlag,
+    ) -> RecordingProcessRunner<'a> {
+        let config = run.config().clone();
+        let ck_log = run.creation_kit().unwrap().ck_log_path.clone();
+        fo4edit_exiting_when(fo4edit_exit).with_effects(files, move |space| {
+            record_successful_precombine_outputs(space, &config, &ck_log);
         })
+    }
+
+    /// A full Clean run dispatches Step 1 and then Step 2: Creation Kit is run and waited for,
+    /// then FO4Edit is launched and left running, each with its whole episode.
+    ///
+    /// Artifact assertions belong to the Workflow Operation and Precombine Workspace tests.
+    /// The subject here is the Workflow Run's own dispatch, so checking for files the simulated
+    /// tools wrote moments earlier — through the same accessors the assertions used — would only
+    /// report confidence this test has not earned.
+    #[test]
+    fn a_full_clean_run_dispatches_step_one_then_step_two() {
+        let fixture = ready_workflow_fixture();
+        let run = prepared_run(&fixture);
+        let exit = ExitFlag::new();
+        let process = successful_fresh_run_process(&run, &fixture.files, &exit);
+
+        assert_eq!(run.runnable_steps(), &FRESH_RUN_STEPS);
+        let execution = execute_over_recording_ports(&run, &fixture.files, &process, &exit);
+        execution.result.unwrap();
+
+        // Creation Kit, then FO4Edit, each the run's own and each naming the run's own plugin.
+        // What the Clean build mode and the merge script turn into on those command lines is
+        // asserted where the mappings live, in `tools`; the subject here is the run's dispatch.
+        let calls = process.calls();
+        assert_eq!(
+            calls
+                .iter()
+                .map(|call| (call.exe.clone(), call.kind))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    run.creation_kit().unwrap().exe.clone(),
+                    ProcessCallKind::Run
+                ),
+                (run.fo4edit().unwrap().exe.clone(), ProcessCallKind::Spawn),
+            ]
+        );
+        for call in &calls {
+            assert!(
+                call.args
+                    .iter()
+                    .any(|arg| arg.to_string_lossy().contains("MyMod.esp")),
+                "args: {:?}",
+                call.args
+            );
+        }
+        // Dispatching each step dispatches its whole episode, mandated delays included.
+        let mut expected_delays = vec![MO2_DELAY_AFTER_CK_SECS];
+        expected_delays.extend(ONE_POLL_MERGE_DELAYS);
+        assert_eq!(execution.delays, expected_delays);
+        // A fresh fixture has nothing to clear, so the resume prompt must never fire. This is
+        // a dispatch fact about the run, not an artifact check: the simulated Creation Kit
+        // established no prior meshes, so nothing here asserts what the test put in place.
+        assert_eq!(execution.prompts_asked, []);
+    }
+
+    /// `--resume-from 2` prepares and executes with FO4Edit alone. The install has no Creation
+    /// Kit at all, so a run that still resolved it, or bound it unconditionally, could not get
+    /// as far as the merge.
+    #[test]
+    fn a_resume_at_step_two_prepares_and_executes_with_fo4edit_alone() {
+        let directory = tempdir().unwrap();
+        let fallout4_directory = directory.path().join("Fallout4");
+        fs::create_dir_all(&fallout4_directory).unwrap();
+        let fo4edit = write_fo4edit_install(&directory.path().join("FO4Edit"));
+        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
+            fallout4_dir: Some(fallout4_directory.clone()),
+            fo4edit: Some(fo4edit.clone()),
+            ..ToolPaths::default()
+        })
+        .unwrap();
+        let request = WorkflowRequest::new(
+            BuildMode::Clean,
+            ArchiveTool::Archive2,
+            PluginIdentity::parse("MyMod"),
+            true,
+            Some(WorkflowStep::MergePrecombineObjects),
+        );
+        let files = InMemoryFileSpace::new();
+
+        let run = WorkflowRun::prepare(&request, directory.path(), &probe, &files).unwrap();
+
+        assert_eq!(
+            run.runnable_steps(),
+            &[WorkflowStep::MergePrecombineObjects]
+        );
+        assert!(run.creation_kit().is_none());
+        let paths = run.fo4edit().unwrap();
+        assert_eq!(paths.exe, fo4edit);
+        assert_eq!(paths.data_dir_override, None);
+        assert_eq!(paths.session_log, run.log_path());
+
+        // What Step 1 left behind, for Step 2 to merge.
+        let data = fallout4_directory.join("Data");
+        files.add_file(data.join("meshes").join("precombined").join("mesh.nif"));
+        files.add_file(data.join("CombinedObjects.esp"));
+        let exit = ExitFlag::new();
+        let process = fo4edit_exiting_when(&exit);
+
+        let execution = execute_over_recording_ports(&run, &files, &process, &exit);
+
+        execution.result.unwrap();
+        let calls = process.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].exe, fo4edit);
+        assert_eq!(calls[0].kind, ProcessCallKind::Spawn);
     }
 
     /// Prepare the fixture's Clean Step 1 request into a ready Workflow Run.
@@ -590,7 +685,10 @@ mod tests {
         // Creation Kit ran and wrote nothing, so Step 1 stops on its first postcondition.
         let process = RecordingProcessRunner::new();
 
-        let stopped = execute_over_recording_ports(&run, &fixture.files, &process).unwrap_err();
+        let stopped =
+            execute_over_recording_ports(&run, &fixture.files, &process, &ExitFlag::new())
+                .result
+                .unwrap_err();
 
         assert!(matches!(stopped.error(), Error::MissingCombinedObjects));
         let session = fixture.files.read_lossy(run.log_path()).unwrap();
@@ -615,7 +713,10 @@ mod tests {
         fixture.files.refuse_appends_to(run.log_path());
         let process = RecordingProcessRunner::new();
 
-        let stopped = execute_over_recording_ports(&run, &fixture.files, &process).unwrap_err();
+        let stopped =
+            execute_over_recording_ports(&run, &fixture.files, &process, &ExitFlag::new())
+                .result
+                .unwrap_err();
 
         assert!(matches!(stopped.error(), Error::PluginAlreadyHasArchive));
         assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
@@ -626,72 +727,35 @@ mod tests {
     fn a_completed_run_records_no_failure() {
         let fixture = ready_workflow_fixture();
         let run = prepared_run(&fixture);
-        let config = run.config().clone();
-        let ck_log = run.creation_kit().unwrap().ck_log_path.clone();
-        let process = RecordingProcessRunner::new().with_effects(&fixture.files, move |space| {
-            record_successful_precombine_outputs(space, &config, &ck_log);
-        });
+        let exit = ExitFlag::new();
+        let process = successful_fresh_run_process(&run, &fixture.files, &exit);
 
-        execute_over_recording_ports(&run, &fixture.files, &process).unwrap();
+        execute_over_recording_ports(&run, &fixture.files, &process, &exit)
+            .result
+            .unwrap();
 
         let session = fixture.files.read_lossy(run.log_path()).unwrap();
         assert!(!session.contains("ERROR - "), "session log: {session}");
         assert!(!session.contains("failed."), "session log: {session}");
     }
 
-    /// Step 1 needs no FO4Edit, so none is resolved even where one could be found.
+    /// A resume at 4 runs Creation Kit steps only, so no FO4Edit is resolved even where one
+    /// could be found.
     #[test]
     fn a_run_without_fo4edit_steps_prepares_no_fo4edit() {
         let fixture = ready_workflow_fixture();
+        let mut request = fixture.request.clone();
+        request.resume_from = Some(WorkflowStep::CompressPsg);
 
-        let run = prepared_run(&fixture);
-
-        assert!(run.fo4edit().is_none());
-    }
-
-    /// A run whose runnable operations require FO4Edit gets its paths, logging into the run's
-    /// own session log, and needs no Creation Kit for it.
-    #[test]
-    fn a_run_requiring_fo4edit_prepares_its_paths() {
-        let fixture = ready_workflow_fixture();
-        let fo4edit = fixture.directory.path().join("FO4Edit.exe");
-        fs::write(&fo4edit, b"").unwrap();
-        let scripts = fixture.directory.path().join("Edit Scripts");
-        fs::create_dir_all(&scripts).unwrap();
-        fs::write(
-            scripts.join("Batch_FO4MergeCombinedObjectsAndCheck.pas"),
-            "V1.5",
-        )
-        .unwrap();
-        fs::write(scripts.join("Batch_FO4MergePrevisandCleanRefr.pas"), "V2.3").unwrap();
-        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
-            fo4edit: Some(fo4edit.clone()),
-            fallout4_dir: Some(fixture.fallout4_directory.clone()),
-            ..ToolPaths::default()
-        })
-        .unwrap();
-        let config = fixture.request.to_project_config(&probe).unwrap();
-        let plan =
-            crate::workflow::operations::production_workflow_plan(BuildMode::Clean, None).unwrap();
-        let preparation = ProductionWorkflowPreparation::from_parts(
-            plan,
-            crate::toolchain::ToolchainRequirements::fo4edit(),
-        );
-
-        let run = WorkflowRun::prepare_with_registration(
-            config,
+        let run = WorkflowRun::prepare(
+            &request,
             fixture.directory.path(),
-            &probe,
-            preparation,
+            &fixture.probe,
             &fixture.files,
         )
         .unwrap();
 
-        let paths = run.fo4edit().unwrap();
-        assert_eq!(paths.exe, fo4edit);
-        assert_eq!(paths.data_dir_override, None);
-        assert_eq!(paths.session_log, run.log_path());
-        assert!(run.creation_kit().is_none());
+        assert!(run.fo4edit().is_none());
     }
 
     #[test]
@@ -733,7 +797,7 @@ mod tests {
 
     #[test]
     fn prepare_preserves_filtered_and_xbox_partial_diagnostic_counts() {
-        let cases = [(BuildMode::Filtered, 5, 6), (BuildMode::Xbox, 7, 8)];
+        let cases = [(BuildMode::Filtered, 4, 6), (BuildMode::Xbox, 6, 8)];
 
         for (build_mode, skipped, planned) in cases {
             let fixture = ready_workflow_fixture();
@@ -753,7 +817,7 @@ mod tests {
                     .contains(&RunDiagnostic::LaterStepsNotImplemented {
                         skipped,
                         planned,
-                        runnable: vec![WorkflowStep::GeneratePrecombines],
+                        runnable: FRESH_RUN_STEPS.to_vec(),
                     }),
                 "build mode: {build_mode:?}, diagnostics: {:?}",
                 run.diagnostics()
@@ -799,7 +863,7 @@ mod tests {
     fn prepare_rejects_unavailable_explicit_resume_before_toolchain_readiness() {
         let fixture = ready_workflow_fixture();
         let mut request = fixture.request.clone();
-        request.resume_from = Some(WorkflowStep::MergePrecombineObjects);
+        request.resume_from = Some(WorkflowStep::CreateBa2FromPrecombines);
         let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
             fallout4_dir: Some(fixture.fallout4_directory.clone()),
             ..ToolPaths::default()
@@ -810,7 +874,7 @@ mod tests {
             WorkflowRun::prepare(&request, fixture.directory.path(), &probe, &fixture.files)
                 .unwrap_err();
 
-        assert!(matches!(error, Error::StepNotImplemented(2)));
+        assert!(matches!(error, Error::StepNotImplemented(3)));
     }
 
     #[test]
@@ -828,6 +892,7 @@ mod tests {
         let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
             fallout4_dir: Some(fo4.clone()),
             creation_kit: Some(fo4.join("CreationKit.exe")),
+            fo4edit: Some(write_fo4edit_install(&dir.path().join("FO4Edit"))),
             ..ToolPaths::default()
         })
         .unwrap();

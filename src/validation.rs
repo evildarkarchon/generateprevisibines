@@ -8,6 +8,13 @@ use crate::tools::{MERGE_COMBINED_OBJECTS_SCRIPT, MERGE_PREVIS_SCRIPT};
 
 const RESERVED_NAMES: &[&str] = &["previs", "combinedobjects", "xprevispatch"];
 
+/// The longest plugin file name, extension included, that the FO4Edit merge scripts can read.
+///
+/// The PJM scripts cut their `-mod:` value with Delphi's `copy(…, 1, 60)`, so a longer name
+/// reaches the script cut short and it looks for a plugin that is not loaded. Counted in UTF-16
+/// code units, because that is what `copy` counts.
+const MAX_PLUGIN_FILE_NAME_UTF16_UNITS: usize = 60;
+
 /// The FO4Edit scripts the merge steps run, with the version each must carry (batch 140–141).
 ///
 /// The names come from the FO4Edit episode, which runs them, so the script checked here is the
@@ -35,6 +42,11 @@ pub fn validate_plugin_name_token(name: &str) -> Result<()> {
 ///
 /// Spaces are rejected for every clean build — Clean and, since V2.99, Xbox; only Filtered
 /// jumps past the check to `:SkipSpace` (V2.99 batch line 161).
+///
+/// A file name longer than 60 UTF-16 code units is rejected in every Build Mode with
+/// [`Error::PluginNameTooLong`]. That is a divergence from the batch, made here so it fires
+/// before Step 1 rather than as Step 2's misleading MO2 fatal; see
+/// [`MAX_PLUGIN_FILE_NAME_UTF16_UNITS`].
 pub fn validate_plugin(plugin: &PluginIdentity, build_mode: BuildMode) -> Result<()> {
     if build_mode.is_clean_build() && plugin.base_name.contains(' ') {
         return Err(Error::PluginNameContainsSpaces);
@@ -51,6 +63,12 @@ pub fn validate_plugin(plugin: &PluginIdentity, build_mode: BuildMode) -> Result
                 name: plugin.base_name.clone(),
             });
         }
+    }
+
+    if plugin.file_name.encode_utf16().count() > MAX_PLUGIN_FILE_NAME_UTF16_UNITS {
+        return Err(Error::PluginNameTooLong {
+            name: plugin.file_name.clone(),
+        });
     }
 
     Ok(())
@@ -203,6 +221,72 @@ mod tests {
     fn filtered_mode_allows_spaces() {
         let plugin = PluginIdentity::parse("My Mod");
         assert!(validate_plugin(&plugin, BuildMode::Filtered).is_ok());
+    }
+
+    /// A plugin whose file name, `.esp` included, is `file_name_len` ASCII characters long.
+    fn plugin_of_file_name_length(file_name_len: usize) -> PluginIdentity {
+        let plugin = PluginIdentity::parse(&"a".repeat(file_name_len - ".esp".len()));
+        assert_eq!(plugin.file_name.len(), file_name_len);
+        plugin
+    }
+
+    /// The PJM scripts cut `-mod:` at 60 characters, so 60 is the longest name they can read,
+    /// extension included, in every Build Mode.
+    #[test]
+    fn a_sixty_character_plugin_file_name_is_accepted() {
+        for mode in [BuildMode::Clean, BuildMode::Filtered, BuildMode::Xbox] {
+            let plugin = plugin_of_file_name_length(60);
+
+            validate_plugin(&plugin, mode).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_sixty_one_character_plugin_file_name_is_rejected_in_every_build_mode() {
+        for mode in [BuildMode::Clean, BuildMode::Filtered, BuildMode::Xbox] {
+            let plugin = plugin_of_file_name_length(61);
+
+            let err = validate_plugin(&plugin, mode).unwrap_err();
+
+            assert!(
+                matches!(&err, Error::PluginNameTooLong { name } if *name == plugin.file_name),
+                "mode: {mode:?}, error: {err:?}"
+            );
+        }
+    }
+
+    /// Delphi's `copy` counts UTF-16 code units, so a character outside the Basic Multilingual
+    /// Plane counts twice: a name of 60 units is 59 characters, and one of 61 units is 60
+    /// characters, which must still be rejected.
+    #[test]
+    fn the_limit_counts_utf16_code_units_rather_than_characters() {
+        // Filtered, because the batch's name-token check applies only to space-free names and
+        // a space keeps this one out of it, so the length check is the only rule in play.
+        let at_limit = PluginIdentity::parse(&format!("{}\u{1F600} b", "a".repeat(52)));
+        assert_eq!(at_limit.file_name.encode_utf16().count(), 60);
+        validate_plugin(&at_limit, BuildMode::Filtered).unwrap();
+
+        let over_limit = PluginIdentity::parse(&format!("{}\u{1F600} b", "a".repeat(53)));
+        assert_eq!(over_limit.file_name.chars().count(), 60);
+        let err = validate_plugin(&over_limit, BuildMode::Filtered).unwrap_err();
+        assert!(
+            matches!(err, Error::PluginNameTooLong { .. }),
+            "error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn a_too_long_plugin_name_explains_why_it_matters() {
+        let err = validate_plugin(&plugin_of_file_name_length(61), BuildMode::Clean).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "plugin file name {}.esp is longer than 60 characters, which the FO4Edit merge \
+                 scripts cannot read",
+                "a".repeat(57)
+            )
+        );
     }
 
     #[test]

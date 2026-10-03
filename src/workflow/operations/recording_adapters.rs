@@ -10,6 +10,10 @@
 //! is the other half: the [`Prompts`] the operation asks, and the files Creation Kit would have
 //! left behind — recorded into the space the operation reads back, so a test states an outcome
 //! instead of writing bytes into a temporary directory and hoping the workspace finds them.
+//!
+//! The same holds for FO4Edit: there is no recording FO4Edit either. The real `Fo4EditOps` runs
+//! over a `RecordingDesktopWindows` scripted by [`behaving_fo4edit_windows`], and the merge's
+//! log is recorded as an effect of dismissing Module Selection.
 
 use std::cell::RefCell;
 use std::path::Path;
@@ -17,11 +21,43 @@ use std::path::Path;
 use crate::config::ProjectConfig;
 use crate::error::Result;
 use crate::files::InMemoryFileSpace;
+use crate::logging;
+use crate::tools::desktop::{DesktopAction, RecordingDesktopWindows, ScriptedWindow, WindowHandle};
+use crate::tools::process::{ExitFlag, RECORDED_PROCESS_ID, RecordingProcessRunner, ScriptedExit};
+use crate::tools::wait::{
+    FO4EDIT_CLOSE_DELAYS_SECS, FO4EDIT_POLL_INTERVAL_SECS, FO4EDIT_STARTUP_DELAY_SECS,
+    MO2_DELAY_BEFORE_FO4EDIT_SECS,
+};
 
 use super::{Confirmation, Prompts};
 
+/// The delays of one FO4Edit merge whose Module Selection is dismissed on the first poll: the
+/// MO2 delay before the launch, the startup delay after it, one poll wait, then the close
+/// sequence's three.
+pub(crate) const ONE_POLL_MERGE_DELAYS: [u64; 6] = [
+    MO2_DELAY_BEFORE_FO4EDIT_SECS,
+    FO4EDIT_STARTUP_DELAY_SECS,
+    FO4EDIT_POLL_INTERVAL_SECS,
+    FO4EDIT_CLOSE_DELAYS_SECS[0],
+    FO4EDIT_CLOSE_DELAYS_SECS[1],
+    FO4EDIT_CLOSE_DELAYS_SECS[2],
+];
+
 /// A quiet Creation Kit log: present, readable, and free of the handle-array marker.
 pub(crate) const QUIET_CK_LOG: &str = "Masterfile: Fallout4.esm\n";
+
+/// A clean Step 2 merge script log: it carries the `Completed: ` the FO4Edit episode's shared
+/// fatal looks for, and no `Error: ` for Step 2 to warn about.
+pub(crate) const COMPLETED_COMBINED_OBJECTS_MERGE_LOG: &str =
+    "Merging CombinedObjects.esp into MyMod.esp\nCompleted: No Errors.\n";
+
+/// The main form of the FO4Edit a recording process runner spawned.
+pub(crate) const FO4EDIT_MAIN_FORM: WindowHandle =
+    WindowHandle::from_raw(0x100, RECORDED_PROCESS_ID);
+
+/// The Module Selection dialog of the FO4Edit a recording process runner spawned.
+pub(crate) const FO4EDIT_MODULE_SELECTION: WindowHandle =
+    WindowHandle::from_raw(0x200, RECORDED_PROCESS_ID);
 
 /// Test [`Prompts`] that record the confirmations they were asked and answer from a script.
 ///
@@ -170,4 +206,60 @@ pub(crate) fn record_successful_previs_outputs(
     space.add_file(config.fo4edit_data_dir().join("Previs.esp"));
     space.add_file(config.vis_dir().join("cluster.uvd"));
     space.add_file_with_contents(ck_log, QUIET_CK_LOG);
+}
+
+/// Record what a successful Step 2 merge script run leaves in a Workflow Run's space: its
+/// unattended log, reading [`COMPLETED_COMBINED_OBJECTS_MERGE_LOG`].
+///
+/// Meant as the `on_dismissed` body of [`behaving_fo4edit_windows`], so the log appears *because
+/// of* the dismissal rather than being seeded beforehand: the episode deletes a stale log before
+/// launching FO4Edit and polls for this run's, so a seeded one would be gone before it was read.
+pub(crate) fn record_successful_combined_objects_merge(space: &InMemoryFileSpace) {
+    space.add_file_with_contents(
+        logging::unattended_log_path(space),
+        COMPLETED_COMBINED_OBJECTS_MERGE_LOG,
+    );
+}
+
+/// A process runner whose FO4Edit spawns exit once `exit` is set, which
+/// [`behaving_fo4edit_windows`] does when the episode asks FO4Edit to close.
+pub(crate) fn fo4edit_exiting_when<'a>(exit: &ExitFlag) -> RecordingProcessRunner<'a> {
+    RecordingProcessRunner::new().spawning(ScriptedExit::WhenFlagged {
+        flag: exit.clone(),
+        code: 0,
+    })
+}
+
+/// The windows of a FO4Edit that behaves: its main form, and Module Selection with its `OK`.
+///
+/// Clicking that `OK` takes Module Selection away and runs `on_dismissed`, which is where a test
+/// records what the script leaves behind, since xEdit runs the script once its plugins are
+/// chosen. Any close request sets `exit`, so a process spawned with
+/// `ScriptedExit::WhenFlagged` on the same flag exits when the episode asks it to close.
+pub(crate) fn behaving_fo4edit_windows<'a>(
+    exit: &ExitFlag,
+    on_dismissed: impl Fn() + 'a,
+) -> RecordingDesktopWindows<'a> {
+    let exit = exit.clone();
+    RecordingDesktopWindows::new()
+        .with_window(
+            ScriptedWindow::new(FO4EDIT_MAIN_FORM, "FO4Script 4.1.5q x64")
+                .with_class("TfrmMain")
+                .disabled(),
+        )
+        .with_window(
+            ScriptedWindow::new(FO4EDIT_MODULE_SELECTION, "Module Selection")
+                .with_class("TfrmModuleSelect")
+                .with_button("OK"),
+        )
+        .on_action(move |action, script| match action {
+            DesktopAction::ClickButton { window, caption }
+                if *window == FO4EDIT_MODULE_SELECTION && caption == "OK" =>
+            {
+                script.remove_window(FO4EDIT_MODULE_SELECTION);
+                on_dismissed();
+            }
+            DesktopAction::RequestClose { .. } => exit.set(),
+            _ => {}
+        })
 }

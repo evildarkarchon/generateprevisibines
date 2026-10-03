@@ -1,4 +1,5 @@
-//! Precombine Workspace artifact checks and cleanup for Step 1.
+//! Precombine Workspace artifact checks and cleanup for Step 1, and the artifacts Step 2
+//! requires before it merges them.
 
 use std::path::PathBuf;
 
@@ -110,6 +111,24 @@ impl<'a> PrecombineWorkspace<'a> {
 
         if ck_log.is_some_and(has_handle_array_error) {
             return Err(Error::HandleArrayLogError);
+        }
+
+        Ok(())
+    }
+
+    /// Require what the Step 2 merge reads, before FO4Edit is launched.
+    ///
+    /// Stops with [`Error::NoPrecombinedMeshesFound`] when `meshes\precombined` holds no `.nif`
+    /// (batch 281), then with [`Error::MissingCombinedObjects`] when `Data\CombinedObjects.esp`
+    /// is absent. The second is a divergence: the batch never checks it, and learns of it only
+    /// through FO4Edit's "missing modules" fatal, after about 50 seconds of MO2 delays.
+    pub(super) fn validate_ready_to_merge(&self) -> Result<()> {
+        if !self.has_precombined_meshes() {
+            return Err(Error::NoPrecombinedMeshesFound);
+        }
+
+        if !self.files.is_file(&self.combined_objects_path()) {
+            return Err(Error::MissingCombinedObjects);
         }
 
         Ok(())
@@ -454,6 +473,41 @@ mod tests {
         workspace
             .validate_generated(Some("Masterfile: Fallout4.esm\n"))
             .unwrap();
+    }
+
+    #[test]
+    fn a_merge_needs_a_precombined_mesh_before_anything_else() {
+        let config = project_config(BuildMode::Clean);
+        let space = InMemoryFileSpace::new();
+        // No mesh and no `CombinedObjects.esp`: the batch's own check (281) speaks first.
+        let workspace = PrecombineWorkspace::new(&config, &space);
+
+        let err = workspace.validate_ready_to_merge().unwrap_err();
+
+        assert!(matches!(err, Error::NoPrecombinedMeshesFound), "{err:?}");
+    }
+
+    #[test]
+    fn a_merge_needs_combined_objects() {
+        let config = project_config(BuildMode::Clean);
+        let space = InMemoryFileSpace::new();
+        space.add_file(precombined_mesh());
+        let workspace = PrecombineWorkspace::new(&config, &space);
+
+        let err = workspace.validate_ready_to_merge().unwrap_err();
+
+        assert!(matches!(err, Error::MissingCombinedObjects), "{err:?}");
+    }
+
+    /// Step 2 asks only for what it merges: no geometry PSG, in any mode.
+    #[test]
+    fn a_merge_is_ready_with_a_mesh_and_combined_objects() {
+        let config = project_config(BuildMode::Clean);
+        let space = InMemoryFileSpace::new();
+        record_generated_outputs(&space, false);
+        let workspace = PrecombineWorkspace::new(&config, &space);
+
+        workspace.validate_ready_to_merge().unwrap();
     }
 
     #[test]

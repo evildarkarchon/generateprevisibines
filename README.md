@@ -235,6 +235,10 @@ Do **not** use these in your plugin name:
 ### Clean Mode Restrictions
 In clean mode, plugin names **cannot contain spaces**. Use filtered mode if your plugin has spaces.
 
+### Plugin Name Length
+In every mode, the plugin file name, extension included, must be **60 characters or fewer**. The
+FO4Edit merge scripts cut longer names short, so the merge would look for the wrong plugin.
+
 ## Logging
 
 Logs are saved to `%TEMP%\generateprevisibines_YYYYMMDD_HHMMSS.log`

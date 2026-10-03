@@ -19,6 +19,7 @@ mod build_cdx;
 mod compress_psg;
 mod generate_precombines;
 mod generate_previs;
+mod merge_combined_objects;
 mod precombine_workspace;
 mod previs_workspace;
 
@@ -35,6 +36,7 @@ macro_rules! register_production_operations {
 
 register_production_operations!(
     generate_precombines::DEFINITION,
+    merge_combined_objects::DEFINITION,
     compress_psg::DEFINITION,
     build_cdx::DEFINITION,
     generate_previs::DEFINITION,
@@ -178,18 +180,6 @@ impl ProductionWorkflowPreparation {
     pub(crate) fn into_parts(self) -> (WorkflowPlan, ToolchainRequirements) {
         (self.plan, self.requirements)
     }
-
-    /// Pair `plan` with `requirements` that no registration produced.
-    ///
-    /// For Workflow Run tests that need a readiness production cannot ask for yet — FO4Edit,
-    /// until Step 2 is registered.
-    #[cfg(test)]
-    pub(crate) const fn from_parts(
-        plan: WorkflowPlan,
-        requirements: ToolchainRequirements,
-    ) -> Self {
-        Self { plan, requirements }
-    }
 }
 
 /// Prepare the production Workflow Plan and its complete runnable-operation requirement union.
@@ -274,14 +264,6 @@ impl<'a> OperationPorts<'a> {
     ///
     /// Returns [`Error::Fo4EditNotPrepared`] when the Workflow Run prepared no FO4Edit, which
     /// means planning and readiness disagreed about the running operation.
-    // The FO4Edit merge steps, its first callers, are registered by issues #59 and #60.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "Steps 2 and 7, the first callers of the FO4Edit episode, are not registered yet"
-        )
-    )]
     pub(crate) fn fo4edit(&self) -> Result<&'a Fo4EditOps<'a>> {
         self.fo4edit.ok_or(Error::Fo4EditNotPrepared)
     }
@@ -339,21 +321,29 @@ mod tests {
     use tempfile::{TempDir, tempdir};
 
     use super::recording_adapters::{
-        QUIET_CK_LOG, RecordingPrompts, record_successful_cdx_outputs,
-        record_successful_compress_outputs, record_successful_precombine_outputs,
-        record_successful_previs_outputs,
+        COMPLETED_COMBINED_OBJECTS_MERGE_LOG, FO4EDIT_MAIN_FORM, FO4EDIT_MODULE_SELECTION,
+        ONE_POLL_MERGE_DELAYS, QUIET_CK_LOG, RecordingPrompts, behaving_fo4edit_windows,
+        fo4edit_exiting_when, record_successful_cdx_outputs,
+        record_successful_combined_objects_merge, record_successful_compress_outputs,
+        record_successful_precombine_outputs, record_successful_previs_outputs,
     };
     use super::*;
     use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
     use crate::files::InMemoryFileSpace;
+    use crate::logging;
     use crate::run::WorkflowRequest;
     use crate::tools::clock::ScriptedClock;
-    use crate::tools::desktop::RecordingDesktopWindows;
-    use crate::tools::process::{ProcessRunner, RecordedProcessCall, RecordingProcessRunner};
+    use crate::tools::desktop::{DesktopAction, DesktopWindows, RecordingDesktopWindows};
+    use crate::tools::process::{
+        ExitFlag, ProcessCallKind, ProcessRunner, RecordedProcessCall, RecordingProcessRunner,
+    };
     use crate::tools::wait::{MO2_DELAY_AFTER_CK_SECS, RecordingWait};
     use crate::tools::{CkPorts, Fo4EditPaths, Fo4EditPorts};
     use crate::warning::BuildWarning;
-    use crate::{discovery::ToolPaths, toolchain::WorkflowToolchainProbe};
+    use crate::{
+        discovery::ToolPaths,
+        toolchain::{WorkflowToolchainProbe, write_fo4edit_install},
+    };
 
     /// Provide an execution entry for registration-only tests that must never dispatch.
     fn unused_execution(_run: &WorkflowRun, _ports: &OperationPorts<'_>) -> Result<()> {
@@ -365,8 +355,14 @@ mod tests {
         let plan = production_workflow_plan(BuildMode::Clean, None).unwrap();
 
         assert_eq!(plan.planned_steps().len(), 8);
-        assert_eq!(plan.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
-        assert_eq!(plan.skipped_unrunnable_count(), 7);
+        assert_eq!(
+            plan.runnable_steps(),
+            &[
+                WorkflowStep::GeneratePrecombines,
+                WorkflowStep::MergePrecombineObjects,
+            ]
+        );
+        assert_eq!(plan.skipped_unrunnable_count(), 6);
     }
 
     #[test]
@@ -392,9 +388,15 @@ mod tests {
             .unwrap()
             .into_parts();
 
-        assert_eq!(plan.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
+        assert_eq!(
+            plan.runnable_steps(),
+            &[
+                WorkflowStep::GeneratePrecombines,
+                WorkflowStep::MergePrecombineObjects,
+            ]
+        );
         assert!(requirements.needs_creation_kit());
-        assert!(!requirements.needs_fo4edit());
+        assert!(requirements.needs_fo4edit());
         assert!(!requirements.needs_archive());
     }
 
@@ -404,8 +406,15 @@ mod tests {
         let plan = source.workflow_plan(BuildMode::Clean, None).unwrap();
 
         assert!(source.contains(WorkflowStep::GeneratePrecombines));
-        assert!(!source.contains(WorkflowStep::MergePrecombineObjects));
-        assert_eq!(plan.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
+        assert!(source.contains(WorkflowStep::MergePrecombineObjects));
+        assert!(!source.contains(WorkflowStep::CreateBa2FromPrecombines));
+        assert_eq!(
+            plan.runnable_steps(),
+            &[
+                WorkflowStep::GeneratePrecombines,
+                WorkflowStep::MergePrecombineObjects,
+            ]
+        );
     }
 
     #[test]
@@ -490,7 +499,7 @@ mod tests {
             source.toolchain_requirements_for_steps(WorkflowStep::steps_for_mode(BuildMode::Clean));
 
         assert!(requirements.needs_creation_kit());
-        assert!(!requirements.needs_fo4edit());
+        assert!(requirements.needs_fo4edit());
         assert!(!requirements.needs_archive());
 
         let unregistered_requirements = source.toolchain_requirements_for_steps(&[
@@ -569,28 +578,56 @@ mod tests {
             self.run.creation_kit().unwrap().ck_log_path.clone()
         }
 
-        /// Assemble the ports for this fixture and hand them to `use_ports`.
+        /// Assemble the ports for this fixture and hand them to `use_ports`, with a desktop that
+        /// has no windows at all.
         ///
-        /// A closure rather than a returned bundle: `CreationKitOps` borrows the three ports it
-        /// was bound to, and `OperationPorts` borrows that in turn, so the whole chain has to
-        /// live inside one stack frame. Every test that needs ports goes through here, which is
-        /// what keeps the assembly spelled out once.
+        /// For the Creation Kit steps, which never look at a window; see
+        /// [`Self::with_desktop_ports`].
         fn with_ports<T>(
             &self,
             process: &dyn ProcessRunner,
             use_ports: impl FnOnce(&OperationPorts<'_>) -> T,
         ) -> T {
-            let ck = self.run.creation_kit().unwrap().bind(CkPorts {
-                process,
-                wait: &self.wait,
-                clock: &self.clock,
-                files: &self.files,
+            self.with_desktop_ports(process, &RecordingDesktopWindows::new(), use_ports)
+        }
+
+        /// Assemble the ports for this fixture, with `desktop` as FO4Edit's windows, and hand
+        /// them to `use_ports`.
+        ///
+        /// Binds each tool episode the run prepared and leaves the other absent, as
+        /// `WorkflowRun::execute` does, so a resume at Step 2 runs with FO4Edit alone.
+        ///
+        /// A closure rather than a returned bundle: each episode borrows the ports it was bound
+        /// to, and `OperationPorts` borrows the episodes in turn, so the whole chain has to live
+        /// inside one stack frame. Every test that needs ports goes through here, which is what
+        /// keeps the assembly spelled out once.
+        fn with_desktop_ports<T>(
+            &self,
+            process: &dyn ProcessRunner,
+            desktop: &dyn DesktopWindows,
+            use_ports: impl FnOnce(&OperationPorts<'_>) -> T,
+        ) -> T {
+            let ck = self.run.creation_kit().map(|paths| {
+                paths.bind(CkPorts {
+                    process,
+                    wait: &self.wait,
+                    clock: &self.clock,
+                    files: &self.files,
+                })
+            });
+            let fo4edit = self.run.fo4edit().map(|paths| {
+                paths.bind(Fo4EditPorts {
+                    process,
+                    wait: &self.wait,
+                    desktop,
+                    files: &self.files,
+                })
             });
             let warnings = BuildWarnings::new(self.run.log_path().to_path_buf(), &self.files);
 
             use_ports(&OperationPorts {
-                ck: Some(&ck),
-                fo4edit: None,
+                ck: ck.as_ref(),
+                fo4edit: fo4edit.as_ref(),
                 prompts: &self.prompts,
                 files: &self.files,
                 warnings: &warnings,
@@ -653,6 +690,19 @@ mod tests {
             self.run_collecting_warnings(generate_previs::run, process)
         }
 
+        /// Drive Step 2 over the real FO4Edit episode, with `desktop` as FO4Edit's windows,
+        /// and return how it ended with every Build Warning it raised.
+        fn run_step_two_collecting_warnings(
+            &self,
+            process: &dyn ProcessRunner,
+            desktop: &dyn DesktopWindows,
+        ) -> (Result<()>, Vec<BuildWarning>) {
+            self.with_desktop_ports(process, desktop, |ports| {
+                let result = merge_combined_objects::run(&self.run, ports);
+                (result, ports.warnings.raised())
+            })
+        }
+
         /// Drive `operation` over this fixture's ports and return how it ended, with every
         /// Build Warning it raised.
         ///
@@ -693,12 +743,23 @@ mod tests {
         operation_fixture(mode, non_interactive, Some(WorkflowStep::GeneratePrevis))
     }
 
+    /// Prepare a real Workflow Run resumed at Step 2, which needs FO4Edit and no Creation Kit
+    /// until Step 3 is registered.
+    fn step_two_fixture(non_interactive: bool) -> OperationFixture {
+        operation_fixture(
+            BuildMode::Clean,
+            non_interactive,
+            Some(WorkflowStep::MergePrecombineObjects),
+        )
+    }
+
     /// Prepare a real Workflow Run over a temporary Fallout 4 directory.
     ///
     /// The directory is the only thing that reaches the disk: it holds the `CreationKit.exe` and
-    /// the CKPE ini the toolchain probe insists on seeing, because probing is not behind a seam.
-    /// Everything the run then does — its session log, the artifacts, the Creation Kit log —
-    /// lands in the fixture's own [`InMemoryFileSpace`].
+    /// the CKPE ini, and an FO4Edit install with its merge scripts, which the toolchain probe
+    /// insists on seeing, because probing is not behind a seam. Everything the run then does —
+    /// its session log, the artifacts, the Creation Kit log, FO4Edit's log — lands in the
+    /// fixture's own [`InMemoryFileSpace`].
     ///
     /// `resume_from` must name a registered step, because preparation resolves the plan.
     fn operation_fixture(
@@ -719,6 +780,7 @@ mod tests {
         let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
             fallout4_dir: Some(fallout4_dir.clone()),
             creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
+            fo4edit: Some(write_fo4edit_install(&dir.path().join("FO4Edit"))),
             ..ToolPaths::default()
         })
         .unwrap();
@@ -1060,14 +1122,14 @@ mod tests {
         let err = fixture
             .with_ports(&process, |ports| {
                 production_operation_source().dispatch(
-                    WorkflowStep::MergePrecombineObjects,
+                    WorkflowStep::CreateBa2FromPrecombines,
                     &fixture.run,
                     ports,
                 )
             })
             .unwrap_err();
 
-        assert!(matches!(err, Error::StepNotImplemented(2)));
+        assert!(matches!(err, Error::StepNotImplemented(3)));
         assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
         assert_eq!(fixture.prompts.asked(), []);
     }
@@ -1351,8 +1413,8 @@ mod tests {
         assert!(!requirements.needs_archive());
     }
 
-    /// Registering Steps 4 to 6 leaves a fresh clean build where it was: Step 2 is still the
-    /// first planned step with no registered operation, so only Step 1 runs.
+    /// Registering Steps 4 to 6 does not let a fresh clean build skip ahead to them: Step 3 is
+    /// the first planned step with no registered operation, so only Steps 1 and 2 run.
     #[test]
     fn a_fresh_clean_build_still_runs_only_the_contiguous_registered_prefix() {
         for mode in [BuildMode::Clean, BuildMode::Xbox] {
@@ -1361,7 +1423,10 @@ mod tests {
             assert_eq!(plan.planned_steps().len(), 8, "mode: {mode:?}");
             assert_eq!(
                 plan.runnable_steps(),
-                &[WorkflowStep::GeneratePrecombines],
+                &[
+                    WorkflowStep::GeneratePrecombines,
+                    WorkflowStep::MergePrecombineObjects,
+                ],
                 "mode: {mode:?}"
             );
         }
@@ -1938,6 +2003,261 @@ mod tests {
 
         assert!(
             matches!(error, Error::CreationKitNotPrepared),
+            "error: {error:?}"
+        );
+        assert_eq!(fixture.wait.delays(), Vec::<u64>::new());
+    }
+
+    /// Seed what Step 1 leaves for Step 2 to merge: a precombined mesh and `CombinedObjects.esp`.
+    ///
+    /// Seeded rather than recorded as an effect, because they are Step 2's *inputs*: a resume at
+    /// 2 finds them already on disk.
+    fn add_precombine_outputs(fixture: &OperationFixture) {
+        let config = fixture.run.config();
+        fixture
+            .files
+            .add_file(config.precombined_dir().join("cell").join("mesh.nif"));
+        fixture
+            .files
+            .add_file(config.fo4edit_data_dir().join("CombinedObjects.esp"));
+    }
+
+    /// FO4Edit's windows for a Step 2 merge whose script leaves `log` as its log once Module
+    /// Selection is dismissed, in place of the clean log
+    /// [`record_successful_combined_objects_merge`] writes.
+    fn merge_windows_logging<'a>(
+        fixture: &'a OperationFixture,
+        exit: &ExitFlag,
+        log: &'a str,
+    ) -> RecordingDesktopWindows<'a> {
+        let files = &fixture.files;
+        behaving_fo4edit_windows(exit, move || {
+            files.add_file_with_contents(logging::unattended_log_path(files), log);
+        })
+    }
+
+    #[test]
+    fn merge_combined_objects_is_registered_and_requires_fo4edit_alone() {
+        let source = production_operation_source();
+        let requirements =
+            source.toolchain_requirements_for_steps(&[WorkflowStep::MergePrecombineObjects]);
+
+        assert!(source.contains(WorkflowStep::MergePrecombineObjects));
+        assert!(requirements.needs_fo4edit());
+        assert!(!requirements.needs_creation_kit());
+        assert!(!requirements.needs_archive());
+    }
+
+    /// A resume at 2 merges `CombinedObjects.esp` through the whole FO4Edit episode, with no
+    /// Creation Kit prepared even though one is installed, and nothing to warn about.
+    #[test]
+    fn step_two_merges_combined_objects_through_the_whole_fo4edit_episode() {
+        let fixture = step_two_fixture(true);
+        assert!(fixture.run.creation_kit().is_none());
+        add_precombine_outputs(&fixture);
+        let exit = ExitFlag::new();
+        let process = fo4edit_exiting_when(&exit);
+        let files = &fixture.files;
+        let desktop =
+            behaving_fo4edit_windows(&exit, || record_successful_combined_objects_merge(files));
+
+        let (result, warnings) = fixture.run_step_two_collecting_warnings(&process, &desktop);
+
+        result.unwrap();
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        // One launch of the run's own FO4Edit, left running, for the Step 2 script and the
+        // run's own plugin; the rest of the argv is pinned in `tools::fo4edit`.
+        let calls = process.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].kind, ProcessCallKind::Spawn);
+        assert_eq!(calls[0].exe, fixture.run.fo4edit().unwrap().exe);
+        for expected in [
+            "-Script:Batch_FO4MergeCombinedObjectsAndCheck.pas",
+            "-Mod:MyMod.esp",
+        ] {
+            assert!(
+                calls[0].args.contains(&std::ffi::OsString::from(expected)),
+                "args: {:?}",
+                calls[0].args
+            );
+        }
+        assert_eq!(fixture.wait.delays(), ONE_POLL_MERGE_DELAYS);
+        assert_eq!(
+            desktop.actions(),
+            vec![
+                DesktopAction::ClickButton {
+                    window: FO4EDIT_MODULE_SELECTION,
+                    caption: "OK".to_owned(),
+                },
+                DesktopAction::RequestClose {
+                    window: FO4EDIT_MAIN_FORM,
+                },
+            ]
+        );
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(
+            session.contains(
+                "Running xEdit script Batch_FO4MergeCombinedObjectsAndCheck.pas against MyMod.esp\n"
+            ),
+            "session log: {session}"
+        );
+        assert!(
+            session.ends_with(COMPLETED_COMBINED_OBJECTS_MERGE_LOG),
+            "session log: {session}"
+        );
+    }
+
+    /// `Error: ` anywhere in the log, in any case, completes Step 2 with exactly one warning in
+    /// the batch's words (284–285). The marker is spelled out by hand in each case.
+    #[test]
+    fn a_merge_log_with_errors_completes_step_two_with_one_warning() {
+        for log in [
+            "Merging CombinedObjects.esp\nError: could not copy REFR [0001F00D]\nError: and another\nCompleted: 2 errors.\n",
+            "Merging CombinedObjects.esp\n[00:03] error: could not copy REFR [0001F00D]\nCompleted: 1 errors.\n",
+        ] {
+            let fixture = step_two_fixture(true);
+            add_precombine_outputs(&fixture);
+            let exit = ExitFlag::new();
+            let process = fo4edit_exiting_when(&exit);
+            let desktop = merge_windows_logging(&fixture, &exit, log);
+
+            let (result, warnings) = fixture.run_step_two_collecting_warnings(&process, &desktop);
+
+            result.unwrap();
+            assert_eq!(
+                warnings,
+                vec![BuildWarning::MergePrecombinesHadErrors],
+                "log: {log}"
+            );
+            let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+            assert!(
+                session.ends_with(&format!("{log}WARNING - Merge Precombines had errors\n")),
+                "session log: {session}"
+            );
+        }
+    }
+
+    /// No `.nif` under `meshes\precombined` stops Step 2 with the batch's own words (281),
+    /// before FO4Edit is launched or any delay runs.
+    #[test]
+    fn step_two_stops_without_a_precombined_mesh_before_fo4edit() {
+        let fixture = step_two_fixture(true);
+        fixture.files.add_file(
+            fixture
+                .run
+                .config()
+                .fo4edit_data_dir()
+                .join("CombinedObjects.esp"),
+        );
+        let exit = ExitFlag::new();
+        let process = fo4edit_exiting_when(&exit);
+        let files = &fixture.files;
+        let desktop =
+            behaving_fo4edit_windows(&exit, || record_successful_combined_objects_merge(files));
+
+        let (result, warnings) = fixture.run_step_two_collecting_warnings(&process, &desktop);
+
+        let err = result.unwrap_err();
+        assert!(matches!(err, Error::NoPrecombinedMeshesFound), "{err:?}");
+        assert_eq!(err.to_string(), "No Precombined meshes found");
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
+        assert_eq!(fixture.wait.delays(), Vec::<u64>::new());
+        assert_eq!(desktop.actions(), vec![]);
+    }
+
+    /// A missing `CombinedObjects.esp` stops Step 2 before launch — a divergence: the batch
+    /// learns of it only through FO4Edit's "missing modules" fatal, after about 50s of delays.
+    #[test]
+    fn step_two_stops_without_combined_objects_before_fo4edit() {
+        let fixture = step_two_fixture(true);
+        fixture.files.add_file(
+            fixture
+                .run
+                .config()
+                .precombined_dir()
+                .join("cell")
+                .join("mesh.nif"),
+        );
+        let exit = ExitFlag::new();
+        let process = fo4edit_exiting_when(&exit);
+        let files = &fixture.files;
+        let desktop =
+            behaving_fo4edit_windows(&exit, || record_successful_combined_objects_merge(files));
+
+        let (result, _) = fixture.run_step_two_collecting_warnings(&process, &desktop);
+
+        let err = result.unwrap_err();
+        assert!(matches!(err, Error::MissingCombinedObjects), "{err:?}");
+        assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
+        assert_eq!(fixture.wait.delays(), Vec::<u64>::new());
+        // Nothing was attempted, so the session log names no script run.
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(
+            !session.contains("Running xEdit script"),
+            "session log: {session}"
+        );
+    }
+
+    /// Regression pin for the `:RunScript` fall-through divergence (docs/episodes.md §
+    /// *FO4Edit*): the batch's non-interactive `goto failed` inside a `Call` carried on into
+    /// Step 3 with an unmerged plugin. Both shared fatals stop Step 2 whether or not the run is
+    /// interactive, and neither leaves a Step 2 warning behind, though both logs hold `Error: `.
+    #[test]
+    fn the_shared_fo4edit_fatals_stop_step_two_whether_or_not_it_is_interactive() {
+        let missing_modules = "Error: Missing [MyMod.esp] or [CombinedObjects.esp] modules\n\
+                               Completed: 1 errors.\n";
+        let never_completed = "Merging CombinedObjects.esp\nError: access violation\n";
+
+        for non_interactive in [true, false] {
+            for log in [missing_modules, never_completed] {
+                let fixture = step_two_fixture(non_interactive);
+                assert_eq!(fixture.run.config().non_interactive, non_interactive);
+                add_precombine_outputs(&fixture);
+                let exit = ExitFlag::new();
+                let process = fo4edit_exiting_when(&exit);
+                let desktop = merge_windows_logging(&fixture, &exit, log);
+
+                let (result, warnings) =
+                    fixture.run_step_two_collecting_warnings(&process, &desktop);
+
+                let err = result.unwrap_err();
+                let case = format!("non-interactive: {non_interactive}, log: {log}");
+                if log == missing_modules {
+                    assert!(
+                        matches!(err, Error::Fo4EditScriptMissingModules { .. }),
+                        "{case}, error: {err:?}"
+                    );
+                } else {
+                    assert!(
+                        matches!(err, Error::Fo4EditScriptFailed { .. }),
+                        "{case}, error: {err:?}"
+                    );
+                }
+                assert!(warnings.is_empty(), "{case}, warnings: {warnings:?}");
+            }
+        }
+    }
+
+    /// Step 2 reaches FO4Edit through `ports.fo4edit()?`: a run that prepared none stops with
+    /// the preparation error before the workspace is looked at.
+    #[test]
+    fn step_two_without_fo4edit_stops_before_any_launch() {
+        let fixture = step_two_fixture(true);
+        let warnings = BuildWarnings::new(fixture.run.log_path().to_path_buf(), &fixture.files);
+        let ports = OperationPorts {
+            ck: None,
+            fo4edit: None,
+            prompts: &fixture.prompts,
+            files: &fixture.files,
+            warnings: &warnings,
+        };
+
+        // No mesh either: the preparation error must win over the workspace's own stop.
+        let error = merge_combined_objects::run(&fixture.run, &ports).unwrap_err();
+
+        assert!(
+            matches!(error, Error::Fo4EditNotPrepared),
             "error: {error:?}"
         );
         assert_eq!(fixture.wait.delays(), Vec::<u64>::new());

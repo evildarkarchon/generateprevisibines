@@ -53,7 +53,7 @@ The Workflow Operation for Step 1, where a Workflow Run generates precombined me
 _Avoid_: Step 1 checks, precombine helper, CK precombine wrapper
 
 **Precombine Workspace**:
-The artifact space evaluated by the Generate Precombines Operation before and after Creation Kit runs, including existing precombined meshes and generated precombine outputs. It is the workspace being prepared and validated, not the Creation Kit command itself.
+The artifact space evaluated by the Generate Precombines Operation before and after Creation Kit runs, including existing precombined meshes and generated precombine outputs, which the Merge CombinedObjects step then requires before it launches FO4Edit. It is the workspace being prepared and validated, not the Creation Kit or FO4Edit command itself.
 _Avoid_: Step 1 checks, precombine helper, artifact scanner
 
 **Plugin Archive**:
