@@ -669,18 +669,22 @@ mod tests {
 
     impl ReadyIntakeContext {
         /// Prepare a distinct Creation Kit installation and parse this case's command-line input.
+        ///
+        /// Both archive tools are discovered, because a fresh run now reaches Step 3 and the
+        /// command line may choose either. Neither is written: archive readiness only checks
+        /// that discovery found a path.
         fn new(args: &[&str]) -> Self {
             let directory = tempfile::tempdir().unwrap();
             let fallout4_dir = create_ck_ready_fallout4(directory.path());
             let data_dir = fallout4_dir.join("Data");
             let cli = Cli::try_parse_from(args.iter().copied()).unwrap();
+            let fo4edit_dir = directory.path().join("FO4Edit");
             let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
                 creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
-                fo4edit: Some(crate::toolchain::write_fo4edit_install(
-                    &directory.path().join("FO4Edit"),
-                )),
+                fo4edit: Some(crate::toolchain::write_fo4edit_install(&fo4edit_dir)),
+                archive2: Some(crate::toolchain::archive2_exe(&fallout4_dir)),
+                bsarch: Some(fo4edit_dir.join("BSArch.exe")),
                 fallout4_dir: Some(fallout4_dir),
-                ..crate::discovery::ToolPaths::default()
             })
             .unwrap();
 
@@ -907,6 +911,7 @@ mod tests {
             fo4edit: Some(crate::toolchain::write_fo4edit_install(
                 &directory.path().join("FO4Edit"),
             )),
+            archive2: Some(crate::toolchain::archive2_exe(&fallout4_dir)),
             ..crate::discovery::ToolPaths::default()
         })
         .unwrap();
@@ -954,6 +959,7 @@ mod tests {
             fo4edit: Some(crate::toolchain::write_fo4edit_install(
                 &directory.path().join("FO4Edit"),
             )),
+            archive2: Some(crate::toolchain::archive2_exe(&fallout4_dir)),
             ..crate::discovery::ToolPaths::default()
         })
         .unwrap();
@@ -1193,6 +1199,7 @@ mod tests {
             fo4edit: Some(crate::toolchain::write_fo4edit_install(
                 &directory.path().join("FO4Edit"),
             )),
+            archive2: Some(crate::toolchain::archive2_exe(&fallout4_dir)),
             ..crate::discovery::ToolPaths::default()
         })
         .unwrap();
@@ -1304,6 +1311,7 @@ mod tests {
             fo4edit: Some(crate::toolchain::write_fo4edit_install(
                 &directory.path().join("FO4Edit"),
             )),
+            archive2: Some(crate::toolchain::archive2_exe(&fallout4_dir)),
             ..crate::discovery::ToolPaths::default()
         })
         .unwrap();

@@ -49,8 +49,9 @@ Ordered slices recommended for parity work:
    into `Data` ([ADR-0004](adr/0004-plugin-archive-is-the-only-cross-step-archive-state.md)).
    Per-verb command lines for both tools and the Xbox-compression divergence are in
    [episodes.md](episodes.md) § *Archive*.
-   The Archive episode (`tools/archive`, `ArchiveOps::archive_precombines`) is implemented; the
-   Workflow Operation that calls it is not registered yet.
+   Implemented as the `create_ba2_from_precombines` Workflow Operation over the Archive episode
+   (`tools/archive`, `ArchiveOps::archive_precombines`). With no loose meshes it completes when
+   the archive already exists and otherwise stops, rather than skipping silently as the batch does.
 5. **Steps 4–5 — PSG / CDX** (clean and xbox; filtered skips both) — `- Geometry.psg` presence check on step-4 entry, then `CompressPSG` and delete the intermediate `.psg` (clean only — xbox skips straight to step 5 and keeps the `.psg`), then `BuildCDX`. Mode gates are in [episodes.md](episodes.md) § *Per-step notes*.
    Step 4 is implemented as the `compress_psg` Workflow Operation and Step 5 as `build_cdx`.
 6. **Step 6 — Generate previs** — empty `Data\vis`, `GeneratePreVisData`, visibility task warning.
@@ -100,8 +101,9 @@ Manual integration checklist (minimum):
 - [ ] Interactive: seed copy from `Data\xPrevisPatch.esp` (5s MO2 delay if file not visible immediately)
 - [ ] Interactive: existing plugin Y/N/C; **C** shows resume menu; **0** re-prompts plugin name
 - [ ] Interactive: resume step 1 with existing `meshes\precombined\*.nif` prompts to delete folder
-- [ ] Non-interactive: `generateprevisibines.exe MyMod.esp` runs Steps 1 and 2 only; errors if `--resume-from` names a step with no registered operation (3 and 8 today)
-- [ ] `--resume-from 2` on an install with no Creation Kit merges `CombinedObjects.esp` through FO4Edit; Module Selection is dismissed without a keypress, and FO4Edit closes on its own afterwards
+- [ ] Non-interactive: `generateprevisibines.exe MyMod.esp` runs Steps 1 to 7 (Filtered: 1, 2, 3, 6 and 7); errors if `--resume-from` names a step with no registered operation (8 today)
+- [ ] `--resume-from 2` merges `CombinedObjects.esp` through FO4Edit; Module Selection is dismissed without a keypress, and FO4Edit closes on its own afterwards. The run goes on through Step 7, so it needs Creation Kit and the archive tool too
+- [ ] Step 3 packs `meshes\precombined` into `{plugin} - Main.ba2` with each tool (Archive2, and `-bsarch`), and the loose meshes are gone afterwards; a `--resume-from 3` with no loose meshes but an existing archive completes Step 3 with nothing to do, and with neither stops with "No Precombined meshes found to archive, and {plugin} - Main.ba2 does not exist"
 - [ ] Step 2 with no `meshes\precombined\*.nif` stops with "No Precombined meshes found", and with no `Data\CombinedObjects.esp` stops before FO4Edit launches
 - [ ] A plugin file name longer than 60 characters is rejected before Step 1
 - [ ] Clean `--resume-from 4` runs Steps 4 to 7 and the diagnostic names all four; Xbox keeps `- Geometry.psg` and skips `CompressPSG`; Filtered `--resume-from 4` plans from Step 6
