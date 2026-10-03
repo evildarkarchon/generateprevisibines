@@ -4,7 +4,7 @@ These workarounds are **necessary** due to external tool limitations - DO NOT "F
 
 Line references are against the **V2.99** batch (`GeneratePrevisibines.bat`, committed at
 the repo root, 564 lines, header `PJM V2.99 Aug 2026`) — the same file [episodes.md](episodes.md)
-cites. None of the four workarounds changed between V2.98 and V2.99; only the line numbers
+cites. None of the four batch workarounds (§1–4) changed between V2.98 and V2.99; only the line numbers
 moved.
 
 ## 1. PowerShell Keystroke Automation (batch lines 543-556)
@@ -65,3 +65,24 @@ moved.
   (decided on #29, [ADR-0004](adr/0004-plugin-archive-is-the-only-cross-step-archive-state.md)).
   It changes only *where* the repack writes: into a work folder beside `Data`. The old archive is
   replaced only after the new one exists.
+
+## 5. Full-path directory removal under MO2 (port only)
+
+- The batch removes folders with `RD /S /Q` (241, 248, 262, 292, 336, 435, 443), which deletes
+  every file and folder by its full path. The port must remove folders the same way, so this
+  workaround has no batch line of its own
+- Under MO2's usvfs, `std::fs::remove_dir_all` fails with os error 2 (not found) on **any folder
+  that has a subfolder**, and leaves the whole tree in place and still listable. Only flat and
+  empty folders are removed. The likely cause: since the CVE-2022-21658 fix, std opens each
+  child relative to its parent's handle, and usvfs reroutes only full-path calls (found by the
+  archive probe on #44)
+- `FileSpace::remove_dir_all` therefore walks the tree itself with `read_dir`, `remove_file`
+  per file and `remove_dir` per folder, deepest first (`DeleteFileW` / `RemoveDirectoryW`, as
+  `RD /S` does). These are safe std calls on full paths, so the crate keeps
+  `unsafe_code = "forbid"`
+- It reports success only when the folder is really gone afterwards: nothing exists at the path
+  **and** `read_dir` on it fails. The probe saw those two disagree under usvfs, so a `NotFound`
+  during the walk is not taken as success
+- **Do not "simplify" the walk back to `std::fs::remove_dir_all`.** That call passes every test
+  outside MO2 and fails only inside it. It would leave the Archive work folder behind, and
+  Step 1's clear of `meshes\precombined` only got by with it because that folder is flat
