@@ -92,7 +92,9 @@ by the next guard: a `*-PJMdisabled` with no original beside it is recorded as o
 guard's own renames, so that run's restore recovers it. Recovery therefore happens on the next
 run that launches CK (Steps 1, 4, 5, 6), not on every run; Finish has no DLL duty. When both the
 leftover and the original exist, the guard keeps its existing behaviour (the leftover is
-replaced).
+replaced). Adoption treats an unpaired `*-PJMdisabled` as a crash leftover. The installation
+lock ([ADR-0005](adr/0005-one-workflow-run-per-installation.md)) is what makes that safe:
+without it, a second run could adopt, and restore, DLLs that a live run had just disabled.
 
 ## FO4Edit — two script runs, identical shape
 
@@ -205,8 +207,8 @@ files, control falls through to `:ArchiveOnly` (441 → 445) and the archive is 
   own contents plus `vis`. Archive2 keeps the batch's extract → 5s → repack exactly. BSArch
   `unpack`s the archive into staging, moves `vis` in and packs. The batch's `BSArchTemp` has no
   port counterpart: one run-owned work folder, `<fo4>\ArchiveWork`, holds the BSArch staging tree
-  and both tools' output. The step that created it removes it when it ends, except when a cleanup fails or
-  when a move-back or swap fails (see below).
+  and both tools' output. The step that created it removes it when it ends, except when a cleanup fails, or
+  when a move-back, a swap or the removal of its restore list fails (see below).
 - **Build elsewhere, check, then swap.** Both tools write the new archive into the work folder
   under its final name. Archive2 does this with `-c=` pointing there; its sources stay relative
   under cwd `Data`, so rooting is unchanged. The archive-exists check runs on that file, and
@@ -215,16 +217,42 @@ files, control falls through to `:ArchiveOnly` (441 → 445) and the archive is 
 - **BSArch waits 5s before every pack**, in Step 3 and Step 8, after everything is staged. The
   batch's BSArch path has no wait. Under MO2, files moved out of the virtual `Data` may not have
   settled when BSArch reads staging, which yields an incomplete archive.
-- **Leftover work folders are cleared at the start of every run.** After preparation and
-  before the first step, whatever the resume point, the run removes `<fo4>\ArchiveWork` and
-  every `<fo4>\ArchiveWork.<n>`, whatever they hold. This replaces the batch's Step 1-only `RD`
-  of its staging folder (262; see *Per-step notes*). A folder that cannot be removed (for
-  example, because of a usvfs or antivirus lock) gets a Build Warning naming it, and the run
-  continues. Each archive step builds in the first work-folder name that does not exist
-  (`ArchiveWork`, then `ArchiveWork.1`, `ArchiveWork.2`, …). The archive is therefore always
-  built in a clean folder, so nothing stale is packed (BSArch packs the whole staging folder),
-  and a stuck folder never stops the run. *Amended on #45, which reversed #29's "a leftover
-  stops the run".*
+- **The work folder has three parts:** `staging\`, the only tree BSArch packs (`pack
+  <work>\staging <work>\<name>`); the built `<name>` beside it, for both tools; and
+  `restore.txt`, the restore list. Keeping the archive and the list outside `staging\` means
+  neither can be packed.
+- **Each step keeps a restore list in its work folder.** It names what the folder may hold the
+  *only* copy of, and where each item goes back in `Data`. The step writes it empty right after
+  creating the work folder. An entry is added before each move out of `Data` (BSArch Step 3's
+  `meshes\precombined`, BSArch Step 8's `vis`) and before the swap deletes the old archive (the
+  new archive). An unpacked archive copy, or an archive that has not reached the swap, is never
+  listed. A move-back leaves the list alone (an entry whose item has left the folder is skipped),
+  and a successful swap removes the whole list before cleanup.
+- **Leftover work folders are restored, then cleared, at the start of every run.** After
+  preparation and before the first step, whatever the resume point, the run handles
+  `<fo4>\ArchiveWork` and every `<fo4>\ArchiveWork.<n>`. The installation lock
+  ([ADR-0005](adr/0005-one-workflow-run-per-installation.md)) guarantees that no other run is
+  using them.
+  - It moves each listed item still in the folder back to `Data`, with a Build Warning naming
+    what was restored. The new archive is moved back only if `Data` has no Plugin Archive.
+  - If a listed item cannot be moved back (something exists at its `Data` place, the move
+    fails, or the list cannot be read or parsed), it renames the folder to the first absent
+    `ArchiveWork.orphaned.<n>`, with a Build Warning. The port never deletes, builds in or packs
+    that folder.
+  - Otherwise (no list, an empty list, or everything restored) it removes the folder, which
+    holds only copies and unfinished output.
+
+  This replaces the batch's Step 1-only `RD` of its staging folder (262; see *Per-step
+  notes*). A folder that cannot be renamed or removed (for example, because of a usvfs or
+  antivirus lock) gets a Build Warning naming it, and the run continues. Each archive step
+  builds in the first work-folder name that does not exist (`ArchiveWork`, then
+  `ArchiveWork.1`, `ArchiveWork.2`, …). The archive is therefore always built in a clean
+  folder, so nothing stale is packed (BSArch packs the whole staging tree), and a stuck
+  folder never stops the run. *Amended on #45, which reversed #29's "a leftover stops the
+  run". Amended again after review: #45's "whatever they hold" silently deleted the only copy
+  of the precombines, previs or new archive after a crash, which never reaches the
+  failure-path error. It would also have acted on a folder that a concurrent run against the
+  same installation was still using, which ADR-0005's lock rules out.*
 - **Cleanup failures are Build Warnings, never stops** (decided on #45). Cleanup covers the
   work folder after a step, the loose `meshes\precombined` after the Step 3 Archive2 swap, and
   the loose `meshes\precombined` and `vis` after the Step 8 Archive2 swap. On a failure path,
@@ -232,9 +260,11 @@ files, control falls through to `:ArchiveOnly` (441 → 445) and the archive is 
   their failure stops the run: the swap's delete of the old archive, and the BSArch delete of
   the old `vis` it unpacked, because both decide what the archive contains.
 - **A failed move-back or swap** stops the run, with both paths named, and leaves the work
-  folder in place. It may hold the user's only copy of their precombines or of the new archive.
-  The next run will clear it, so the error tells the user to recover their files before
-  rerunning.
+  folder in place. It may hold the user's only copy of their precombines, previs or the new
+  archive. The error says the next run will move the listed files back, or set the folder
+  aside as `ArchiveWork.orphaned.<n>` if it cannot.
+- **A failed removal of the restore list after a successful swap** also stops the run, because
+  a stale list would put superseded loose files back into `Data` on the next run.
 - **No precombined meshes after the extract or unpack stops the run** before the old archive
   is touched, instead of rebuilding from `vis` alone (441 → 445).
 - **`:ArchiveOnly` is dropped.** A missing archive at Step 8 stops the run (see *Per-step
@@ -301,10 +331,12 @@ path (`:RePrecomb`, `:RePreVis`).
   `PauseAndExit` otherwise; `Data\vis` non-empty → `:Done` (258–260). None of these three is
   a `:failed`. Then `RD` of `<fo4>\BSarchTemp` (262) — *only reached via step-1 entry* —
   delete `CombinedObjects.esp` (263), `- Geometry.psg` (264), and the session log (265). The
-  port replaces the `RD` at 262 with clearing its own work folders (`<fo4>\ArchiveWork` and any
-  `ArchiveWork.<n>`) at the start of **every** run, not only on a Step 1 entry. A folder that
-  cannot be removed is a Build Warning — decided on #45 (see *Archive*). The port never touches
-  the batch's `BSArchTemp`.
+  port replaces the `RD` at 262 with restoring, then clearing, its own work folders
+  (`<fo4>\ArchiveWork` and any `ArchiveWork.<n>`) at the start of **every** run, not only on a
+  Step 1 entry. Listed items go back to `Data`, a folder that cannot be restored is set aside
+  as `ArchiveWork.orphaned.<n>`, and a folder that cannot be renamed or removed is a
+  Build Warning — decided on #45 and amended after review (see *Archive*). The port never
+  touches the batch's `BSArchTemp`.
 - **Step 2 precondition**: no precombined meshes → `PauseAndExit`, **not** `failed` (281).
 - **Step 3**: no precombined meshes → **silently skip to step 4**, not an error (289); in
   filtered mode step 4 then immediately forwards to step 6 (296), and in clean and xbox mode

@@ -17,7 +17,7 @@ The pre-run decision flow that turns a Workflow Request into either a Workflow R
 _Avoid_: main orchestration, config builder, prompt flow
 
 **Workflow Run**:
-A prepared build attempt whose tools, CKPE configuration, logs, and executable workflow plan have been resolved and validated for the currently runnable steps.
+A prepared build attempt whose tools, CKPE configuration, logs, and executable workflow plan have been resolved and validated for the currently runnable steps. At most one runs against a Fallout 4 installation at a time (ADR-0005), so anything a run finds left in the installation comes from a run that has ended.
 _Avoid_: Session, context, engine run
 
 **Workflow Toolchain**:
