@@ -27,7 +27,10 @@ use crate::error::Result;
 // `write`, `append` and `temp_dir`, `DllGuard` renames through `rename`, `exists`, `is_file`
 // and `remove_file`, and seed-plugin setup uses `copy`. The `dead_code` allow that once
 // covered the unadopted half of the trait is gone with them; if one of these goes quiet again,
-// delete it rather than re-adding the allow.
+// delete it rather than re-adding the allow. The exception is the directory operations
+// (`create_dir_all`, `is_dir`, `child_dirs` and `move_dir`), added ahead of the Archive
+// episode that will be their first caller: each carries a test-only `dead_code` allow until
+// that episode lands and removes it.
 pub(crate) trait FileSpace: std::fmt::Debug {
     /// Whether `path` names an existing file (not a directory).
     fn is_file(&self, path: &Path) -> bool;
@@ -47,8 +50,9 @@ pub(crate) trait FileSpace: std::fmt::Debug {
 
     /// Remove a directory and everything beneath it, idempotently.
     ///
-    /// A missing directory is success, so callers need no separate existence check.
-    /// Returns [`crate::error::Error::Io`] for any other removal failure.
+    /// A missing directory is success, so callers need no separate existence check. Otherwise
+    /// it succeeds only when the directory is gone afterwards. Returns
+    /// [`crate::error::Error::Io`], naming the directory, in every other case.
     fn remove_dir_all(&self, directory: &Path) -> Result<()>;
 
     /// Read a file's contents tolerantly, replacing non-UTF-8 bytes rather than failing.
@@ -77,6 +81,58 @@ pub(crate) trait FileSpace: std::fmt::Debug {
     /// narrowing it to `is_file` would turn a deliberate skip into an attempted rename that
     /// cannot succeed.
     fn exists(&self, path: &Path) -> bool;
+
+    /// Create `path` and any missing parent directories.
+    ///
+    /// An existing directory is success. Returns [`crate::error::Error::Io`] when a directory
+    /// cannot be created, including when a file already sits at `path`.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "the Archive episode (ArchiveOps) that creates its work folder is not ported yet"
+        )
+    )]
+    fn create_dir_all(&self, path: &Path) -> Result<()>;
+
+    /// Whether `path` names an existing directory (not a file).
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "the Archive episode (ArchiveOps) that inspects its work folders is not ported yet"
+        )
+    )]
+    fn is_dir(&self, path: &Path) -> bool;
+
+    /// The immediate subdirectories of `directory`, in no particular order.
+    ///
+    /// Files and deeper descendants are not listed. A missing or unreadable `directory`
+    /// yields an empty list, as in [`FileSpace::find_first_file_with_extension`]: "cannot
+    /// look" answers the caller's question the same way "nothing there" does.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "the Archive episode (ArchiveOps) whose run-start restore lists ArchiveWork folders is not ported yet"
+        )
+    )]
+    fn child_dirs(&self, directory: &Path) -> Vec<PathBuf>;
+
+    /// Move the directory `from`, with everything beneath it, to `to`.
+    ///
+    /// `from` must exist and `to` must not. As with [`FileSpace::rename`], the parent of `to`
+    /// is **not** created: a missing parent is an error. Returns [`crate::error::Error::Io`]
+    /// in each of those cases. This is a separate operation rather than a wider `rename`,
+    /// because `rename` replaces an existing destination, which is a file contract.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "the Archive episode (ArchiveOps) that stages loose folders in its work folder is not ported yet"
+        )
+    )]
+    fn move_dir(&self, from: &Path, to: &Path) -> Result<()>;
 
     /// Write `contents` to `path`, replacing any existing file rather than appending.
     ///
@@ -116,12 +172,33 @@ impl FileSpace for SystemFileSpace {
     }
 
     fn remove_dir_all(&self, directory: &Path) -> Result<()> {
-        match std::fs::remove_dir_all(directory) {
-            Ok(()) => Ok(()),
-            // A directory that is already gone is the state the caller asked for.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.into()),
+        // A directory that is already gone is the state the caller asked for.
+        if is_gone(directory) {
+            return Ok(());
         }
+
+        // Required workaround, not a reinvented `std::fs::remove_dir_all`: under MO2's usvfs
+        // that call fails with os error 2 on any folder with a subfolder, because it opens
+        // children relative to the parent's handle and usvfs reroutes only full-path calls.
+        // See docs/workarounds.md § "Full-path directory removal under MO2". Do not simplify
+        // this back.
+        let walked = remove_tree_by_full_paths(directory);
+
+        // The walk's own result is not trusted either way: the probe saw usvfs report a tree
+        // as missing while it was still enumerable. Only the folder's absence counts.
+        if is_gone(directory) {
+            return Ok(());
+        }
+
+        let reason = match walked {
+            Ok(()) => "it is still present after removal".to_owned(),
+            Err(error) => error.to_string(),
+        };
+        Err(std::io::Error::other(format!(
+            "could not remove directory {}: {reason}",
+            directory.display()
+        ))
+        .into())
     }
 
     fn read_lossy(&self, path: &Path) -> Result<String> {
@@ -145,6 +222,46 @@ impl FileSpace for SystemFileSpace {
 
     fn exists(&self, path: &Path) -> bool {
         path.exists()
+    }
+
+    fn create_dir_all(&self, path: &Path) -> Result<()> {
+        std::fs::create_dir_all(path)?;
+        Ok(())
+    }
+
+    fn is_dir(&self, path: &Path) -> bool {
+        path.is_dir()
+    }
+
+    fn child_dirs(&self, directory: &Path) -> Vec<PathBuf> {
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            return Vec::new();
+        };
+
+        entries
+            .flatten()
+            // `DirEntry::file_type` does not follow links, so a junction is not listed as a
+            // folder the caller might go on to move or remove.
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .map(|entry| entry.path())
+            .collect()
+    }
+
+    fn move_dir(&self, from: &Path, to: &Path) -> Result<()> {
+        // `std::fs::rename` replaces an existing *empty* directory on some platforms, so the
+        // "`to` must be absent" half of the contract is checked here rather than left to it.
+        if to.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("cannot move a directory onto {}: it exists", to.display()),
+            )
+            .into());
+        }
+
+        // The Archive probe (#44) moved `Data\meshes\precombined` and `Data\vis`, physically in
+        // MO2's `overwrite`, into the work folder and back with exactly this call.
+        std::fs::rename(from, to)?;
+        Ok(())
     }
 
     fn write(&self, path: &Path, contents: &str) -> Result<()> {
@@ -185,6 +302,40 @@ fn create_parent_directories(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Whether `directory` is really gone: nothing exists there **and** it cannot be listed.
+///
+/// Both halves are asked because the Archive probe (#44) saw them disagree under MO2's
+/// usvfs, with a tree reported missing while it was still enumerable.
+fn is_gone(directory: &Path) -> bool {
+    !directory.exists() && std::fs::read_dir(directory).is_err()
+}
+
+/// Remove `directory` and everything beneath it, deepest first, using only full-path calls.
+///
+/// Each file goes through `std::fs::remove_file` and each folder through
+/// `std::fs::remove_dir` (`DeleteFileW` and `RemoveDirectoryW` on Windows), which is what
+/// `RD /S` does and what usvfs reroutes. Stops at the first failure; the caller decides the
+/// outcome by checking whether the folder is gone, not by this result alone.
+fn remove_tree_by_full_paths(directory: &Path) -> std::io::Result<()> {
+    // Listed in full before anything is removed, so removal never races the enumeration.
+    let entries = std::fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
+    for entry in entries {
+        let path = entry.path();
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            remove_tree_by_full_paths(&path)?;
+        } else if kind.is_symlink() {
+            // `file_type` does not follow links, so a junction or directory symlink is never
+            // descended into. Windows removes those with `remove_dir`, leaving the target alone.
+            std::fs::remove_file(&path).or_else(|_| std::fs::remove_dir(&path))?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
+
+    std::fs::remove_dir(directory)
+}
+
 /// Depth-first search for the first file matching `extension` beneath `directory`.
 ///
 /// An unreadable directory yields `None` rather than an error: the callers ask an
@@ -223,7 +374,9 @@ mod in_memory {
     ///
     /// Deliberately simple. Directory-versus-file discrimination and recursive descent are
     /// verified against [`super::SystemFileSpace`], where they actually live, so this
-    /// adapter only needs to answer path questions the rules ask.
+    /// adapter only needs to answer path questions the rules ask. `is_dir` and `child_dirs`
+    /// are answered by prefix, from the recorded files beneath a path, so an empty directory
+    /// cannot be represented.
     ///
     /// Interior mutability mirrors the real thing: the space is mutated between the
     /// observations a Workflow Operation makes.
@@ -385,6 +538,78 @@ mod in_memory {
             self.is_file(path)
         }
 
+        fn create_dir_all(&self, _path: &Path) -> Result<()> {
+            // An empty directory cannot be represented in the flat map, so creation is vacuous
+            // here, as parent creation is in `write`. It is pinned on `SystemFileSpace`.
+            Ok(())
+        }
+
+        /// True when any recorded file lies strictly beneath `path`: a derived prefix answer,
+        /// not directory modelling, so [`InMemoryFileSpace::exists`] is left as it is.
+        fn is_dir(&self, path: &Path) -> bool {
+            self.files
+                .borrow()
+                .keys()
+                .any(|file| lies_strictly_beneath(file, path))
+        }
+
+        /// The distinct first components beneath `directory` of recorded files at least two
+        /// levels below it, joined back onto `directory`. Answered by prefix, like `is_dir`.
+        fn child_dirs(&self, directory: &Path) -> Vec<PathBuf> {
+            let children: BTreeSet<PathBuf> = self
+                .files
+                .borrow()
+                .keys()
+                .filter_map(|file| {
+                    let mut beneath = file.strip_prefix(directory).ok()?.components();
+                    let first = beneath.next()?;
+                    // A file directly in `directory` names no subdirectory.
+                    beneath.next()?;
+                    Some(directory.join(first))
+                })
+                .collect();
+
+            children.into_iter().collect()
+        }
+
+        /// Moves every file beneath `from` to the same relative path beneath `to`.
+        ///
+        /// Fails with `NotFound` when nothing lies beneath `from`, and with `AlreadyExists`
+        /// when anything lies at or beneath `to`. The trait's missing-parent error is vacuous
+        /// here, exactly as `rename`'s is, and is pinned on `SystemFileSpace`.
+        fn move_dir(&self, from: &Path, to: &Path) -> Result<()> {
+            let mut files = self.files.borrow_mut();
+            let moving: Vec<PathBuf> = files
+                .keys()
+                .filter(|file| lies_strictly_beneath(file, from))
+                .cloned()
+                .collect();
+            if moving.is_empty() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("no such directory in space: {}", from.display()),
+                )
+                .into());
+            }
+            if files.keys().any(|file| file.starts_with(to)) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!("destination occupied in space: {}", to.display()),
+                )
+                .into());
+            }
+
+            for file in moving {
+                let contents = files.remove(&file).flatten();
+                let relative = file
+                    .strip_prefix(from)
+                    .expect("every moving path was selected by `starts_with(from)`");
+                files.insert(to.join(relative), contents);
+            }
+
+            Ok(())
+        }
+
         fn write(&self, path: &Path, contents: &str) -> Result<()> {
             // Parent creation is meaningless in a flat map, so the "creates parents" half of
             // the contract is vacuously satisfied here and pinned on `SystemFileSpace`.
@@ -420,6 +645,13 @@ mod in_memory {
         fn temp_dir(&self) -> PathBuf {
             PathBuf::from(IN_MEMORY_TEMP_ROOT)
         }
+    }
+
+    /// Whether the recorded `file` lies strictly beneath `directory`, component-wise.
+    ///
+    /// `file == directory` is excluded: a recorded file is never its own directory.
+    fn lies_strictly_beneath(file: &Path, directory: &Path) -> bool {
+        file != directory && file.starts_with(directory)
     }
 
     /// The synthetic temporary root handed out by [`InMemoryFileSpace::temp_dir`].
@@ -854,5 +1086,283 @@ mod tests {
         space.remove_dir_all(&tree).unwrap();
         assert!(!tree.exists());
         space.remove_dir_all(&tree).unwrap();
+    }
+
+    /// A tree with siblings at several depths and an empty folder: the shape that
+    /// `std::fs::remove_dir_all` fails on under MO2, which the walk exists to handle.
+    #[test]
+    fn system_space_remove_dir_all_walks_a_nested_tree_away() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let work = dir.path().join("ArchiveWork");
+        let staging = work.join("staging");
+        fs::create_dir_all(staging.join("meshes").join("precombined")).unwrap();
+        fs::create_dir_all(staging.join("vis")).unwrap();
+        fs::create_dir_all(work.join("empty")).unwrap();
+        fs::write(
+            staging.join("meshes").join("precombined").join("a.nif"),
+            b"nif",
+        )
+        .unwrap();
+        fs::write(staging.join("vis").join("cell.uvd"), b"uvd").unwrap();
+        fs::write(work.join("restore.txt"), b"source\n").unwrap();
+
+        space.remove_dir_all(&work).unwrap();
+
+        assert!(!work.exists());
+        assert!(fs::read_dir(&work).is_err());
+        assert!(dir.path().is_dir());
+    }
+
+    /// Pointed at a file, the walk cannot list it, the path is still there afterwards, and so
+    /// the call fails, naming the path, rather than reporting a removal that did not happen.
+    #[test]
+    fn system_space_remove_dir_all_of_a_file_errors_and_leaves_it() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let file = dir.path().join("Plugin - Main.ba2");
+        fs::write(&file, b"ba2").unwrap();
+
+        let error = space.remove_dir_all(&file).unwrap_err();
+
+        assert!(matches!(error, crate::error::Error::Io(_)));
+        assert!(error.to_string().contains("Plugin - Main.ba2"));
+        assert!(file.is_file());
+    }
+
+    #[test]
+    fn system_space_create_dir_all_creates_a_nested_path_and_tolerates_an_existing_one() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let nested = dir
+            .path()
+            .join("ArchiveWork")
+            .join("staging")
+            .join("meshes");
+
+        space.create_dir_all(&nested).unwrap();
+        assert!(nested.is_dir());
+
+        space.create_dir_all(&nested).unwrap();
+        assert!(nested.is_dir());
+    }
+
+    #[test]
+    fn system_space_is_dir_is_true_only_for_a_directory() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let empty = dir.path().join("ArchiveWork");
+        let file = dir.path().join("restore.txt");
+        fs::create_dir_all(&empty).unwrap();
+        fs::write(&file, b"source\n").unwrap();
+
+        // An empty folder is a directory; the in-memory adapter cannot say so, so it is
+        // pinned here.
+        assert!(space.is_dir(&empty));
+        assert!(!space.is_dir(&file));
+        assert!(!space.is_dir(&dir.path().join("absent")));
+    }
+
+    #[test]
+    fn system_space_child_dirs_lists_immediate_subdirectories_only() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let work = dir.path().join("ArchiveWork");
+        let numbered = dir.path().join("ArchiveWork.3");
+        fs::create_dir_all(work.join("staging")).unwrap();
+        fs::create_dir_all(&numbered).unwrap();
+        fs::write(dir.path().join("Fallout4.exe"), b"exe").unwrap();
+
+        let mut children = space.child_dirs(dir.path());
+        children.sort();
+
+        assert_eq!(children, vec![work, numbered]);
+    }
+
+    #[test]
+    fn system_space_child_dirs_of_a_missing_directory_is_empty() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+
+        assert_eq!(
+            space.child_dirs(&dir.path().join("absent")),
+            Vec::<PathBuf>::new()
+        );
+    }
+
+    #[test]
+    fn system_space_move_dir_moves_a_nested_tree_with_bytes_intact() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let from = dir.path().join("Data").join("meshes").join("precombined");
+        let to = dir.path().join("ArchiveWork").join("precombined");
+        let mesh_bytes = [0x00, 0xFF, b'N', b'I', b'F'];
+        fs::create_dir_all(from.join("cell")).unwrap();
+        fs::write(from.join("cell").join("a.nif"), mesh_bytes).unwrap();
+        fs::write(from.join("b.nif"), b"b").unwrap();
+        fs::create_dir_all(to.parent().unwrap()).unwrap();
+
+        space.move_dir(&from, &to).unwrap();
+
+        assert!(!from.exists());
+        assert_eq!(fs::read(to.join("cell").join("a.nif")).unwrap(), mesh_bytes);
+        assert_eq!(fs::read(to.join("b.nif")).unwrap(), b"b");
+    }
+
+    #[test]
+    fn system_space_move_dir_fails_when_the_destination_exists() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let from = dir.path().join("vis");
+        let to = dir.path().join("ArchiveWork").join("vis");
+        fs::create_dir_all(&from).unwrap();
+        fs::write(from.join("cell.uvd"), b"new").unwrap();
+        fs::create_dir_all(&to).unwrap();
+        fs::write(to.join("cell.uvd"), b"old").unwrap();
+
+        assert!(matches!(
+            space.move_dir(&from, &to).unwrap_err(),
+            crate::error::Error::Io(error) if error.kind() == std::io::ErrorKind::AlreadyExists
+        ));
+        assert_eq!(fs::read(from.join("cell.uvd")).unwrap(), b"new");
+        assert_eq!(fs::read(to.join("cell.uvd")).unwrap(), b"old");
+    }
+
+    #[test]
+    fn system_space_move_dir_fails_when_the_source_is_missing() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let to = dir.path().join("moved");
+
+        assert!(matches!(
+            space.move_dir(&dir.path().join("absent"), &to).unwrap_err(),
+            crate::error::Error::Io(error) if error.kind() == std::io::ErrorKind::NotFound
+        ));
+        assert!(!to.exists());
+    }
+
+    #[test]
+    fn system_space_move_dir_does_not_create_the_destination_parent() {
+        let dir = tempdir().unwrap();
+        let space = SystemFileSpace;
+        let from = dir.path().join("vis");
+        fs::create_dir_all(&from).unwrap();
+        fs::write(from.join("cell.uvd"), b"uvd").unwrap();
+        let to = dir.path().join("absent").join("vis");
+
+        assert!(space.move_dir(&from, &to).is_err());
+        assert!(from.join("cell.uvd").is_file());
+        assert!(!to.parent().unwrap().exists());
+    }
+
+    #[test]
+    fn in_memory_space_is_dir_is_answered_by_a_file_beneath_the_path() {
+        let space = InMemoryFileSpace::new();
+        let work = PathBuf::from("Fallout4").join("ArchiveWork");
+        let mesh = work.join("staging").join("meshes").join("a.nif");
+        space.add_file(&mesh);
+
+        assert!(space.is_dir(&work));
+        assert!(space.is_dir(&work.join("staging")));
+        // The file itself is not a directory, and neither is an unrelated path.
+        assert!(!space.is_dir(&mesh));
+        assert!(!space.is_dir(&PathBuf::from("Fallout4").join("Data")));
+    }
+
+    /// `create_dir_all` succeeds and records nothing: an empty directory cannot be represented
+    /// in the flat map, so `is_dir` stays false until a file lies beneath it.
+    #[test]
+    fn in_memory_space_create_dir_all_is_vacuous() {
+        let space = InMemoryFileSpace::new();
+        let work = PathBuf::from("Fallout4").join("ArchiveWork");
+
+        space.create_dir_all(&work).unwrap();
+
+        assert!(!space.is_dir(&work));
+    }
+
+    #[test]
+    fn in_memory_space_child_dirs_derives_immediate_subdirectories_from_nested_files() {
+        let space = InMemoryFileSpace::new();
+        let fo4 = PathBuf::from("Fallout4");
+        space.add_file(fo4.join("Fallout4.exe"));
+        space.add_file(fo4.join("ArchiveWork").join("restore.txt"));
+        space.add_file(fo4.join("ArchiveWork").join("staging").join("a.nif"));
+        space.add_file(fo4.join("ArchiveWork.3").join("Plugin - Main.ba2"));
+
+        let mut children = space.child_dirs(&fo4);
+        children.sort();
+
+        assert_eq!(
+            children,
+            vec![fo4.join("ArchiveWork"), fo4.join("ArchiveWork.3")]
+        );
+        assert_eq!(space.child_dirs(&fo4.join("absent")), Vec::<PathBuf>::new());
+    }
+
+    #[test]
+    fn in_memory_space_move_dir_moves_every_file_beneath_the_source() {
+        let space = InMemoryFileSpace::new();
+        let from = PathBuf::from("Data").join("meshes").join("precombined");
+        let to = PathBuf::from("ArchiveWork").join("precombined");
+        let mesh_bytes = vec![0x00, 0xFF, b'N', b'I', b'F'];
+        space.add_file_with_bytes(from.join("cell").join("a.nif"), mesh_bytes.clone());
+        space.add_file(from.join("b.nif"));
+        let sibling = PathBuf::from("Data").join("meshes").join("other.nif");
+        space.add_file(&sibling);
+
+        space.move_dir(&from, &to).unwrap();
+
+        assert!(!space.is_dir(&from));
+        assert_eq!(
+            space.contents(&to.join("cell").join("a.nif")),
+            Some(mesh_bytes)
+        );
+        assert!(space.is_file(&to.join("b.nif")));
+        assert!(space.is_file(&sibling));
+    }
+
+    #[test]
+    fn in_memory_space_move_dir_fails_when_the_destination_exists() {
+        let space = InMemoryFileSpace::new();
+        let from = PathBuf::from("vis");
+        let to = PathBuf::from("ArchiveWork").join("vis");
+        space.add_file_with_contents(from.join("cell.uvd"), "new");
+        space.add_file_with_contents(to.join("cell.uvd"), "old");
+
+        assert!(matches!(
+            space.move_dir(&from, &to).unwrap_err(),
+            crate::error::Error::Io(error) if error.kind() == std::io::ErrorKind::AlreadyExists
+        ));
+        assert_eq!(space.read_lossy(&from.join("cell.uvd")).unwrap(), "new");
+        assert_eq!(space.read_lossy(&to.join("cell.uvd")).unwrap(), "old");
+    }
+
+    /// A *file* at `to` occupies it as surely as a directory does.
+    #[test]
+    fn in_memory_space_move_dir_fails_when_a_file_sits_at_the_destination() {
+        let space = InMemoryFileSpace::new();
+        let from = PathBuf::from("vis");
+        let to = PathBuf::from("ArchiveWork");
+        space.add_file(from.join("cell.uvd"));
+        space.add_file(&to);
+
+        assert!(matches!(
+            space.move_dir(&from, &to).unwrap_err(),
+            crate::error::Error::Io(error) if error.kind() == std::io::ErrorKind::AlreadyExists
+        ));
+        assert!(space.is_file(&from.join("cell.uvd")));
+    }
+
+    #[test]
+    fn in_memory_space_move_dir_fails_when_the_source_is_missing() {
+        let space = InMemoryFileSpace::new();
+        let to = PathBuf::from("moved");
+
+        assert!(matches!(
+            space.move_dir(Path::new("absent"), &to).unwrap_err(),
+            crate::error::Error::Io(error) if error.kind() == std::io::ErrorKind::NotFound
+        ));
+        assert!(!space.is_dir(&to));
     }
 }
