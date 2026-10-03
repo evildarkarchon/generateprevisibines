@@ -6,6 +6,7 @@ use std::process::ExitCode;
 use generateprevisibines::{
     cli::Cli,
     discovery,
+    installation_lock::InstallationLock,
     intake::{WorkflowIntakeOutcome, WorkflowRequestIntake},
     run::RunDiagnostic,
     toolchain::{ToolchainDiagnostic, WorkflowToolchainProbe},
@@ -30,8 +31,8 @@ fn main() -> ExitCode {
 
 /// How `run` stopped, which decides whether `main` still has an error to print.
 enum Stop {
-    /// An error raised before a Workflow Run existed: toolchain discovery, intake, or
-    /// preparation. There is no session log yet, so it gets `ERROR - …` and no `See Log at`.
+    /// An error raised before a Workflow Run existed: toolchain discovery, the installation
+    /// lock, intake, or preparation. There is no session log yet, so it gets `ERROR - …` and no `See Log at`.
     BeforeRun(generateprevisibines::Error),
     /// The Workflow Run stopped and reported it, `See Log at` included.
     Reported,
@@ -65,6 +66,10 @@ fn run() -> Result<(), Stop> {
     }
 
     let probe = WorkflowToolchainProbe::discover(&exe_dir, cli.fo4_dir.clone())?;
+    // Taken before intake, which can already copy xPrevisPatch.esp into Data. Bound to a named
+    // local, not `_`, because `let _ = …` drops the lock at once; it must live until `run`
+    // returns so no second run touches this installation meanwhile (ADR-0005).
+    let _installation_lock = InstallationLock::acquire(probe.fallout4_dir())?;
     let workflow_run = match WorkflowRequestIntake::production().resolve(&cli, &exe_dir, &probe)? {
         WorkflowIntakeOutcome::Ready(run) => run,
         WorkflowIntakeOutcome::Exited => return Ok(()),
