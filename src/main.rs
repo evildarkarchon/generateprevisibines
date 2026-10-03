@@ -98,11 +98,7 @@ fn run_dry_run(cli: &Cli) {
         let runnable_summary = if runnable.is_empty() {
             "no planned steps".to_string()
         } else {
-            runnable
-                .iter()
-                .map(|step| format!("Step {}", step.number()))
-                .collect::<Vec<_>>()
-                .join(", ")
+            workflow::describe_steps(&runnable)
         };
         println!(
             "\nNote: current production capability ({runnable_summary}) would execute {} of {} planned steps.",
@@ -132,10 +128,13 @@ fn emit_run_diagnostics(diagnostics: &[RunDiagnostic]) {
             RunDiagnostic::Toolchain(toolchain) => {
                 emit_toolchain_diagnostic(toolchain);
             }
-            RunDiagnostic::LaterStepsNotImplemented { skipped, .. } => {
+            RunDiagnostic::LaterStepsNotImplemented {
+                skipped, runnable, ..
+            } => {
                 tracing::warn!(
                     skipped,
-                    "Later workflow steps are not implemented yet; running Step 1 only."
+                    "Later workflow steps are not implemented yet; running {} only.",
+                    workflow::describe_steps(runnable)
                 );
             }
         }

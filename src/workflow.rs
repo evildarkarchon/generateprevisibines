@@ -82,6 +82,19 @@ impl WorkflowPlan {
     }
 }
 
+/// Name a list of Workflow Steps for the console: `Step 4`, `Steps 4 and 5`, `Steps 1, 2 and 3`.
+///
+/// Steps are named in the order given; an empty list reads as `no steps`.
+#[must_use]
+pub fn describe_steps(steps: &[WorkflowStep]) -> String {
+    let numbers: Vec<String> = steps.iter().map(|step| step.number().to_string()).collect();
+    match numbers.as_slice() {
+        [] => "no steps".to_string(),
+        [only] => format!("Step {only}"),
+        [leading @ .., last] => format!("Steps {} and {last}", leading.join(", ")),
+    }
+}
+
 /// Print the resume menu labels (batch `:GetStep`).
 pub fn print_resume_menu(build_mode: BuildMode) {
     println!();
@@ -149,6 +162,32 @@ mod tests {
                 WorkflowStep::AddPrevisToArchive,
             ]
         );
+    }
+
+    #[test]
+    fn a_step_list_names_one_step_in_the_singular() {
+        assert_eq!(describe_steps(&[WorkflowStep::CompressPsg]), "Step 4");
+    }
+
+    #[test]
+    fn a_step_list_names_several_steps_in_order() {
+        assert_eq!(
+            describe_steps(&[WorkflowStep::CompressPsg, WorkflowStep::BuildCdx]),
+            "Steps 4 and 5"
+        );
+        assert_eq!(
+            describe_steps(&[
+                WorkflowStep::GeneratePrecombines,
+                WorkflowStep::MergePrecombineObjects,
+                WorkflowStep::CreateBa2FromPrecombines,
+            ]),
+            "Steps 1, 2 and 3"
+        );
+    }
+
+    #[test]
+    fn an_empty_step_list_says_so() {
+        assert_eq!(describe_steps(&[]), "no steps");
     }
 
     #[test]

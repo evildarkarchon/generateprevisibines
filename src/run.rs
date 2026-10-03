@@ -71,7 +71,15 @@ impl WorkflowRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunDiagnostic {
     Toolchain(ToolchainDiagnostic),
-    LaterStepsNotImplemented { skipped: usize, planned: usize },
+    /// The plan has steps with no registered Workflow Operation yet, so the run stops short.
+    ///
+    /// Carries the `runnable` steps the run will execute, because since Step 4 was registered
+    /// a resume can run something other than Step 1, and the message has to say which.
+    LaterStepsNotImplemented {
+        skipped: usize,
+        planned: usize,
+        runnable: Vec<WorkflowStep>,
+    },
 }
 
 /// A Workflow Run that stopped, already reported on the console and in the session log.
@@ -146,6 +154,7 @@ impl WorkflowRun {
             diagnostics.push(RunDiagnostic::LaterStepsNotImplemented {
                 skipped: plan.skipped_unrunnable_count(),
                 planned: plan.planned_steps().len(),
+                runnable: plan.runnable_steps().to_vec(),
             });
         }
 
@@ -422,6 +431,7 @@ mod tests {
                 .contains(&RunDiagnostic::LaterStepsNotImplemented {
                     skipped: 7,
                     planned: 8,
+                    runnable: vec![WorkflowStep::GeneratePrecombines],
                 })
         );
         assert_eq!(
@@ -656,11 +666,44 @@ mod tests {
 
             assert!(
                 run.diagnostics()
-                    .contains(&RunDiagnostic::LaterStepsNotImplemented { skipped, planned }),
+                    .contains(&RunDiagnostic::LaterStepsNotImplemented {
+                        skipped,
+                        planned,
+                        runnable: vec![WorkflowStep::GeneratePrecombines],
+                    }),
                 "build mode: {build_mode:?}, diagnostics: {:?}",
                 run.diagnostics()
             );
         }
+    }
+
+    /// A Clean resume at 4 runs Step 4 alone, so the diagnostic must say that rather than
+    /// claim Step 1 is what runs.
+    #[test]
+    fn a_resumed_partial_run_names_the_steps_it_will_execute() {
+        let fixture = ready_workflow_fixture();
+        let mut request = fixture.request.clone();
+        request.resume_from = Some(WorkflowStep::CompressPsg);
+
+        let run = WorkflowRun::prepare(
+            &request,
+            fixture.directory.path(),
+            &fixture.probe,
+            &fixture.files,
+        )
+        .unwrap();
+
+        assert_eq!(run.runnable_steps(), &[WorkflowStep::CompressPsg]);
+        assert!(
+            run.diagnostics()
+                .contains(&RunDiagnostic::LaterStepsNotImplemented {
+                    skipped: 4,
+                    planned: 5,
+                    runnable: vec![WorkflowStep::CompressPsg],
+                }),
+            "diagnostics: {:?}",
+            run.diagnostics()
+        );
     }
 
     #[test]
