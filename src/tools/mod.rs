@@ -14,6 +14,7 @@ mod dll;
 // Internal seams: crate-visible so the tests in `src/workflow/` can reach the recording
 // adapters, but never part of what a Workflow Operation is handed.
 pub(crate) mod clock;
+pub(crate) mod desktop;
 pub(crate) mod process;
 pub(crate) mod wait;
 

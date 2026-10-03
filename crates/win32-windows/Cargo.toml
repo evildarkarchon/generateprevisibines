@@ -1,0 +1,26 @@
+[package]
+description = "Thin, policy-free safe wrappers over the Win32 window calls generateprevisibines needs (ADR-0003)"
+edition = "2024"
+license = "GPL-3.0-or-later"
+name = "generateprevisibines-win32-windows"
+publish = false
+version = "0.1.0"
+
+# Windows-only, like every item in the crate: off Windows `src/lib.rs` compiles to nothing, so
+# there is nothing to link against.
+[target.'cfg(windows)'.dependencies.windows]
+features = [
+  "Win32_Foundation",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+]
+version = "0.62"
+
+# `unsafe` is allowed here — holding it is this crate's whole job — but every block must say why
+# it is sound. The rest mirrors the main crate's clippy settings.
+[lints.clippy]
+all = {level = "warn", priority = -1}
+doc_markdown = "allow"
+missing_errors_doc = "allow"
+pedantic = {level = "warn", priority = -1}
+undocumented_unsafe_blocks = "warn"
