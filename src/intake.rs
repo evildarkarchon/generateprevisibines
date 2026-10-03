@@ -721,7 +721,7 @@ mod tests {
         let err = intake.resolve(&cli, directory.path(), &probe).unwrap_err();
 
         assert!(matches!(err, Error::ReservedPluginName { name } if name == "previs"));
-        assert!(files.observed_paths().is_empty());
+        assert_eq!(files.observed_paths(), Vec::<PathBuf>::new());
         assert_eq!(prompts.call_count(), 0);
     }
 
@@ -756,9 +756,9 @@ mod tests {
             prompts.questions(),
             vec![RecordedQuestion::PluginName(BuildMode::Clean)]
         );
-        assert!(files.observed_paths().is_empty());
-        assert!(files.copied_paths().is_empty());
-        assert!(wait.delays().is_empty());
+        assert_eq!(files.observed_paths(), Vec::<PathBuf>::new());
+        assert_eq!(files.copied_paths(), Vec::<(PathBuf, PathBuf)>::new());
+        assert_eq!(wait.delays(), Vec::<u64>::new());
     }
 
     /// The archive guard is intentionally evaluated before target-plugin existence.
@@ -826,8 +826,8 @@ mod tests {
             files.observed_paths(),
             vec![archive_path, data_dir.join("MyMod.esp")]
         );
-        assert!(files.copied_paths().is_empty());
-        assert!(wait.delays().is_empty());
+        assert_eq!(files.copied_paths(), Vec::<(PathBuf, PathBuf)>::new());
+        assert_eq!(wait.delays(), Vec::<u64>::new());
         assert_eq!(
             prompts.questions(),
             vec![RecordedQuestion::PluginName(BuildMode::Clean)]
@@ -1020,7 +1020,7 @@ mod tests {
             prompts.questions(),
             vec![RecordedQuestion::PluginName(BuildMode::Clean)]
         );
-        assert!(files.observed_paths().is_empty());
+        assert_eq!(files.observed_paths(), Vec::<PathBuf>::new());
         assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
     }
 
@@ -1098,8 +1098,8 @@ mod tests {
                 RecordedQuestion::SeedCopy("MyMod.esp".into()),
             ]
         );
-        assert!(files.copied_paths().is_empty());
-        assert!(wait.delays().is_empty());
+        assert_eq!(files.copied_paths(), Vec::<(PathBuf, PathBuf)>::new());
+        assert_eq!(wait.delays(), Vec::<u64>::new());
         assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
     }
 
@@ -1212,7 +1212,7 @@ mod tests {
                 RecordedQuestion::SeedCopy("MyMod.esp".into()),
             ]
         );
-        assert!(wait.delays().is_empty());
+        assert_eq!(wait.delays(), Vec::<u64>::new());
         assert!(files.contains_file(run.log_path()));
     }
 
@@ -1250,7 +1250,7 @@ mod tests {
         assert!(matches!(err, Error::Other(message) if message
                 == format!("CreationKit.exe not found in {}", data_dir.parent().unwrap().display())));
         assert_eq!(files.bytes(&plugin_path), Some(vec![0x00, 0xFF, 0x80]));
-        assert!(wait.delays().is_empty());
+        assert_eq!(wait.delays(), Vec::<u64>::new());
         assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
     }
 
@@ -1298,7 +1298,7 @@ mod tests {
         assert!(matches!(err, Error::Io(error) if error.to_string()
                 == "recorded session log write failure"));
         assert_eq!(files.bytes(&plugin_path), Some(vec![0x00, 0xFF, 0x80]));
-        assert!(wait.delays().is_empty());
+        assert_eq!(wait.delays(), Vec::<u64>::new());
         assert!(!files.contains_file(&files.temp_dir().join("MyMod.log")));
     }
 
@@ -1453,7 +1453,7 @@ mod tests {
         assert!(
             matches!(err, Error::Io(error) if error.to_string() == "recorded seed copy failure")
         );
-        assert!(wait.delays().is_empty());
+        assert_eq!(wait.delays(), Vec::<u64>::new());
         assert_eq!(
             *events.borrow(),
             vec![
