@@ -13,6 +13,15 @@ pub enum Error {
     #[error("plugin name cannot contain spaces in clean build mode")]
     PluginNameContainsSpaces,
 
+    // A divergence: the batch accepts any length. The PJM merge scripts cut `-mod:` at 60
+    // characters, so a longer name sends FO4Edit looking for the wrong plugin, and the run fails
+    // at Step 2 with the misleading "missing files, Probably due to MO2" fatal after Step 1's
+    // hour in Creation Kit. `name` is the file name, extension included, as it was counted.
+    #[error(
+        "plugin file name {name} is longer than 60 characters, which the FO4Edit merge scripts cannot read"
+    )]
+    PluginNameTooLong { name: String },
+
     #[error("CKPE configuration error: {0}")]
     CkpeConfig(String),
 
@@ -80,6 +89,12 @@ pub enum Error {
 
     #[error("no precombined .nif meshes were generated under meshes\\precombined")]
     NoPrecombinedMeshes,
+
+    // The batch's own wording (`GeneratePrevisibines.bat:281`), from Step 2's entry check. Kept
+    // apart from `NoPrecombinedMeshes`, which is Step 1's postcondition ("were generated"): a
+    // resume at 2 has generated nothing, it has only found nothing to merge.
+    #[error("No Precombined meshes found")]
+    NoPrecombinedMeshesFound,
 
     #[error("workflow step {0} is not implemented yet")]
     StepNotImplemented(u8),
@@ -185,6 +200,15 @@ mod tests {
         assert_eq!(
             Error::Fo4EditScriptFailed { script }.to_string(),
             "FO4Edit script Batch_FO4MergePrevisandCleanRefr.pas failed"
+        );
+    }
+
+    /// Batch line 281, minus the `ERROR - ` prefix.
+    #[test]
+    fn no_precombined_meshes_at_step_two_reads_as_the_batch_wording() {
+        assert_eq!(
+            Error::NoPrecombinedMeshesFound.to_string(),
+            "No Precombined meshes found"
         );
     }
 

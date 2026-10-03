@@ -478,6 +478,32 @@ fn validate_xedit_scripts(exe_dir: &Path, fo4edit: &Path) -> Result<()> {
     validation::validate_required_xedit_scripts(&scripts_dir)
 }
 
+/// Write an FO4Edit install into `dir` that FO4Edit readiness accepts, and return its exe.
+///
+/// `FO4Edit.exe` beside an `Edit Scripts` folder holding both merge scripts at their required
+/// versions. Crate-visible for every test module that prepares a Workflow Run whose runnable
+/// steps include a merge step — since Step 2 was registered, that is any fresh Clean run —
+/// because readiness is probed on the real disk, not through a seam.
+#[cfg(test)]
+pub(crate) fn write_fo4edit_install(dir: &Path) -> PathBuf {
+    std::fs::create_dir_all(dir).unwrap();
+    let fo4edit = dir.join("FO4Edit.exe");
+    std::fs::write(&fo4edit, b"").unwrap();
+    let scripts = dir.join("Edit Scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("Batch_FO4MergeCombinedObjectsAndCheck.pas"),
+        "{ V1.5 }",
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("Batch_FO4MergePrevisandCleanRefr.pas"),
+        "{ V2.3 }",
+    )
+    .unwrap();
+    fo4edit
+}
+
 fn required_archive_tool(tools: &ToolPaths, archive_tool: ArchiveTool) -> Result<PathBuf> {
     match archive_tool {
         ArchiveTool::Archive2 => tools.archive2.clone().ok_or_else(|| {
@@ -658,26 +684,6 @@ mod tests {
         )));
     }
 
-    /// An `exe_dir` holding FO4Edit and both merge scripts at their required versions, as
-    /// discovery and script validation expect to find them.
-    fn fo4edit_install(exe_dir: &Path) -> PathBuf {
-        let fo4edit = exe_dir.join("FO4Edit.exe");
-        fs::write(&fo4edit, b"").unwrap();
-        let scripts = exe_dir.join("Edit Scripts");
-        fs::create_dir_all(&scripts).unwrap();
-        fs::write(
-            scripts.join("Batch_FO4MergeCombinedObjectsAndCheck.pas"),
-            "{ V1.5 }",
-        )
-        .unwrap();
-        fs::write(
-            scripts.join("Batch_FO4MergePrevisandCleanRefr.pas"),
-            "{ V2.3 }",
-        )
-        .unwrap();
-        fo4edit
-    }
-
     #[test]
     fn the_fo4edit_requirement_asks_for_fo4edit_alone() {
         let requirements = ToolchainRequirements::fo4edit();
@@ -692,7 +698,7 @@ mod tests {
     #[test]
     fn a_fallout4_override_points_fo4edit_at_its_data_directory() {
         let dir = tempdir().unwrap();
-        let fo4edit = fo4edit_install(dir.path());
+        let fo4edit = write_fo4edit_install(dir.path());
         let fo4 = dir.path().join("Fallout4");
         fs::create_dir_all(&fo4).unwrap();
         let probe = WorkflowToolchainProbe::discover(dir.path(), Some(fo4.clone())).unwrap();
@@ -716,7 +722,7 @@ mod tests {
     #[test]
     fn without_an_override_fo4edit_finds_its_own_data_directory() {
         let dir = tempdir().unwrap();
-        let fo4edit = fo4edit_install(dir.path());
+        let fo4edit = write_fo4edit_install(dir.path());
         let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
             fo4edit: Some(fo4edit),
             fallout4_dir: Some(dir.path().join("Fallout4")),
@@ -742,7 +748,7 @@ mod tests {
     #[test]
     fn fo4edit_paths_need_fo4edit_readiness() {
         let dir = tempdir().unwrap();
-        let fo4edit = fo4edit_install(dir.path());
+        let fo4edit = write_fo4edit_install(dir.path());
         let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
             fo4edit: Some(fo4edit.clone()),
             fallout4_dir: Some(dir.path().join("Fallout4")),

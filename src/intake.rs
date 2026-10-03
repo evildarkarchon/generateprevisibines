@@ -660,6 +660,9 @@ mod tests {
             let cli = Cli::try_parse_from(args.iter().copied()).unwrap();
             let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
                 creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
+                fo4edit: Some(crate::toolchain::write_fo4edit_install(
+                    &directory.path().join("FO4Edit"),
+                )),
                 fallout4_dir: Some(fallout4_dir),
                 ..crate::discovery::ToolPaths::default()
             })
@@ -885,6 +888,9 @@ mod tests {
         let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
             fallout4_dir: Some(fallout4_dir.clone()),
             creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
+            fo4edit: Some(crate::toolchain::write_fo4edit_install(
+                &directory.path().join("FO4Edit"),
+            )),
             ..crate::discovery::ToolPaths::default()
         })
         .unwrap();
@@ -929,6 +935,9 @@ mod tests {
         let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
             fallout4_dir: Some(fallout4_dir.clone()),
             creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
+            fo4edit: Some(crate::toolchain::write_fo4edit_install(
+                &directory.path().join("FO4Edit"),
+            )),
             ..crate::discovery::ToolPaths::default()
         })
         .unwrap();
@@ -1165,6 +1174,9 @@ mod tests {
         let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
             fallout4_dir: Some(fallout4_dir.clone()),
             creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
+            fo4edit: Some(crate::toolchain::write_fo4edit_install(
+                &directory.path().join("FO4Edit"),
+            )),
             ..crate::discovery::ToolPaths::default()
         })
         .unwrap();
@@ -1273,6 +1285,9 @@ mod tests {
         let probe = WorkflowToolchainProbe::from_tool_paths(crate::discovery::ToolPaths {
             fallout4_dir: Some(fallout4_dir.clone()),
             creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
+            fo4edit: Some(crate::toolchain::write_fo4edit_install(
+                &directory.path().join("FO4Edit"),
+            )),
             ..crate::discovery::ToolPaths::default()
         })
         .unwrap();

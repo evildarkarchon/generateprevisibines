@@ -156,14 +156,6 @@ impl Fo4EditOps<'_> {
     ///
     /// Returns the script's log text for the Workflow Operation to judge. Fails with the shared
     /// fatals and episode stops described on [`Self::run`].
-    // No production caller until Step 2 is registered (#59); the tests below drive it.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "Step 2, the first caller of the FO4Edit episode, is not registered yet"
-        )
-    )]
     pub(crate) fn merge_combined_objects(&self, plugin_file: &str) -> Result<String> {
         self.run(XeditScript::MergeCombinedObjects, plugin_file)
     }

@@ -36,11 +36,15 @@ pub(crate) enum BuildWarning {
     /// The Creation Kit log reports `ERROR: visibility task did not complete.` after Step 6
     /// produced `Previs.esp` (batch 319–320): at least one cluster's `.uvd` is missing.
     VisibilityTaskIncomplete,
+    /// The Step 2 merge script's log contains `Error: ` (batch 284–285): the merge finished,
+    /// but the script reported something it could not merge.
+    MergePrecombinesHadErrors,
 }
 
 impl fmt::Display for BuildWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MergePrecombinesHadErrors => f.write_str("Merge Precombines had errors"),
             Self::VisibilityTaskIncomplete => {
                 f.write_str("GeneratePreVisData failed to build at least one Cluster uvd")
             }
@@ -143,6 +147,15 @@ mod tests {
         assert_eq!(
             BuildWarning::VisibilityTaskIncomplete.to_string(),
             "GeneratePreVisData failed to build at least one Cluster uvd"
+        );
+    }
+
+    /// Batch line 285, minus the `WARNING - ` prefix.
+    #[test]
+    fn the_merge_precombines_warning_reads_as_the_batch_wording() {
+        assert_eq!(
+            BuildWarning::MergePrecombinesHadErrors.to_string(),
+            "Merge Precombines had errors"
         );
     }
 

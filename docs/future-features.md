@@ -93,7 +93,10 @@ Manual integration checklist (minimum):
 - [ ] Interactive: seed copy from `Data\xPrevisPatch.esp` (5s MO2 delay if file not visible immediately)
 - [ ] Interactive: existing plugin Y/N/C; **C** shows resume menu; **0** re-prompts plugin name
 - [ ] Interactive: resume step 1 with existing `meshes\precombined\*.nif` prompts to delete folder
-- [ ] Non-interactive: `generateprevisibines.exe MyMod.esp` runs Step 1 only; errors if `--resume-from` names a step with no registered operation (2, 3, 7, 8 today)
+- [ ] Non-interactive: `generateprevisibines.exe MyMod.esp` runs Steps 1 and 2 only; errors if `--resume-from` names a step with no registered operation (3, 7, 8 today)
+- [ ] `--resume-from 2` on an install with no Creation Kit merges `CombinedObjects.esp` through FO4Edit; Module Selection is dismissed without a keypress, and FO4Edit closes on its own afterwards
+- [ ] Step 2 with no `meshes\precombined\*.nif` stops with "No Precombined meshes found", and with no `Data\CombinedObjects.esp` stops before FO4Edit launches
+- [ ] A plugin file name longer than 60 characters is rejected before Step 1
 - [ ] Clean `--resume-from 4` runs Steps 4 to 6 and the diagnostic names all three; Xbox keeps `- Geometry.psg` and skips `CompressPSG`; Filtered `--resume-from 4` plans from Step 6
 - [ ] `--resume-from 5` with no `- Geometry.psg` still runs `BuildCDX` and leaves `{plugin}.cdx`; Filtered `--resume-from 5` plans from Step 6
 - [ ] Interactive `--resume-from 6` with `Data\vis\*.uvd` asks "Previs directory (Data\vis) needs to be empty. Clean it?"; **N** stops; a non-interactive resume at 6, or any other entry to Step 6, stops with "Previs directory (Data\vis) not empty"
