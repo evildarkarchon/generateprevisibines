@@ -558,6 +558,22 @@ mod tests {
             self.inner.exists(path)
         }
 
+        fn create_dir_all(&self, path: &Path) -> Result<()> {
+            self.inner.create_dir_all(path)
+        }
+
+        fn is_dir(&self, path: &Path) -> bool {
+            self.inner.is_dir(path)
+        }
+
+        fn child_dirs(&self, directory: &Path) -> Vec<PathBuf> {
+            self.inner.child_dirs(directory)
+        }
+
+        fn move_dir(&self, from: &Path, to: &Path) -> Result<()> {
+            self.inner.move_dir(from, to)
+        }
+
         fn write(&self, path: &Path, contents: &str) -> Result<()> {
             self.inner.write(path, contents)
         }
