@@ -15,6 +15,7 @@ use crate::tools::CreationKitOps;
 use crate::warning::BuildWarnings;
 use crate::workflow::WorkflowPlan;
 
+mod compress_psg;
 mod generate_precombines;
 mod precombine_workspace;
 
@@ -29,7 +30,7 @@ macro_rules! register_production_operations {
     };
 }
 
-register_production_operations!(generate_precombines::DEFINITION);
+register_production_operations!(generate_precombines::DEFINITION, compress_psg::DEFINITION);
 
 type OperationExecution = fn(&WorkflowRun, &OperationPorts<'_>) -> Result<()>;
 
@@ -257,7 +258,8 @@ mod tests {
     use tempfile::{TempDir, tempdir};
 
     use super::recording_adapters::{
-        QUIET_CK_LOG, RecordingPrompts, record_successful_precombine_outputs,
+        QUIET_CK_LOG, RecordingPrompts, record_successful_compress_outputs,
+        record_successful_precombine_outputs,
     };
     use super::*;
     use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
@@ -288,7 +290,7 @@ mod tests {
     fn production_workflow_plan_rejects_unregistered_resume_step() {
         let cases = [
             (BuildMode::Clean, WorkflowStep::GeneratePrevis, 6),
-            (BuildMode::Filtered, WorkflowStep::CompressPsg, 4),
+            (BuildMode::Filtered, WorkflowStep::MergePrevis, 7),
         ];
 
         for (mode, resume, expected_step) in cases {
@@ -456,11 +458,12 @@ mod tests {
         assert!(!requirements.needs_archive());
     }
 
-    /// A prepared Step 1 run and the ports it will be driven through, minus the process runner.
+    /// A prepared Workflow Run and the ports one of its operations will be driven through, minus
+    /// the process runner.
     ///
     /// The process runner is left to the caller because it borrows [`Self::files`] when it
     /// simulates Creation Kit's outputs, and a struct cannot hold both ends of that borrow.
-    struct Step1Fixture {
+    struct OperationFixture {
         /// The real directory the toolchain probe validated; kept alive for the run's lifetime.
         _dir: TempDir,
         run: WorkflowRun,
@@ -478,7 +481,7 @@ mod tests {
         prompts: RecordingPrompts,
     }
 
-    impl Step1Fixture {
+    impl OperationFixture {
         /// The log CKPE configured for this run, which the Creation Kit episode owns.
         fn ck_log_path(&self) -> PathBuf {
             self.run.creation_kit().unwrap().ck_log_path.clone()
@@ -525,20 +528,63 @@ mod tests {
             &self,
             process: &dyn ProcessRunner,
         ) -> (Result<()>, Vec<BuildWarning>) {
+            self.run_collecting_warnings(generate_precombines::run, process)
+        }
+
+        /// Drive Step 4 over the real Creation Kit episode; see [`Self::run_step_one`].
+        fn run_step_four(&self, process: &dyn ProcessRunner) -> Result<()> {
+            self.run_step_four_collecting_warnings(process).0
+        }
+
+        /// [`Self::run_step_four`], also returning every Build Warning the run raised.
+        fn run_step_four_collecting_warnings(
+            &self,
+            process: &dyn ProcessRunner,
+        ) -> (Result<()>, Vec<BuildWarning>) {
+            self.run_collecting_warnings(compress_psg::run, process)
+        }
+
+        /// Drive `operation` over this fixture's ports and return how it ended, with every
+        /// Build Warning it raised.
+        ///
+        /// The warnings are read back after the operation returns, whatever it returned,
+        /// because a warning raised before a stop must still be in the collector.
+        fn run_collecting_warnings(
+            &self,
+            operation: OperationExecution,
+            process: &dyn ProcessRunner,
+        ) -> (Result<()>, Vec<BuildWarning>) {
             self.with_ports(process, |ports| {
-                let result = generate_precombines::run(&self.run, ports);
+                let result = operation(&self.run, ports);
                 (result, ports.warnings.raised())
             })
         }
     }
 
     /// Prepare a real Step 1 Workflow Run over a temporary Fallout 4 directory.
+    fn step_one_fixture(mode: BuildMode, non_interactive: bool) -> OperationFixture {
+        operation_fixture(mode, non_interactive, None)
+    }
+
+    /// Prepare a real non-interactive Workflow Run resumed at Step 4, the way an operator
+    /// re-running Compress PSG after a failure enters it.
+    fn step_four_fixture(mode: BuildMode) -> OperationFixture {
+        operation_fixture(mode, true, Some(WorkflowStep::CompressPsg))
+    }
+
+    /// Prepare a real Workflow Run over a temporary Fallout 4 directory.
     ///
     /// The directory is the only thing that reaches the disk: it holds the `CreationKit.exe` and
     /// the CKPE ini the toolchain probe insists on seeing, because probing is not behind a seam.
     /// Everything the run then does — its session log, the artifacts, the Creation Kit log —
     /// lands in the fixture's own [`InMemoryFileSpace`].
-    fn step_one_fixture(mode: BuildMode, non_interactive: bool) -> Step1Fixture {
+    ///
+    /// `resume_from` must name a registered step, because preparation resolves the plan.
+    fn operation_fixture(
+        mode: BuildMode,
+        non_interactive: bool,
+        resume_from: Option<WorkflowStep>,
+    ) -> OperationFixture {
         let dir = tempdir().unwrap();
         let fallout4_dir = dir.path().join("Fallout4");
         fs::create_dir_all(&fallout4_dir).unwrap();
@@ -561,28 +607,28 @@ mod tests {
             ArchiveTool::Archive2,
             PluginIdentity::parse("MyMod"),
             non_interactive,
-            None,
+            resume_from,
         );
 
         let files = InMemoryFileSpace::new();
         let run = WorkflowRun::prepare(&request, dir.path(), &probe, &files).unwrap();
 
-        Step1Fixture {
+        OperationFixture {
             _dir: dir,
             run,
             files,
             wait: RecordingWait::new(),
-            clock: ScriptedClock::new([STEP_ONE_STARTED_AT, STEP_ONE_ENDED_AT]),
+            clock: ScriptedClock::new([CK_RUN_STARTED_AT, CK_RUN_ENDED_AT]),
             prompts: RecordingPrompts::new(),
         }
     }
 
-    /// The scripted `Start`/`Ended` readings a Step 1 fixture's Creation Kit run reports.
-    const STEP_ONE_STARTED_AT: &str = "09:00:00.00";
-    const STEP_ONE_ENDED_AT: &str = "09:04:12.34";
+    /// The scripted `Start`/`Ended` readings a fixture's Creation Kit run reports.
+    const CK_RUN_STARTED_AT: &str = "09:00:00.00";
+    const CK_RUN_ENDED_AT: &str = "09:04:12.34";
 
     /// A Creation Kit spawn that leaves a successful precombine run's outputs behind.
-    fn successful_spawn(fixture: &Step1Fixture) -> RecordingProcessRunner<'_> {
+    fn successful_spawn(fixture: &OperationFixture) -> RecordingProcessRunner<'_> {
         let config = fixture.run.config().clone();
         let ck_log = fixture.ck_log_path();
 
@@ -692,7 +738,7 @@ mod tests {
         );
         assert!(
             session.contains(&format!(
-                "Start {STEP_ONE_STARTED_AT}\nEnded {STEP_ONE_ENDED_AT}\n"
+                "Start {CK_RUN_STARTED_AT}\nEnded {CK_RUN_ENDED_AT}\n"
             )),
             "session log: {session}"
         );
@@ -832,7 +878,7 @@ mod tests {
 
     #[test]
     fn step_one_stops_when_the_clear_precombined_prompt_is_refused() {
-        let fixture = Step1Fixture {
+        let fixture = OperationFixture {
             prompts: RecordingPrompts::new().refusing_clear_precombined(),
             ..step_one_fixture(BuildMode::Filtered, false)
         };
@@ -893,5 +939,249 @@ mod tests {
         assert!(matches!(err, Error::StepNotImplemented(2)));
         assert!(process.calls().is_empty());
         assert_eq!(fixture.prompts.clear_prompt_count(), 0);
+    }
+
+    /// `Data\<base name> - Geometry.psg` for the fixture's plugin.
+    fn geometry_psg(fixture: &OperationFixture) -> PathBuf {
+        fixture
+            .run
+            .config()
+            .fo4edit_data_dir()
+            .join("MyMod - Geometry.psg")
+    }
+
+    /// `Data\<base name> - Geometry.csg` for the fixture's plugin.
+    fn geometry_csg(fixture: &OperationFixture) -> PathBuf {
+        fixture
+            .run
+            .config()
+            .fo4edit_data_dir()
+            .join("MyMod - Geometry.csg")
+    }
+
+    /// A Creation Kit spawn that leaves a successful `CompressPSG` run's outputs behind.
+    fn successful_compress_spawn(
+        fixture: &OperationFixture,
+        exit_code: i32,
+    ) -> RecordingProcessRunner<'_> {
+        let config = fixture.run.config().clone();
+        let ck_log = fixture.ck_log_path();
+
+        RecordingProcessRunner::new()
+            .returning_exit_code(exit_code)
+            .with_effects(&fixture.files, move |space| {
+                record_successful_compress_outputs(space, &config, &ck_log);
+            })
+    }
+
+    #[test]
+    fn compress_psg_is_registered_and_requires_creation_kit() {
+        let source = production_operation_source();
+        let requirements = source.toolchain_requirements_for_steps(&[WorkflowStep::CompressPsg]);
+
+        assert!(source.contains(WorkflowStep::CompressPsg));
+        assert!(requirements.needs_creation_kit());
+        assert!(!requirements.needs_fo4edit());
+        assert!(!requirements.needs_archive());
+    }
+
+    /// A Clean resume at 4 runs Step 4 alone: Step 5 is the first planned step with no
+    /// registered operation.
+    #[test]
+    fn a_clean_resume_at_step_four_runs_step_four() {
+        let plan =
+            production_workflow_plan(BuildMode::Clean, Some(WorkflowStep::CompressPsg)).unwrap();
+
+        assert_eq!(
+            plan.planned_steps().first(),
+            Some(&WorkflowStep::CompressPsg)
+        );
+        assert_eq!(plan.runnable_steps(), &[WorkflowStep::CompressPsg]);
+    }
+
+    /// Batch parity: `CHOICE /C:123456780` accepts a hidden 4 in Filtered, and `:CompPSG`
+    /// forwards Filtered to `:PreVis` (296), so the run plans from Step 6 — a *non-resume*
+    /// entry to it. Step 6 is not registered yet, so that plan has nothing it can run.
+    #[test]
+    fn a_filtered_resume_at_step_four_plans_from_step_six() {
+        assert_eq!(
+            WorkflowPlan::steps_for(BuildMode::Filtered, Some(WorkflowStep::CompressPsg)),
+            [
+                WorkflowStep::GeneratePrevis,
+                WorkflowStep::MergePrevis,
+                WorkflowStep::AddPrevisToArchive,
+            ]
+        );
+
+        let error = production_workflow_plan(BuildMode::Filtered, Some(WorkflowStep::CompressPsg))
+            .unwrap_err();
+
+        assert!(
+            matches!(error, Error::StepNotImplemented(6)),
+            "error: {error:?}"
+        );
+    }
+
+    /// V2.99 Xbox checks the `.psg` and then skips `CompressPSG` (297–298): the geometry file
+    /// it ships is the uncompressed one, so nothing may touch it.
+    #[test]
+    fn step_four_keeps_an_xbox_geometry_psg_without_running_creation_kit() {
+        let fixture = step_four_fixture(BuildMode::Xbox);
+        let psg = geometry_psg(&fixture);
+        fixture.files.add_file_with_contents(&psg, "geometry");
+        let session_before = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        let process = successful_compress_spawn(&fixture, 0);
+
+        let (result, warnings) = fixture.run_step_four_collecting_warnings(&process);
+
+        result.unwrap();
+        assert!(process.calls().is_empty());
+        assert!(fixture.wait.delays().is_empty());
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        assert_eq!(fixture.files.read_lossy(&psg).unwrap(), "geometry");
+        assert!(!fixture.files.is_file(&geometry_csg(&fixture)));
+        // The skip is a console-only note, not a Build Warning: the session log is untouched.
+        assert_eq!(
+            fixture.files.read_lossy(fixture.run.log_path()).unwrap(),
+            session_before
+        );
+    }
+
+    /// Both clean builds stop on a missing `.psg` before anything is spawned (batch 297).
+    #[test]
+    fn step_four_stops_on_a_missing_geometry_psg_before_creation_kit() {
+        for mode in [BuildMode::Clean, BuildMode::Xbox] {
+            let fixture = step_four_fixture(mode);
+            let process = successful_compress_spawn(&fixture, 0);
+
+            let err = fixture.run_step_four(&process).unwrap_err();
+
+            assert!(
+                matches!(&err, Error::MissingGeometryPsg(name) if name == "MyMod"),
+                "mode: {mode:?}, error: {err:?}"
+            );
+            assert!(process.calls().is_empty(), "mode: {mode:?}");
+            assert!(fixture.wait.delays().is_empty(), "mode: {mode:?}");
+        }
+    }
+
+    /// Clean compresses the `.psg` into a `.csg` and only then deletes the `.psg` (299–301).
+    #[test]
+    fn step_four_compresses_and_then_deletes_the_geometry_psg_in_a_clean_build() {
+        let fixture = step_four_fixture(BuildMode::Clean);
+        fixture.files.add_file(geometry_psg(&fixture));
+        let process = successful_compress_spawn(&fixture, 0);
+
+        let (result, warnings) = fixture.run_step_four_collecting_warnings(&process);
+
+        result.unwrap();
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        assert!(fixture.files.is_file(&geometry_csg(&fixture)));
+        assert!(!fixture.files.is_file(&geometry_psg(&fixture)));
+        // One spawn of the run's own Creation Kit for the run's own plugin, with the whole
+        // episode around it; the verb itself is pinned in `tools::creation_kit`.
+        let calls = process.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].exe, fixture.run.creation_kit().unwrap().exe);
+        assert!(
+            calls[0]
+                .args
+                .iter()
+                .any(|arg| arg.to_string_lossy().contains("MyMod.esp")),
+            "args: {:?}",
+            calls[0].args
+        );
+        assert_eq!(fixture.wait.delays(), vec![MO2_DELAY_AFTER_CK_SECS]);
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(
+            session.contains("Running CK option CompressPSG:"),
+            "session log: {session}"
+        );
+    }
+
+    /// Data-loss pin. A `.csg` left by an earlier run must not pass for this run's output: if
+    /// it did, a Creation Kit that wrote nothing would get the only `.psg` deleted. The stale
+    /// `.csg` is cleared before the spawn (a divergence — the batch never clears it), so the
+    /// output check fails and the run stops, non-interactively, with the `.psg` intact.
+    #[test]
+    fn a_stale_csg_never_lets_a_silent_creation_kit_delete_the_geometry_psg() {
+        let fixture = step_four_fixture(BuildMode::Clean);
+        assert!(fixture.run.config().non_interactive);
+        fixture
+            .files
+            .add_file_with_contents(geometry_psg(&fixture), "geometry");
+        fixture.files.add_file(geometry_csg(&fixture));
+        // Creation Kit ran, exited cleanly, and wrote nothing at all.
+        let process = RecordingProcessRunner::new();
+
+        let (result, warnings) = fixture.run_step_four_collecting_warnings(&process);
+
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "CompressPSG failed to create file MyMod - Geometry.csg with exit status 0"
+        );
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        assert_eq!(process.calls().len(), 1);
+        assert_eq!(
+            fixture.files.read_lossy(&geometry_psg(&fixture)).unwrap(),
+            "geometry"
+        );
+        assert!(!fixture.files.is_file(&geometry_csg(&fixture)));
+    }
+
+    /// A non-zero exit with the `.csg` present completes with one warning in the batch's
+    /// words, and the `.psg` is still cleaned up (472, then 301).
+    #[test]
+    fn step_four_warns_about_a_non_zero_exit_that_still_produced_its_csg() {
+        let fixture = step_four_fixture(BuildMode::Clean);
+        fixture.files.add_file(geometry_psg(&fixture));
+        let process = successful_compress_spawn(&fixture, 3);
+
+        let (result, warnings) = fixture.run_step_four_collecting_warnings(&process);
+
+        result.unwrap();
+        assert_eq!(
+            warnings,
+            vec![BuildWarning::CreationKitNonZeroExit {
+                operation: "CompressPSG",
+                code: Some(3),
+            }]
+        );
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(
+            session.ends_with(
+                "WARNING - CompressPSG ended with error 3 but seemed to finish so error ignored.\n"
+            ),
+            "session log: {session}"
+        );
+        assert!(!fixture.files.is_file(&geometry_psg(&fixture)));
+    }
+
+    /// The same exit without the `.csg` stops on the output and says nothing about the exit,
+    /// and the `.psg` survives (batch 471 before 472 and 301).
+    #[test]
+    fn step_four_raises_no_exit_warning_when_its_csg_is_missing() {
+        let fixture = step_four_fixture(BuildMode::Clean);
+        fixture.files.add_file(geometry_psg(&fixture));
+        let process = RecordingProcessRunner::new().returning_exit_code(3);
+
+        let (result, warnings) = fixture.run_step_four_collecting_warnings(&process);
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                Error::MissingCreationKitOutput { operation, file, code }
+                    if *operation == "CompressPSG"
+                        && file == "MyMod - Geometry.csg"
+                        && *code == Some(3)
+            ),
+            "error: {err:?}"
+        );
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(!session.contains("WARNING - "), "session log: {session}");
+        assert!(fixture.files.is_file(&geometry_psg(&fixture)));
     }
 }

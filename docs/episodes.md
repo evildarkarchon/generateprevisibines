@@ -348,7 +348,10 @@ path (`:RePrecomb`, `:RePreVis`).
   `<plugin> - Geometry.psg` → `failed` (297). Xbox then skips `CompressPSG` and goes straight
   to step 5 (298), so its `.psg` is never compressed or deleted — it is the geometry file the
   Finish manifest lists for xbox. Clean runs `CompressPSG` (299–300) and deletes the `.psg`
-  (301).
+  (301). One divergence, decided on #27: Clean deletes a stale `- Geometry.csg` **before** the
+  spawn. The batch never clears it, so a Creation Kit that wrote nothing would pass the 471
+  output check on an earlier run's file and the only `.psg` would then be deleted. The port
+  deletes the `.psg` only after a fresh `.csg` exists and any non-zero-exit warning is raised.
 - **Step 5**: the only step that runs CK with **zero** pre-checks of its own (304–307 — only
   the build-mode gate, which skips it in filtered mode alone, 305). Reached by fallthrough it
   inherits step 4's `.psg` check; a resume at step 5 enters at `:BldCDX` (231) and skips that.

@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::process::ExitStatus;
 
 use crate::config::BuildMode;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::files::FileSpace;
 use crate::logging;
 use crate::tools::clock::Clock;
@@ -88,6 +88,23 @@ impl CkRun {
             code: self.status.code(),
         })
     }
+
+    /// The stop a Workflow Operation reports when this run left no `output` behind (batch
+    /// `:RunCK` line 471).
+    ///
+    /// `output` is the bare file name relative to `Data`, as the batch's `%~2` prints it. Built
+    /// here rather than by the operation for the same reason as
+    /// [`Self::non_zero_exit_warning`]: the message names the batch verb, and only the episode
+    /// knows it. The exit status is carried whatever it was, because the batch prints `%Err_%`
+    /// even when it is 0.
+    #[must_use]
+    pub(crate) fn missing_output_error(&self, output: &str) -> Error {
+        Error::MissingCreationKitOutput {
+            operation: self.operation.flag(),
+            file: output.to_string(),
+            code: self.status.code(),
+        }
+    }
 }
 
 /// The resolved paths one Workflow Run's Creation Kit episodes run against.
@@ -130,7 +147,7 @@ impl CreationKitPaths {
 /// Grouped rather than passed one by one: four separate reference parameters put
 /// [`CreationKitOps::new`] over `clippy::too_many_arguments` beside its four paths, and the set
 /// travels together at every call site anyway. Not part of what a Workflow Operation is handed —
-/// ADR-0002 keeps these seams inside the tools layer; they are crate-visible only so the Step 1
+/// ADR-0002 keeps these seams inside the tools layer; they are crate-visible only so the operation
 /// tests in `src/workflow/` can assemble recording ones.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CkPorts<'a> {
@@ -196,16 +213,6 @@ impl<'a> CreationKitOps<'a> {
     }
 
     /// Compress the geometry PSG produced by the precombine run (batch `:CompPSG`).
-    // No caller until the Step 3 Workflow Operation lands; it stays live through its tests
-    // because the batch's four Creation Kit operations are one episode with one shared `run`,
-    // and splitting three of them out to add back later would be churn.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "the Step 3 Workflow Operation that calls this is not ported yet"
-        )
-    )]
     pub(crate) fn compress_psg(&self, plugin_file: &str) -> Result<CkRun> {
         self.run(CkOperation::CompressPsg, plugin_file, "")
     }
@@ -215,7 +222,7 @@ impl<'a> CreationKitOps<'a> {
         not(test),
         allow(
             dead_code,
-            reason = "the Step 4 Workflow Operation that calls this is not ported yet"
+            reason = "the Step 5 Workflow Operation that calls this is not ported yet"
         )
     )]
     pub(crate) fn build_cdx(&self, plugin_file: &str) -> Result<CkRun> {
@@ -897,6 +904,37 @@ mod tests {
                     operation: expected_operation,
                     code: Some(1),
                 })
+            );
+        }
+    }
+
+    /// The missing-output stop names the batch verb that ran and how it exited, whatever that
+    /// exit was: the batch prints `%Err_%` on line 471 even when it is 0.
+    #[test]
+    fn the_missing_output_error_names_the_operation_and_its_exit_status() {
+        let cases: [(i32, DomainMethod, &str); 2] = [
+            (0, |ck| ck.compress_psg("MyMod.esp"), "CompressPSG"),
+            (4, |ck| ck.build_cdx("MyMod.esp"), "BuildCDX"),
+        ];
+
+        for (exit_code, operation, expected_operation) in cases {
+            let files = InMemoryFileSpace::new();
+            let wait = RecordingWait::new();
+            let clock = scripted_clock();
+            let process = RecordingProcessRunner::new().returning_exit_code(exit_code);
+
+            let ck_run = operation(&ops(&process, &wait, &clock, &files)).unwrap();
+            let error = ck_run.missing_output_error("MyMod - Geometry.csg");
+
+            assert!(
+                matches!(
+                    &error,
+                    crate::error::Error::MissingCreationKitOutput { operation, file, code }
+                        if *operation == expected_operation
+                            && file == "MyMod - Geometry.csg"
+                            && *code == Some(exit_code)
+                ),
+                "error: {error:?}"
             );
         }
     }

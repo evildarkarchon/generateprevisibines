@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::fmt;
 use std::path::PathBuf;
 
-use crate::error::Result;
+use crate::error::{Result, exit_code_text};
 use crate::files::FileSpace;
 use crate::logging;
 
@@ -38,16 +38,12 @@ pub(crate) enum BuildWarning {
 impl fmt::Display for BuildWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CreationKitNonZeroExit { operation, code } => {
-                write!(f, "{operation} ended with error ")?;
-                // The batch always has an `%ERRORLEVEL%` to print. A missing code is only
-                // reachable off Windows, and "unknown" says so rather than inventing a number.
-                match code {
-                    Some(code) => write!(f, "{code}")?,
-                    None => f.write_str("unknown")?,
-                }
-                f.write_str(" but seemed to finish so error ignored.")
-            }
+            Self::CreationKitNonZeroExit { operation, code } => write!(
+                f,
+                "{operation} ended with error {} but seemed to finish so error ignored.",
+                // Shared with the missing-output error, so "unknown" has one home.
+                exit_code_text(*code)
+            ),
         }
     }
 }

@@ -62,6 +62,20 @@ pub enum Error {
     #[error("{0} - Geometry.psg was not created (clean build mode)")]
     MissingGeometryPsg(String),
 
+    // The batch's single `:RunCK` output check (`GeneratePrevisibines.bat:471`), shared by every
+    // Creation Kit step whose output is checked there: one variant because the batch has one
+    // line. `operation` is the batch verb and `file` the bare name relative to `Data`, both as
+    // `%1` and `%~2` print them. Step 1 keeps its own `MissingCombinedObjects`.
+    #[error(
+        "{operation} failed to create file {file} with exit status {}",
+        exit_code_text(*.code)
+    )]
+    MissingCreationKitOutput {
+        operation: &'static str,
+        file: String,
+        code: Option<i32>,
+    },
+
     #[error("no precombined .nif meshes were generated under meshes\\precombined")]
     NoPrecombinedMeshes,
 
@@ -77,4 +91,46 @@ pub enum Error {
 
     #[error("{0}")]
     Other(String),
+}
+
+/// Render a Creation Kit exit code as the batch's `%Err_%` would print it.
+///
+/// The batch always has an `%ERRORLEVEL%` to print. A missing code is only reachable off
+/// Windows (a signal-terminated process), and "unknown" says so rather than inventing a number.
+pub(crate) fn exit_code_text(code: Option<i32>) -> String {
+    code.map_or_else(|| "unknown".to_string(), |code| code.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Batch line 471, minus the `ERROR - ` prefix that is added where it is printed.
+    #[test]
+    fn a_missing_creation_kit_output_reads_as_the_batch_wording() {
+        let error = Error::MissingCreationKitOutput {
+            operation: "CompressPSG",
+            file: "MyMod - Geometry.csg".to_string(),
+            code: Some(0),
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "CompressPSG failed to create file MyMod - Geometry.csg with exit status 0"
+        );
+    }
+
+    #[test]
+    fn a_missing_creation_kit_output_with_no_exit_code_renders_it_as_unknown() {
+        let error = Error::MissingCreationKitOutput {
+            operation: "BuildCDX",
+            file: "MyMod.cdx".to_string(),
+            code: None,
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "BuildCDX failed to create file MyMod.cdx with exit status unknown"
+        );
+    }
 }
