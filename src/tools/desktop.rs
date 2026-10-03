@@ -24,6 +24,9 @@
     )
 )]
 
+#[cfg(windows)]
+use generateprevisibines_win32_windows as win32;
+
 use crate::error::Result;
 
 /// An opaque handle to one window, valid for as long as that window exists.
@@ -45,6 +48,10 @@ impl WindowHandle {
 }
 
 /// One top-level window, as it stood when [`DesktopWindows::top_level_windows`] read it.
+///
+/// The helper crate also reports each window's owner. It is left out here because the FO4Edit
+/// episode picks Module Selection by its exact caption and closes every window of the process,
+/// so nothing in this crate decides anything by ownership.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WindowSnapshot {
     pub(crate) handle: WindowHandle,
@@ -118,7 +125,7 @@ impl DesktopWindows for SystemDesktopWindows {
             Ok(windows) => windows
                 .into_iter()
                 .map(|window| WindowSnapshot {
-                    handle: from_win32(window.handle),
+                    handle: from_helper(window.handle),
                     caption: window.caption,
                     class_name: window.class_name,
                     visible: window.visible,
@@ -136,7 +143,7 @@ impl DesktopWindows for SystemDesktopWindows {
     }
 
     fn click_button(&self, window: WindowHandle, caption: &str) -> Result<bool> {
-        let Some(button) = win32::find_child(to_win32(window), BUTTON_CLASS, caption)? else {
+        let Some(button) = win32::find_child(to_helper(window), BUTTON_CLASS, caption)? else {
             return Ok(false);
         };
         win32::post_button_click(button)?;
@@ -144,11 +151,11 @@ impl DesktopWindows for SystemDesktopWindows {
     }
 
     fn set_foreground(&self, window: WindowHandle) -> bool {
-        win32::set_foreground(to_win32(window))
+        win32::set_foreground(to_helper(window))
     }
 
     fn foreground_window(&self) -> Option<WindowHandle> {
-        win32::foreground_window().map(from_win32)
+        win32::foreground_window().map(from_helper)
     }
 
     fn send_enter(&self) -> Result<()> {
@@ -156,7 +163,7 @@ impl DesktopWindows for SystemDesktopWindows {
     }
 
     fn request_close(&self, window: WindowHandle) -> Result<()> {
-        Ok(win32::post_close(to_win32(window))?)
+        Ok(win32::post_close(to_helper(window))?)
     }
 }
 
@@ -188,18 +195,15 @@ impl DesktopWindows for SystemDesktopWindows {
     }
 }
 
-#[cfg(windows)]
-use generateprevisibines_win32_windows as win32;
-
 /// The helper crate's handle for `window`.
 #[cfg(windows)]
-fn to_win32(window: WindowHandle) -> win32::Hwnd {
+fn to_helper(window: WindowHandle) -> win32::Hwnd {
     win32::Hwnd::from_raw(window.0)
 }
 
 /// This seam's handle for the helper crate's `handle`.
 #[cfg(windows)]
-fn from_win32(handle: win32::Hwnd) -> WindowHandle {
+fn from_helper(handle: win32::Hwnd) -> WindowHandle {
     WindowHandle::from_raw(handle.raw())
 }
 
@@ -365,9 +369,9 @@ mod recording {
     ///   the way Win32 does for a destroyed window: [`set_foreground`] answers `false`, and
     ///   [`click_button`] and [`request_close`] return an error.
     ///
-    /// Every action is recorded, failed ones included, and then every
-    /// [`on_action`](Self::on_action) effect runs on it in installation order. The action's own
-    /// answer comes from the script as it stood when the action arrived, before its effects.
+    /// Every action is recorded, failed ones included, and every [`on_action`](Self::on_action)
+    /// effect runs on it in installation order. The action's own answer comes from the script as
+    /// it stood when the action arrived, before its effects.
     ///
     /// Interior mutability, like the other recording adapters: the caller under test holds the
     /// double by shared reference across the whole episode.
@@ -420,6 +424,9 @@ mod recording {
         /// `InMemoryFileSpace` when Module Selection is dismissed, or set a recording process's
         /// `ExitFlag` when FO4Edit is asked to close. It decides for itself which actions it
         /// cares about. Installing several runs them in installation order.
+        ///
+        /// The effect runs while the script is borrowed, so it must not reach this double itself;
+        /// it cannot capture it anyway, since the double does not exist until `on_action` returns.
         #[must_use]
         pub(crate) fn on_action(
             mut self,

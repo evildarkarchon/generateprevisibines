@@ -12,8 +12,8 @@
 //! behaviour against real windows was established by the FO4Edit window probe (issue #40) and is
 //! re-checked by the manual integration checklist.
 //!
-//! The probe ranked `BM_CLICK` above a posted ENTER, so ADR-0003's "post a key" is deliberately
-//! absent; the ADR's list predates the probe.
+//! The probe ranked `BM_CLICK` above a posted ENTER, so there is deliberately no "post a key";
+//! ADR-0003 was amended to drop it from its original list.
 //!
 //! Off Windows the crate is empty.
 #![cfg(windows)]
@@ -104,13 +104,19 @@ pub struct TopLevelWindow {
 /// List the top-level windows that belong to process `pid`, in `EnumWindows` (Z) order.
 ///
 /// Hidden windows are included, with `visible: false`. A `pid` that owns no windows — including
-/// one that names no process — gives an empty list.
+/// one that names no process, and 0, the idle process — gives an empty list.
 pub fn top_level_windows(pid: u32) -> io::Result<Vec<TopLevelWindow>> {
+    // 0 is also what `process_id` reports for a window destroyed mid-listing, so without this a
+    // request for pid 0 would return those destroyed windows.
+    if pid == 0 {
+        return Ok(Vec::new());
+    }
+
     let mut handles: Vec<Hwnd> = Vec::new();
     // SAFETY: `collect_handle` only pushes into the `Vec<Hwnd>` whose address is passed as
-    // `lparam`. `handles` is borrowed mutably for the whole call, and `EnumWindows` invokes the
-    // callback synchronously on this thread, so the vector outlives every use of the address
-    // and nothing else touches it meanwhile.
+    // `lparam`. `EnumWindows` invokes the callback synchronously on this thread and has
+    // returned before `handles` is touched again, so the vector is alive, and accessed by
+    // nothing else, for every use of that address.
     unsafe { EnumWindows(Some(collect_handle), vec_lparam(&mut handles)) }?;
 
     Ok(handles
@@ -118,7 +124,7 @@ pub fn top_level_windows(pid: u32) -> io::Result<Vec<TopLevelWindow>> {
         .filter(|&handle| process_id(handle) == pid)
         .map(|handle| TopLevelWindow {
             handle,
-            caption: window_text(handle),
+            caption: caption(handle),
             class_name: class_name(handle),
             owner: owner(handle),
             // SAFETY: `IsWindowVisible` accepts any handle; a stale one reads as not visible.
@@ -142,8 +148,8 @@ pub fn find_child(parent: Hwnd, class_name: &str, caption: &str) -> io::Result<O
     }
 
     let mut handles: Vec<Hwnd> = Vec::new();
-    // SAFETY: as in `top_level_windows`: the callback only pushes into `handles`, which is
-    // borrowed mutably across this synchronous enumeration. The return value carries no
+    // SAFETY: as in `top_level_windows`: the callback only pushes into `handles`, which nothing
+    // else touches until this synchronous enumeration has returned. The return value carries no
     // meaning (per the Win32 documentation), so it is not read. A parent destroyed since the
     // `IsWindow` check just enumerates nothing.
     let _ = unsafe {
@@ -154,9 +160,11 @@ pub fn find_child(parent: Hwnd, class_name: &str, caption: &str) -> io::Result<O
         )
     };
 
+    // Class first: it is read without a message, so only controls of the right class are ever
+    // sent `WM_GETTEXT`.
     Ok(handles
         .into_iter()
-        .find(|&handle| self::class_name(handle) == class_name && window_text(handle) == caption))
+        .find(|&handle| self::class_name(handle) == class_name && control_text(handle) == caption))
 }
 
 /// Post `BM_CLICK` to `button`, as if the user clicked it. Returns without waiting for the
@@ -213,10 +221,18 @@ pub fn send_enter() -> io::Result<()> {
     // the size of one element, as `SendInput` requires.
     let inserted = unsafe { SendInput(&inputs, INPUT_SIZE) };
     if inserted as usize == inputs.len() {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
+        return Ok(());
     }
+    // Input blocked by UIPI sets no last error, which would otherwise read as "The operation
+    // completed successfully".
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(0) {
+        return Err(io::Error::other(format!(
+            "SendInput inserted {inserted} of {} key events",
+            inputs.len()
+        )));
+    }
+    Err(error)
 }
 
 /// `EnumWindows`/`EnumChildWindows` callback: push each handle into the `Vec<Hwnd>` whose
@@ -274,13 +290,12 @@ fn owner(window: Hwnd) -> Option<Hwnd> {
         .and_then(Hwnd::from_win32)
 }
 
-/// `window`'s caption; empty when it has none.
+/// A top-level window's caption; empty when it has none.
 ///
-/// Reads `GetWindowTextW` first. Across processes that returns the text Windows stores for the
-/// window without sending it `WM_GETTEXT`, and the probe found some controls keep their caption
-/// only behind that message — so an empty result falls back to sending `WM_GETTEXT`, with a
-/// timeout so a hung window cannot stall the caller.
-fn window_text(window: Hwnd) -> String {
+/// `GetWindowTextW` reads the caption Windows stores for a top-level window, across processes,
+/// without sending the window a message — so a poll that lists a busy FO4Edit's windows never
+/// waits on FO4Edit's UI thread.
+fn caption(window: Hwnd) -> String {
     let hwnd = window.to_win32();
 
     // SAFETY: `GetWindowTextLengthW` accepts any handle; a stale one reports 0.
@@ -290,11 +305,16 @@ fn window_text(window: Hwnd) -> String {
     // SAFETY: `GetWindowTextW` writes at most `buffer.len()` units, terminator included, into a
     // buffer this function owns.
     let length = unsafe { GetWindowTextW(hwnd, &mut buffer) };
-    let text = utf16_prefix(&buffer, length);
-    if !text.is_empty() {
-        return text;
-    }
+    utf16_prefix(&buffer, length)
+}
 
+/// A child control's text, such as a button's caption; empty when it has none or does not
+/// answer in time.
+///
+/// `GetWindowTextW` cannot read a control in another process (Win32 documents that it returns
+/// the stored caption only for top-level windows there), so this sends `WM_GETTEXT`, the
+/// documented way, with a timeout so a hung window cannot stall the caller.
+fn control_text(window: Hwnd) -> String {
     let mut buffer = [0u16; SENT_TEXT_CAPACITY];
     let mut copied = 0usize;
     // SAFETY: `WM_GETTEXT`'s `wparam` is the buffer's capacity and its `lparam` the buffer's
@@ -303,7 +323,7 @@ fn window_text(window: Hwnd) -> String {
     // timeout and `SMTO_ABORTIFHUNG` bound how long a hung window can hold the call.
     let sent = unsafe {
         SendMessageTimeoutW(
-            hwnd,
+            window.to_win32(),
             WM_GETTEXT,
             WPARAM(buffer.len()),
             // Exposed, not just `addr()`: user32 turns the integer back into a pointer.
