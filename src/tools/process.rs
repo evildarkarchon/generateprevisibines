@@ -1,19 +1,24 @@
-//! The `ProcessRunner` seam: starting an external tool, then either waiting for it to exit or
-//! handing back the live process.
+//! The `ProcessRunner` seam: starting an external tool, then either waiting for it to exit
+//! (optionally capturing what it printed) or handing back the live process.
 //!
 //! An internal seam, private to the tools layer. It exists so the *ordering* an external-tool
 //! episode is obliged to keep — DLL guard, log delete, spawn, MO2 delay, log append — becomes
 //! assertable without launching Creation Kit. It is deliberately absent from what a Workflow
 //! Operation is handed: a Workflow Operation states build meaning, not how a process starts.
 //!
-//! There are two ways to start a tool, matching the batch's two `START` forms. [`run`] is
-//! `START /wait`, used by every Creation Kit and Archive2 call. [`spawn`] is `START /B`, used by
-//! the FO4Edit episode: it starts FO4Edit, polls for the log FO4Edit's script writes, and then
-//! asks FO4Edit to close, so it needs the running process's id and a non-blocking exit check.
-//! The window work (dismissing Module Selection, the close request) is not this seam's job;
-//! it targets windows by the process id a [`RunningProcess`] reports.
+//! There are three ways to start a tool, matching how the batch launches each one. [`run`] is
+//! `START /wait`, used by every Creation Kit call; the batch does not redirect Creation Kit's
+//! output, so neither does `run`. [`run_capturing`] is `START /wait ... >> "%Logfile_%"`, used
+//! by the archive tools (Archive2 and BSArch): it waits the same way and also returns the
+//! tool's stdout and stderr as a [`ProcessOutput`], so the Archive episode can fold both into
+//! the session log. [`spawn`] is `START /B`, used by the FO4Edit episode: it starts FO4Edit,
+//! polls for the log FO4Edit's script writes, and then asks FO4Edit to close, so it needs the
+//! running process's id and a non-blocking exit check. The window work (dismissing Module
+//! Selection, the close request) is not this seam's job; it targets windows by the process id
+//! a [`RunningProcess`] reports.
 //!
 //! [`run`]: ProcessRunner::run
+//! [`run_capturing`]: ProcessRunner::run_capturing
 //! [`spawn`]: ProcessRunner::spawn
 
 use std::ffi::OsString;
@@ -36,6 +41,24 @@ pub(crate) trait ProcessRunner: std::fmt::Debug {
     /// `cwd` is not optional: every Creation Kit invocation sets `/D"<fo4dir>"` and every
     /// Archive2 call runs with the working directory set to `Data`.
     fn run(&self, exe: &Path, args: &[OsString], cwd: &Path) -> Result<ExitStatus>;
+
+    /// Spawn `exe` with `args`, working directory `cwd`, wait for it to exit, and capture
+    /// its stdout and stderr.
+    ///
+    /// Equivalent to the batch `START ... /wait <exe> <args> >> "%Logfile_%"`, which runs
+    /// each archive tool. `args` and `cwd` are handled exactly as in [`run`](Self::run), and
+    /// as there, a non-zero exit is reported in [`ProcessOutput::status`], not raised. Fails
+    /// only when the process cannot be started or its output cannot be read. The child gets
+    /// a null stdin, so a tool that prompts for input reads end-of-file instead of hanging
+    /// the run.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "the Archive episode (ArchiveOps) that runs Archive2 and BSArch is not ported yet"
+        )
+    )]
+    fn run_capturing(&self, exe: &Path, args: &[OsString], cwd: &Path) -> Result<ProcessOutput>;
 
     /// Spawn `exe` with `args`, working directory `cwd`, and return without waiting.
     ///
@@ -62,6 +85,27 @@ pub(crate) trait RunningProcess: std::fmt::Debug {
     fn try_wait(&mut self) -> Result<Option<ExitStatus>>;
 }
 
+/// What a tool started by [`ProcessRunner::run_capturing`] left behind once it exited.
+///
+/// Both streams are decoded lossily: neither Archive2 nor BSArch promises UTF-8, and a
+/// mangled character in a log line is better than losing the line.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "the Archive episode (ArchiveOps) that reads Archive2's and BSArch's output is not ported yet"
+    )
+)]
+#[derive(Debug, Clone)]
+pub(crate) struct ProcessOutput {
+    /// How the process exited. A non-zero status is not an error at this seam.
+    pub(crate) status: ExitStatus,
+    /// Everything the process wrote to stdout.
+    pub(crate) stdout: String,
+    /// Everything the process wrote to stderr, kept apart from stdout.
+    pub(crate) stderr: String,
+}
+
 /// The production `ProcessRunner`, backed by [`std::process::Command`].
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct SystemProcessRunner;
@@ -69,6 +113,16 @@ pub(crate) struct SystemProcessRunner;
 impl ProcessRunner for SystemProcessRunner {
     fn run(&self, exe: &Path, args: &[OsString], cwd: &Path) -> Result<ExitStatus> {
         Ok(Command::new(exe).current_dir(cwd).args(args).status()?)
+    }
+
+    fn run_capturing(&self, exe: &Path, args: &[OsString], cwd: &Path) -> Result<ProcessOutput> {
+        // `output()` pipes stdout and stderr and gives the child a null stdin.
+        let output = Command::new(exe).current_dir(cwd).args(args).output()?;
+        Ok(ProcessOutput {
+            status: output.status,
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
     }
 
     fn spawn(&self, exe: &Path, args: &[OsString], cwd: &Path) -> Result<Box<dyn RunningProcess>> {
@@ -99,19 +153,20 @@ impl RunningProcess for SystemRunningProcess {
 #[cfg(test)]
 pub(crate) use recording::{
     ExitFlag, ProcessCallKind, RECORDED_PROCESS_ID, RecordedProcessCall, RecordingProcessRunner,
-    ScriptedExit,
+    ScriptedCall, ScriptedExit,
 };
 
 #[cfg(test)]
 mod recording {
     use std::cell::{Cell, RefCell};
+    use std::collections::BTreeMap;
     use std::ffi::OsString;
     use std::fmt;
     use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
     use std::rc::Rc;
 
-    use super::{ProcessRunner, RunningProcess};
+    use super::{ProcessOutput, ProcessRunner, RunningProcess};
     use crate::error::Result;
     use crate::files::FileSpace;
 
@@ -135,8 +190,89 @@ mod recording {
     pub(crate) enum ProcessCallKind {
         /// [`ProcessRunner::run`]: started and waited for (`START /wait`).
         Run,
+        /// [`ProcessRunner::run_capturing`]: started and waited for, output captured
+        /// (`START /wait ... >> "%Logfile_%"`).
+        RunCapturing,
         /// [`ProcessRunner::spawn`]: started and left running (`START /B`).
         Spawn,
+    }
+
+    /// A simulated file effect for one scripted call, given that call's `exe` and `args`.
+    type CallEffect<'a> = Box<dyn Fn(&Path, &[OsString]) + 'a>;
+
+    /// What one particular call to a [`RecordingProcessRunner`] reports and does.
+    ///
+    /// Installed with [`RecordingProcessRunner::scripting_call`]. Each part is an override:
+    /// an exit code left unset falls back to the runner-wide
+    /// [`returning_exit_code`](RecordingProcessRunner::returning_exit_code), output left unset
+    /// is empty, and an effect left unset falls back to the runner-wide
+    /// [`with_effects`](RecordingProcessRunner::with_effects). The exit code applies to
+    /// [`run`](ProcessRunner::run) and [`run_capturing`](ProcessRunner::run_capturing); the
+    /// output only to `run_capturing`, the one method that returns it. A spawn uses only the
+    /// effect: how a spawned process exits is [`ScriptedExit`]'s job.
+    #[derive(Default)]
+    pub(crate) struct ScriptedCall<'a> {
+        code: Option<i32>,
+        stdout: String,
+        stderr: String,
+        effect: Option<CallEffect<'a>>,
+    }
+
+    impl<'a> ScriptedCall<'a> {
+        /// A call that behaves like an unscripted one until a builder method says otherwise.
+        #[must_use]
+        pub(crate) fn new() -> Self {
+            Self::default()
+        }
+
+        /// Report `code` as this call's exit status.
+        #[must_use]
+        pub(crate) fn exiting_with(mut self, code: i32) -> Self {
+            self.code = Some(code);
+            self
+        }
+
+        /// Report `stdout` as what this call wrote to stdout.
+        #[must_use]
+        pub(crate) fn with_stdout(mut self, stdout: impl Into<String>) -> Self {
+            self.stdout = stdout.into();
+            self
+        }
+
+        /// Report `stderr` as what this call wrote to stderr.
+        #[must_use]
+        pub(crate) fn with_stderr(mut self, stderr: impl Into<String>) -> Self {
+            self.stderr = stderr.into();
+            self
+        }
+
+        /// Simulate this call's filesystem effects into the space the caller observes.
+        ///
+        /// Like [`RecordingProcessRunner::with_effects`], but for this call alone, and the
+        /// callback also receives the call's `exe` and `args`. That is what lets one
+        /// rebuild's extract and pack each leave their own files behind, written where
+        /// *their* arguments said to write them.
+        #[must_use]
+        pub(crate) fn with_effect<S: FileSpace>(
+            mut self,
+            space: &'a S,
+            apply: impl Fn(&S, &Path, &[OsString]) + 'a,
+        ) -> Self {
+            self.effect = Some(Box::new(move |exe, args| apply(space, exe, args)));
+            self
+        }
+    }
+
+    impl fmt::Debug for ScriptedCall<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            // As for the runner: the callback is not `Debug`, so show only whether one is set.
+            f.debug_struct("ScriptedCall")
+                .field("code", &self.code)
+                .field("stdout", &self.stdout)
+                .field("stderr", &self.stderr)
+                .field("effect", &self.effect.is_some())
+                .finish()
+        }
     }
 
     /// How a process returned by [`RecordingProcessRunner::spawn`] exits.
@@ -182,7 +318,8 @@ mod recording {
         }
     }
 
-    /// A test [`ProcessRunner`] that records every run and spawn and launches nothing.
+    /// A test [`ProcessRunner`] that records every run, capturing run and spawn, and
+    /// launches nothing.
     ///
     /// Interior mutability, like the other recording adapters: the caller under test holds
     /// the runner by shared reference across the whole episode.
@@ -191,6 +328,8 @@ mod recording {
         status: ExitStatus,
         spawned_exit: ScriptedExit,
         effects: Option<Box<dyn Fn() + 'a>>,
+        /// Per-call overrides, keyed by the call's index in [`calls`](Self::calls).
+        scripted: BTreeMap<usize, ScriptedCall<'a>>,
     }
 
     impl Default for RecordingProcessRunner<'_> {
@@ -200,6 +339,7 @@ mod recording {
                 status: exit_status_with_code(0),
                 spawned_exit: ScriptedExit::Never,
                 effects: None,
+                scripted: BTreeMap::new(),
             }
         }
     }
@@ -252,33 +392,86 @@ mod recording {
             self
         }
 
-        /// The runs and spawns recorded so far, in one list, in call order.
+        /// Script what the call at `index` reports and does.
+        ///
+        /// `index` is 0-based and counts every call of every kind, so it is the position the
+        /// call will hold in [`calls`](Self::calls). Calls without a script behave as they
+        /// would without this method. Scripting the same index twice keeps the later script.
+        #[must_use]
+        pub(crate) fn scripting_call(mut self, index: usize, call: ScriptedCall<'a>) -> Self {
+            self.scripted.insert(index, call);
+            self
+        }
+
+        /// The runs, capturing runs and spawns recorded so far, in one list, in call order.
         #[must_use]
         pub(crate) fn calls(&self) -> Vec<RecordedProcessCall> {
             self.calls.borrow().clone()
         }
 
-        /// Record a start of either kind, then apply the simulated effects.
-        fn start(&self, exe: &Path, args: &[OsString], cwd: &Path, kind: ProcessCallKind) {
-            self.calls.borrow_mut().push(RecordedProcessCall {
-                exe: exe.to_path_buf(),
-                args: args.to_vec(),
-                cwd: cwd.to_path_buf(),
-                kind,
-            });
+        /// Record a start of any kind, then apply the simulated effects.
+        ///
+        /// Returns this call's script, if one was installed for its index.
+        fn start(
+            &self,
+            exe: &Path,
+            args: &[OsString],
+            cwd: &Path,
+            kind: ProcessCallKind,
+        ) -> Option<&ScriptedCall<'a>> {
+            let index = {
+                let mut calls = self.calls.borrow_mut();
+                calls.push(RecordedProcessCall {
+                    exe: exe.to_path_buf(),
+                    args: args.to_vec(),
+                    cwd: cwd.to_path_buf(),
+                    kind,
+                });
+                calls.len() - 1
+            };
+            let script = self.scripted.get(&index);
 
             // Recorded before the effects run, so a callback that inspects the space sees a
-            // call history consistent with "the tool has started".
-            if let Some(effects) = &self.effects {
+            // call history consistent with "the tool has started". The `calls` borrow is
+            // released first, so an effect may read `calls()` itself.
+            if let Some(effect) = script.and_then(|script| script.effect.as_ref()) {
+                effect(exe, args);
+            } else if let Some(effects) = &self.effects {
                 effects();
             }
+            script
+        }
+
+        /// The exit status a waited-for call reports: its script's code, else the runner's.
+        fn status_for(&self, script: Option<&ScriptedCall<'_>>) -> ExitStatus {
+            script
+                .and_then(|script| script.code)
+                .map_or(self.status, exit_status_with_code)
         }
     }
 
     impl ProcessRunner for RecordingProcessRunner<'_> {
         fn run(&self, exe: &Path, args: &[OsString], cwd: &Path) -> Result<ExitStatus> {
-            self.start(exe, args, cwd, ProcessCallKind::Run);
-            Ok(self.status)
+            let script = self.start(exe, args, cwd, ProcessCallKind::Run);
+            Ok(self.status_for(script))
+        }
+
+        fn run_capturing(
+            &self,
+            exe: &Path,
+            args: &[OsString],
+            cwd: &Path,
+        ) -> Result<ProcessOutput> {
+            let script = self.start(exe, args, cwd, ProcessCallKind::RunCapturing);
+            Ok(ProcessOutput {
+                status: self.status_for(script),
+                stdout: script
+                    .map(|script| script.stdout.clone())
+                    .unwrap_or_default(),
+                stderr: script
+                    .map(|script| script.stderr.clone())
+                    .unwrap_or_default(),
+            })
         }
 
         fn spawn(
@@ -337,6 +530,7 @@ mod recording {
                 .field("status", &self.status)
                 .field("spawned_exit", &self.spawned_exit)
                 .field("effects", &self.effects.is_some())
+                .field("scripted", &self.scripted)
                 .finish()
         }
     }
@@ -371,7 +565,7 @@ mod tests {
 
     use super::{
         ExitFlag, ProcessCallKind, ProcessRunner, RECORDED_PROCESS_ID, RecordedProcessCall,
-        RecordingProcessRunner, RunningProcess, ScriptedExit, SystemProcessRunner,
+        RecordingProcessRunner, RunningProcess, ScriptedCall, ScriptedExit, SystemProcessRunner,
     };
     use crate::files::{FileSpace, InMemoryFileSpace};
 
@@ -592,6 +786,200 @@ mod tests {
         assert!(process.try_wait().unwrap().unwrap().success());
     }
 
+    #[test]
+    fn recording_runner_reports_each_scripted_call_and_defaults_the_rest() {
+        let runner = RecordingProcessRunner::new()
+            .scripting_call(
+                0,
+                ScriptedCall::new()
+                    .exiting_with(0)
+                    .with_stdout("Extracting 12 files\n")
+                    .with_stderr("warning: one\n"),
+            )
+            .scripting_call(
+                1,
+                ScriptedCall::new()
+                    .exiting_with(3)
+                    .with_stdout("Packing\n")
+                    .with_stderr("Unhandled exception\n"),
+            );
+        let exe = Path::new("Archive2.exe");
+        let cwd = Path::new(r"C:\Games\Fallout4\Data");
+
+        let first = runner.run_capturing(exe, &[], cwd).unwrap();
+        let second = runner.run_capturing(exe, &[], cwd).unwrap();
+        let third = runner.run_capturing(exe, &[], cwd).unwrap();
+
+        assert_eq!(first.status.code(), Some(0));
+        assert_eq!(first.stdout, "Extracting 12 files\n");
+        assert_eq!(first.stderr, "warning: one\n");
+
+        // A non-zero exit is reported, not raised, exactly as for `run`.
+        assert_eq!(second.status.code(), Some(3));
+        assert_eq!(second.stdout, "Packing\n");
+        assert_eq!(second.stderr, "Unhandled exception\n");
+
+        // Unscripted: today's defaults — success and no output.
+        assert!(third.status.success());
+        assert_eq!(third.stdout, "");
+        assert_eq!(third.stderr, "");
+    }
+
+    #[test]
+    fn an_unscripted_capturing_call_falls_back_to_the_runner_wide_exit_code() {
+        let runner = RecordingProcessRunner::new().returning_exit_code(2);
+
+        let output = runner
+            .run_capturing(Path::new("Archive2.exe"), &[], Path::new("Data"))
+            .unwrap();
+
+        assert_eq!(output.status.code(), Some(2));
+    }
+
+    #[test]
+    fn a_scripted_exit_code_also_applies_to_a_run() {
+        let runner =
+            RecordingProcessRunner::new().scripting_call(1, ScriptedCall::new().exiting_with(5));
+        let exe = Path::new("CreationKit.exe");
+        let cwd = Path::new("Fallout4");
+
+        assert!(runner.run(exe, &[], cwd).unwrap().success());
+        assert_eq!(runner.run(exe, &[], cwd).unwrap().code(), Some(5));
+    }
+
+    #[test]
+    fn a_per_call_effect_sees_its_own_calls_exe_and_args() {
+        let space = InMemoryFileSpace::new();
+        let seen = std::cell::RefCell::new(Vec::new());
+        let runner = RecordingProcessRunner::new()
+            .scripting_call(
+                0,
+                ScriptedCall::new().with_effect(&space, |space, exe, args| {
+                    seen.borrow_mut().push((exe.to_path_buf(), args.to_vec()));
+                    space.add_file_with_contents(Path::new(r"C:\Data\meshes\a.nif"), "nif");
+                }),
+            )
+            .scripting_call(
+                1,
+                ScriptedCall::new().with_effect(&space, |space, exe, args| {
+                    seen.borrow_mut().push((exe.to_path_buf(), args.to_vec()));
+                    space.add_file_with_contents(Path::new(r"C:\Data\Mod - Main.ba2"), "ba2");
+                }),
+            );
+        let cwd = Path::new(r"C:\Data");
+
+        runner
+            .run_capturing(
+                Path::new("Archive2.exe"),
+                &[
+                    OsString::from("Mod - Main.ba2"),
+                    OsString::from("-extract=."),
+                ],
+                cwd,
+            )
+            .unwrap();
+        assert!(space.is_file(Path::new(r"C:\Data\meshes\a.nif")));
+        assert!(!space.is_file(Path::new(r"C:\Data\Mod - Main.ba2")));
+
+        runner
+            .run_capturing(Path::new("BSArch.exe"), &[OsString::from("Pack")], cwd)
+            .unwrap();
+        assert!(space.is_file(Path::new(r"C:\Data\Mod - Main.ba2")));
+
+        assert_eq!(
+            *seen.borrow(),
+            vec![
+                (
+                    PathBuf::from("Archive2.exe"),
+                    vec![
+                        OsString::from("Mod - Main.ba2"),
+                        OsString::from("-extract=.")
+                    ],
+                ),
+                (PathBuf::from("BSArch.exe"), vec![OsString::from("Pack")]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_per_call_effect_replaces_the_shared_effect_for_that_call_only() {
+        let space = InMemoryFileSpace::new();
+        let shared = PathBuf::from(r"C:\shared.txt");
+        let scripted = PathBuf::from(r"C:\scripted.txt");
+        let runner = {
+            let shared = shared.clone();
+            let scripted = scripted.clone();
+            RecordingProcessRunner::new()
+                .with_effects(&space, move |space| {
+                    space.add_file_with_contents(&shared, "shared");
+                })
+                .scripting_call(
+                    0,
+                    ScriptedCall::new().with_effect(&space, move |space, _exe, _args| {
+                        space.add_file_with_contents(&scripted, "scripted");
+                    }),
+                )
+        };
+        let exe = Path::new("tool.exe");
+        let cwd = Path::new("cwd");
+
+        runner.run_capturing(exe, &[], cwd).unwrap();
+        assert!(space.is_file(&scripted));
+        assert!(!space.is_file(&shared));
+
+        // An unscripted call keeps today's behaviour: the shared effect, if one is installed.
+        runner.run_capturing(exe, &[], cwd).unwrap();
+        assert!(space.is_file(&shared));
+    }
+
+    #[test]
+    fn recording_runner_records_runs_capturing_runs_and_spawns_in_one_ordered_list() {
+        let runner = RecordingProcessRunner::new();
+        let ck = PathBuf::from(r"C:\Games\Fallout4\CreationKit.exe");
+        let archive2 = PathBuf::from(r"C:\Games\Fallout4\Tools\Archive2\Archive2.exe");
+        let fo4edit = PathBuf::from(r"C:\Tools\FO4Edit\FO4Edit.exe");
+        let fo4dir = PathBuf::from(r"C:\Games\Fallout4");
+        let data = PathBuf::from(r"C:\Games\Fallout4\Data");
+
+        runner
+            .run(&ck, &[OsString::from("-BuildCDX:My Mod.esp")], &fo4dir)
+            .unwrap();
+        runner
+            .run_capturing(
+                &archive2,
+                &[OsString::from("-create=My Mod - Main.ba2")],
+                &data,
+            )
+            .unwrap();
+        runner
+            .spawn(&fo4edit, &[OsString::from("-fo4")], &fo4dir)
+            .unwrap();
+
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedProcessCall {
+                    exe: ck,
+                    args: vec![OsString::from("-BuildCDX:My Mod.esp")],
+                    cwd: fo4dir.clone(),
+                    kind: ProcessCallKind::Run,
+                },
+                RecordedProcessCall {
+                    exe: archive2,
+                    args: vec![OsString::from("-create=My Mod - Main.ba2")],
+                    cwd: data,
+                    kind: ProcessCallKind::RunCapturing,
+                },
+                RecordedProcessCall {
+                    exe: fo4edit,
+                    args: vec![OsString::from("-fo4")],
+                    cwd: fo4dir,
+                    kind: ProcessCallKind::Spawn,
+                },
+            ]
+        );
+    }
+
     /// Spawn a stand-in FO4Edit on a recording runner; the exe, args and cwd are irrelevant
     /// to the tests that use it, which only exercise the returned process.
     fn spawn_fo4edit(runner: &RecordingProcessRunner<'_>) -> Box<dyn RunningProcess> {
@@ -626,6 +1014,40 @@ mod tests {
         assert!(
             runner
                 .run(&dir.path().join("no-such-tool.exe"), &[], dir.path())
+                .is_err()
+        );
+    }
+
+    /// The capturing half of the system adapter, against a real child process.
+    ///
+    /// The probe writes one line to stdout and another to stderr, then runs the marker-file
+    /// check, so a single run shows that the streams arrive separately, the exit code is
+    /// reported (not raised), and `cwd` and `args` are honoured as in [`run`].
+    ///
+    /// [`run`]: ProcessRunner::run
+    #[test]
+    fn system_runner_captures_stdout_and_stderr_separately() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("marker.txt"), b"marker").unwrap();
+        let runner = SystemProcessRunner;
+
+        let output = runner
+            .run_capturing(Path::new(SHELL), &capturing_probe_args(), dir.path())
+            .unwrap();
+
+        assert_eq!(output.status.code(), Some(7));
+        assert_eq!(output.stdout.trim_end(), "to-stdout");
+        assert_eq!(output.stderr.trim_end(), "to-stderr");
+    }
+
+    #[test]
+    fn system_runner_run_capturing_surfaces_a_missing_executable_as_an_error() {
+        let dir = tempdir().unwrap();
+        let runner = SystemProcessRunner;
+
+        assert!(
+            runner
+                .run_capturing(&dir.path().join("no-such-tool.exe"), &[], dir.path())
                 .is_err()
         );
     }
@@ -722,6 +1144,41 @@ mod tests {
         vec![
             OsString::from("-c"),
             OsString::from("test -f marker.txt && exit 7"),
+        ]
+    }
+
+    /// Arguments for a shell that prints `to-stdout` to stdout and `to-stderr` to stderr, then
+    /// exits 7 when `marker.txt` sits in its working directory.
+    ///
+    /// Bare tokens, for the reason given on [`marker_probe_args`]; `cmd` echoes the space
+    /// before each `&` and redirect, which the test trims.
+    #[cfg(windows)]
+    fn capturing_probe_args() -> Vec<OsString> {
+        [
+            "/C",
+            "echo",
+            "to-stdout",
+            "&",
+            "echo",
+            "to-stderr",
+            "1>&2",
+            "&",
+            "if",
+            "exist",
+            "marker.txt",
+            "exit",
+            "7",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect()
+    }
+
+    #[cfg(not(windows))]
+    fn capturing_probe_args() -> Vec<OsString> {
+        vec![
+            OsString::from("-c"),
+            OsString::from("echo to-stdout; echo to-stderr >&2; test -f marker.txt && exit 7"),
         ]
     }
 

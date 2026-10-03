@@ -359,7 +359,7 @@ mod tests {
     use crate::files::InMemoryFileSpace;
     use crate::tools::clock::ScriptedClock;
     use crate::tools::process::{
-        ProcessCallKind, RecordedProcessCall, RecordingProcessRunner, RunningProcess,
+        ProcessCallKind, ProcessOutput, RecordedProcessCall, RecordingProcessRunner, RunningProcess,
     };
     use crate::tools::wait::RecordingWait;
     use crate::warning::BuildWarning;
@@ -462,7 +462,17 @@ mod tests {
             .into())
         }
 
-        // Creation Kit is only ever `run`; a spawn here would mean the episode changed shape.
+        // Creation Kit is only ever `run`; a capturing run or a spawn here would mean the
+        // episode changed shape.
+        fn run_capturing(
+            &self,
+            _exe: &Path,
+            _args: &[OsString],
+            _cwd: &Path,
+        ) -> Result<ProcessOutput> {
+            unreachable!("the Creation Kit episode does not capture CreationKit.exe's output")
+        }
+
         fn spawn(
             &self,
             _exe: &Path,
