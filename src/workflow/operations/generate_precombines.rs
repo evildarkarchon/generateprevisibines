@@ -34,6 +34,13 @@ pub(super) fn run(run: &WorkflowRun, ports: &OperationPorts<'_>) -> Result<()> {
     // and hands it here. Success criteria stay with the operation, per ADR-0001.
     workspace.validate_generated(ck_run.log.as_deref())?;
 
+    // Only now, with every postcondition passed: the batch checks the output (471) before it
+    // calls a non-zero exit harmless (472), so a run that produced nothing is never told it
+    // "seemed to finish".
+    if let Some(warning) = ck_run.non_zero_exit_warning() {
+        ports.warnings.raise(warning)?;
+    }
+
     Ok(())
 }
 

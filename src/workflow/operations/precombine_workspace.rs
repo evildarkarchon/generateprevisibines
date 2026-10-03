@@ -95,8 +95,7 @@ impl<'a> PrecombineWorkspace<'a> {
             return Err(Error::MissingCombinedObjects);
         }
 
-        if self.config.build_mode.is_clean_build()
-            && !self.files.is_file(&self.geometry_psg_path())
+        if self.config.build_mode.is_clean_build() && !self.files.is_file(&self.geometry_psg_path())
         {
             return Err(Error::MissingGeometryPsg(
                 self.config.plugin.base_name.clone(),

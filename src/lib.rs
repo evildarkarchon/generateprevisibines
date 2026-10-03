@@ -22,11 +22,15 @@ mod text;
 // crate-private by design; the session log is internal machinery, not part of the API.
 pub(crate) mod logging;
 
+// Crate-private like `logging`: a Build Warning is raised by a Workflow Operation and surfaced
+// by the collector as it is raised, so nothing outside the crate ever holds one.
+pub(crate) mod warning;
+
 pub use cli::Cli;
 pub use config::{ArchiveTool, BuildMode, ProjectConfig, WorkflowStep};
 pub use error::{Error, Result};
 pub use intake::{InteractiveWorkflowIntakePrompts, WorkflowIntakeOutcome, WorkflowRequestIntake};
-pub use run::{RunDiagnostic, WorkflowRequest, WorkflowRun};
+pub use run::{RunDiagnostic, RunStopped, WorkflowRequest, WorkflowRun};
 pub use toolchain::{
     PluginReadiness, ToolchainDiagnostic, ToolchainRequirements, WorkflowToolchain,
     WorkflowToolchainProbe,

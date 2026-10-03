@@ -70,7 +70,6 @@ Each slice should wire through the Workflow Operation seam and real tool adapter
 - On failure: ensure DLL guard restores even when CK/xEdit panic or are killed.
 - Surface Creation Kit log path and tail relevant errors (handle array, visibility task).
 - Distinguish **ERROR** vs **WARNING** consistent with batch (`failed` vs continued build).
-- Single exit code policy documented for CI/non-interactive use.
 - Persist last completed step to support resume without re-prompting (optional enhancement; batch uses interactive menu only).
 
 ---
