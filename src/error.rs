@@ -96,6 +96,18 @@ pub enum Error {
     #[error("No Precombined meshes found")]
     NoPrecombinedMeshesFound,
 
+    // The batch's own wording (`GeneratePrevisibines.bat:323`), from Step 7's entry check: no
+    // `.uvd` under `Data\vis` means Step 6 left nothing to merge. A stop rather than a warning,
+    // because absent outputs stop; only a partial shortfall is Step 7's warning to raise.
+    #[error("No Visibility files Generated")]
+    NoVisibilityFiles,
+
+    // The batch's own wording (`GeneratePrevisibines.bat:324`), Step 7's second entry check. Not
+    // `MissingCreationKitOutput`: Step 7 has not run Creation Kit, it has only found nothing to
+    // merge, as a resume at 7 over an empty `Data` would.
+    #[error("No Previs.esp Generated")]
+    NoPrevisPlugin,
+
     #[error("workflow step {0} is not implemented yet")]
     StepNotImplemented(u8),
 
@@ -210,6 +222,16 @@ mod tests {
             Error::NoPrecombinedMeshesFound.to_string(),
             "No Precombined meshes found"
         );
+    }
+
+    /// Batch lines 323 and 324, minus the `ERROR - ` prefix.
+    #[test]
+    fn step_seven_entry_stops_read_as_the_batch_wording() {
+        assert_eq!(
+            Error::NoVisibilityFiles.to_string(),
+            "No Visibility files Generated"
+        );
+        assert_eq!(Error::NoPrevisPlugin.to_string(), "No Previs.esp Generated");
     }
 
     #[test]
