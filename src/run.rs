@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn prepare_preserves_filtered_and_xbox_partial_diagnostic_counts() {
-        let cases = [(BuildMode::Filtered, 5, 6), (BuildMode::Xbox, 5, 6)];
+        let cases = [(BuildMode::Filtered, 5, 6), (BuildMode::Xbox, 7, 8)];
 
         for (build_mode, skipped, planned) in cases {
             let fixture = ready_workflow_fixture();

@@ -90,7 +90,7 @@ Arguments:
 Options:
   -c, --clean            Build mode: clean (default)
   -f, --filtered         Build mode: filtered (skips PSG and CDX)
-  -x, --xbox             Build mode: Xbox (clean precombines; skips PSG and CDX)
+  -x, --xbox             Build mode: Xbox (clean build; keeps geometry uncompressed by skipping CompressPSG)
       --bsarch           Use BSArch instead of Archive2
       --FO4 <DIR>        Override the Fallout 4 installation directory
       --resume-from <N>  Resume from workflow step 1-8 (non-interactive)
@@ -172,7 +172,7 @@ generateprevisibines.exe "-FO4:D:\Games\Fallout4" MyMod.esp
 
 ### Xbox Mode (`-x`, `--xbox`, or `-xbox`)
 - A clean build that skips PSG compression: precombines are generated with `clean all` and the CDX is still built
-- The port does not build the CDX in Xbox mode yet — it still skips steps 4 and 5, as V2.98 did
+- Plans steps 4 and 5 as clean mode does (V2.98 skipped both); step 4 keeps the `- Geometry.psg` uncompressed instead of running `CompressPSG`. The port does not execute either step yet
 - Since V2.99 no archive receives Xbox compression — the batch's Archive2 `-compression=XBox` qualifier is disabled, and BSArch never had one
 - Required for Xbox mods
 

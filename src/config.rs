@@ -23,22 +23,20 @@ impl BuildMode {
     ///
     /// The V2.99 batch tests `NEQ "filtered"` rather than V2.98's `EQU "clean"`, because Xbox
     /// gained clean-mode support and is now a clean build that merely skips `CompressPSG`.
-    /// This predicate governs the plugin-name space check (line 161), the
+    /// Every `filtered` test in the batch is this same "Filtered vs. every other mode" split,
+    /// so one predicate serves them all: the plugin-name space check (line 161), the
     /// `-GeneratePrecombined` `clean all` qualifier and the post-CK `- Geometry.psg` check
-    /// (268–272). The batch's other `filtered` tests (219, 296, 305, 345) decide step
-    /// membership and are not routed through here.
+    /// (268–272), Workflow Plan membership of Steps 4 and 5 — the resume menu (219) and
+    /// the `:CompPSG`/`:BldCDX` gates (296, 305) — through [`WorkflowStep::steps_for_mode`],
+    /// and the Finish manifest's CDX and geometry entries (345).
     ///
-    /// Deliberately separate from [`Self::includes_psg_and_cdx`]: that one decides Workflow
-    /// Plan membership, where Xbox's place is still open, and Step 1 must not move with it.
+    /// Xbox differs from Clean only in keeping the geometry file uncompressed: Step 4 skips
+    /// `CompressPSG` (298), and the Finish manifest therefore lists the `.psg` rather than the
+    /// `.csg` (346–347). Both are branches within a step or epilogue, not plan-membership
+    /// questions, so neither is decided here.
     #[must_use]
     pub const fn is_clean_build(self) -> bool {
         !matches!(self, Self::Filtered)
-    }
-
-    /// Steps 4 and 5 (PSG compress, CDX build) run only in clean mode.
-    #[must_use]
-    pub const fn includes_psg_and_cdx(self) -> bool {
-        matches!(self, Self::Clean)
     }
 }
 
@@ -107,7 +105,11 @@ impl WorkflowStep {
         }
     }
 
-    /// Steps included for a given build mode (batch skips 4–5 unless clean).
+    /// Steps included for a given build mode, in canonical order.
+    ///
+    /// Every clean build (Clean and, since V2.99, Xbox) plans all eight steps; Filtered alone
+    /// skips Steps 4 and 5, as the batch's resume menu (219) and its `:CompPSG`/`:BldCDX`
+    /// gates (296, 305) do. See [`BuildMode::is_clean_build`].
     #[must_use]
     pub fn steps_for_mode(mode: BuildMode) -> &'static [WorkflowStep] {
         use WorkflowStep::{
@@ -115,7 +117,7 @@ impl WorkflowStep {
             GeneratePrecombines, GeneratePrevis, MergePrecombineObjects, MergePrevis,
         };
 
-        if mode.includes_psg_and_cdx() {
+        if mode.is_clean_build() {
             &[
                 GeneratePrecombines,
                 MergePrecombineObjects,

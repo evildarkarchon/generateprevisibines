@@ -84,7 +84,7 @@ struct BuildModeFlags {
     )]
     filtered: bool,
 
-    /// Build mode: Xbox (clean precombines; skips PSG and CDX).
+    /// Build mode: Xbox (clean build; keeps geometry uncompressed by skipping CompressPSG).
     #[arg(
         short = 'x',
         long = "xbox",

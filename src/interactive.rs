@@ -344,6 +344,31 @@ mod tests {
         assert!(parse_resume_step_choice("4", BuildMode::Filtered).is_none());
     }
 
+    /// The batch's resume menu (219–222) offers 4 and 5 to every mode except Filtered, so
+    /// V2.99 Xbox, a clean build, accepts them exactly as Clean does.
+    #[test]
+    fn resume_steps_four_and_five_follow_the_clean_build_split() {
+        let cases = [
+            (BuildMode::Clean, true),
+            (BuildMode::Xbox, true),
+            (BuildMode::Filtered, false),
+        ];
+
+        for (build_mode, accepted) in cases {
+            for (input, step) in [
+                ("4", WorkflowStep::CompressPsg),
+                ("5", WorkflowStep::BuildCdx),
+            ] {
+                let expected = accepted.then_some(ResumeStepChoice::Step(step));
+                assert_eq!(
+                    parse_resume_step_choice(input, build_mode),
+                    expected,
+                    "build mode: {build_mode:?}, input: {input}"
+                );
+            }
+        }
+    }
+
     /// Existing-plugin input remains inside the terminal adapter until a typed action is parsed.
     #[test]
     fn existing_plugin_prompt_repeats_invalid_input_inside_the_terminal_adapter() {
