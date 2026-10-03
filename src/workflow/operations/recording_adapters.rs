@@ -51,6 +51,11 @@ pub(crate) const QUIET_CK_LOG: &str = "Masterfile: Fallout4.esm\n";
 pub(crate) const COMPLETED_COMBINED_OBJECTS_MERGE_LOG: &str =
     "Merging CombinedObjects.esp into MyMod.esp\nCompleted: No Errors.\n";
 
+/// A clean Step 7 merge script log: it carries the `Completed: ` the FO4Edit episode's shared
+/// fatal looks for, and the `Completed: No Errors.` Step 7 requires to raise no warning.
+pub(crate) const COMPLETED_PREVIS_MERGE_LOG: &str =
+    "Merging Previs.esp into MyMod.esp\nCompleted: No Errors.\n";
+
 /// The main form of the FO4Edit a recording process runner spawned.
 pub(crate) const FO4EDIT_MAIN_FORM: WindowHandle =
     WindowHandle::from_raw(0x100, RECORDED_PROCESS_ID);
@@ -218,6 +223,19 @@ pub(crate) fn record_successful_combined_objects_merge(space: &InMemoryFileSpace
     space.add_file_with_contents(
         logging::unattended_log_path(space),
         COMPLETED_COMBINED_OBJECTS_MERGE_LOG,
+    );
+}
+
+/// Record what a successful Step 7 merge script run leaves in a Workflow Run's space: its
+/// unattended log, reading [`COMPLETED_PREVIS_MERGE_LOG`].
+///
+/// Meant as the `on_dismissed` body of [`behaving_fo4edit_windows`], for the reason given on
+/// [`record_successful_combined_objects_merge`]: a log seeded beforehand would be deleted as
+/// stale before it was read.
+pub(crate) fn record_successful_previs_merge(space: &InMemoryFileSpace) {
+    space.add_file_with_contents(
+        logging::unattended_log_path(space),
+        COMPLETED_PREVIS_MERGE_LOG,
     );
 }
 

@@ -39,12 +39,17 @@ pub(crate) enum BuildWarning {
     /// The Step 2 merge script's log contains `Error: ` (batch 284–285): the merge finished,
     /// but the script reported something it could not merge.
     MergePrecombinesHadErrors,
+    /// The Step 7 merge script's log lacks `Completed: No Errors.` (batch 327–328): the merge
+    /// finished, but the script did not report a clean run. The inverse polarity of
+    /// [`Self::MergePrecombinesHadErrors`], as the batch tests each log.
+    MergePrevisHadErrors,
 }
 
 impl fmt::Display for BuildWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MergePrecombinesHadErrors => f.write_str("Merge Precombines had errors"),
+            Self::MergePrevisHadErrors => f.write_str("Merge Previs had errors"),
             Self::VisibilityTaskIncomplete => {
                 f.write_str("GeneratePreVisData failed to build at least one Cluster uvd")
             }
@@ -156,6 +161,15 @@ mod tests {
         assert_eq!(
             BuildWarning::MergePrecombinesHadErrors.to_string(),
             "Merge Precombines had errors"
+        );
+    }
+
+    /// Batch line 328, minus the `WARNING - ` prefix.
+    #[test]
+    fn the_merge_previs_warning_reads_as_the_batch_wording() {
+        assert_eq!(
+            BuildWarning::MergePrevisHadErrors.to_string(),
+            "Merge Previs had errors"
         );
     }
 

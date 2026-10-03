@@ -2,7 +2,7 @@
 //!
 //! The previs artifacts are read by Steps 1, 6, 7 and 8, so the rules for them live here
 //! rather than in any one step: Step 1 refuses to start over a non-empty `vis`, Step 6 clears
-//! and validates both, and Steps 7 and 8 will require them.
+//! and validates both, Step 7 requires them, and Step 8 will.
 
 use std::path::PathBuf;
 
@@ -23,7 +23,8 @@ const PREVIS_PLUGIN: &str = "Previs.esp";
 /// line, following the same convention as the precombine handle-array marker.
 const VISIBILITY_TASK_MARKER: &str = "ERROR: visibility task did not complete.";
 
-/// Artifact space cleared and validated by the Generate Previs Operation.
+/// Artifact space cleared and validated by the Generate Previs Operation, and required by the
+/// Merge Previs Operation.
 ///
 /// Every artifact path is derived here from the resolved project configuration; only raw
 /// filesystem access goes through the [`FileSpace`] seam.
@@ -103,7 +104,9 @@ impl<'a> PrevisWorkspace<'a> {
             .then_some(BuildWarning::VisibilityTaskIncomplete))
     }
 
-    fn previs_plugin_path(&self) -> PathBuf {
+    /// `Data\Previs.esp`, the plugin `GeneratePreVisData` writes and Step 7 merges.
+    #[must_use]
+    pub(super) fn previs_plugin_path(&self) -> PathBuf {
         self.config.fo4edit_data_dir().join(PREVIS_PLUGIN)
     }
 }

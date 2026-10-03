@@ -613,11 +613,26 @@ mod tests {
         assert_eq!(execution.prompts_asked, []);
     }
 
-    /// `--resume-from 2` prepares and executes with FO4Edit alone. The install has no Creation
-    /// Kit at all, so a run that still resolved it, or bound it unconditionally, could not get
-    /// as far as the merge.
-    #[test]
-    fn a_resume_at_step_two_prepares_and_executes_with_fo4edit_alone() {
+    /// A Clean run resumed at `resume_from` over an install with FO4Edit and no Creation Kit at
+    /// all, prepared and checked to have resolved FO4Edit alone.
+    struct Fo4EditOnlyRun {
+        /// The real directory the toolchain probe validated; kept alive for the run's lifetime.
+        _directory: TempDir,
+        /// `Fallout4\Data`, where the merge steps' inputs are seeded.
+        data: PathBuf,
+        /// The FO4Edit executable the install holds.
+        fo4edit: PathBuf,
+        files: InMemoryFileSpace,
+        run: WorkflowRun,
+    }
+
+    /// Prepare [`Fo4EditOnlyRun`] for a resume at `resume_from`, asserting the run plans
+    /// `resume_from` alone and prepared FO4Edit, logging into its own session log, and no
+    /// Creation Kit.
+    ///
+    /// The install has no Creation Kit, so a run that still resolved it could not even be
+    /// prepared, and one that bound it unconditionally could not get as far as the merge.
+    fn prepare_fo4edit_only_run(resume_from: WorkflowStep) -> Fo4EditOnlyRun {
         let directory = tempdir().unwrap();
         let fallout4_directory = directory.path().join("Fallout4");
         fs::create_dir_all(&fallout4_directory).unwrap();
@@ -633,36 +648,82 @@ mod tests {
             ArchiveTool::Archive2,
             PluginIdentity::parse("MyMod"),
             true,
-            Some(WorkflowStep::MergePrecombineObjects),
+            Some(resume_from),
         );
         let files = InMemoryFileSpace::new();
 
         let run = WorkflowRun::prepare(&request, directory.path(), &probe, &files).unwrap();
 
-        assert_eq!(
-            run.runnable_steps(),
-            &[WorkflowStep::MergePrecombineObjects]
-        );
+        assert_eq!(run.runnable_steps(), &[resume_from]);
         assert!(run.creation_kit().is_none());
         let paths = run.fo4edit().unwrap();
         assert_eq!(paths.exe, fo4edit);
         assert_eq!(paths.data_dir_override, None);
         assert_eq!(paths.session_log, run.log_path());
 
-        // What Step 1 left behind, for Step 2 to merge.
-        let data = fallout4_directory.join("Data");
-        files.add_file(data.join("meshes").join("precombined").join("mesh.nif"));
-        files.add_file(data.join("CombinedObjects.esp"));
+        Fo4EditOnlyRun {
+            _directory: directory,
+            data: fallout4_directory.join("Data"),
+            fo4edit,
+            files,
+            run,
+        }
+    }
+
+    /// Execute a [`Fo4EditOnlyRun`] over a behaving FO4Edit and assert it completed after
+    /// exactly one spawn of that FO4Edit, for `script`.
+    fn assert_executes_one_fo4edit_merge(fixture: &Fo4EditOnlyRun, script: &str) {
         let exit = ExitFlag::new();
         let process = fo4edit_exiting_when(&exit);
 
-        let execution = execute_over_recording_ports(&run, &files, &process, &exit);
+        let execution = execute_over_recording_ports(&fixture.run, &fixture.files, &process, &exit);
 
         execution.result.unwrap();
         let calls = process.calls();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].exe, fo4edit);
+        assert_eq!(calls[0].exe, fixture.fo4edit);
         assert_eq!(calls[0].kind, ProcessCallKind::Spawn);
+        let script_arg = std::ffi::OsString::from(format!("-Script:{script}"));
+        assert!(
+            calls[0].args.contains(&script_arg),
+            "args: {:?}",
+            calls[0].args
+        );
+    }
+
+    /// `--resume-from 2` prepares and executes with FO4Edit alone.
+    #[test]
+    fn a_resume_at_step_two_prepares_and_executes_with_fo4edit_alone() {
+        let fixture = prepare_fo4edit_only_run(WorkflowStep::MergePrecombineObjects);
+
+        // What Step 1 left behind, for Step 2 to merge.
+        fixture.files.add_file(
+            fixture
+                .data
+                .join("meshes")
+                .join("precombined")
+                .join("mesh.nif"),
+        );
+        fixture
+            .files
+            .add_file(fixture.data.join("CombinedObjects.esp"));
+
+        assert_executes_one_fo4edit_merge(&fixture, "Batch_FO4MergeCombinedObjectsAndCheck.pas");
+    }
+
+    /// `--resume-from 7` prepares and executes with FO4Edit alone: Step 8 is not registered
+    /// yet, so Step 7 is the whole runnable plan.
+    #[test]
+    fn a_resume_at_step_seven_prepares_and_executes_with_fo4edit_alone() {
+        let fixture = prepare_fo4edit_only_run(WorkflowStep::MergePrevis);
+
+        // What Step 6 left behind, for Step 7 to merge.
+        fixture
+            .files
+            .add_file(fixture.data.join("vis").join("cell").join("cluster.uvd"));
+        fixture.files.add_file(fixture.data.join("Previs.esp"));
+
+        assert_executes_one_fo4edit_merge(&fixture, "Batch_FO4MergePrevisandCleanRefr.pas");
     }
 
     /// Prepare the fixture's Clean Step 1 request into a ready Workflow Run.
@@ -739,25 +800,6 @@ mod tests {
         assert!(!session.contains("failed."), "session log: {session}");
     }
 
-    /// A resume at 4 runs Creation Kit steps only, so no FO4Edit is resolved even where one
-    /// could be found.
-    #[test]
-    fn a_run_without_fo4edit_steps_prepares_no_fo4edit() {
-        let fixture = ready_workflow_fixture();
-        let mut request = fixture.request.clone();
-        request.resume_from = Some(WorkflowStep::CompressPsg);
-
-        let run = WorkflowRun::prepare(
-            &request,
-            fixture.directory.path(),
-            &fixture.probe,
-            &fixture.files,
-        )
-        .unwrap();
-
-        assert!(run.fo4edit().is_none());
-    }
-
     #[test]
     fn prepare_requires_creation_kit_for_registered_generate_precombines() {
         let directory = tempdir().unwrap();
@@ -825,7 +867,7 @@ mod tests {
         }
     }
 
-    /// A Clean resume at 4 runs Steps 4 to 6, so the diagnostic must say that rather than
+    /// A Clean resume at 4 runs Steps 4 to 7, so the diagnostic must say that rather than
     /// claim Step 1 is what runs.
     #[test]
     fn a_resumed_partial_run_names_the_steps_it_will_execute() {
@@ -845,12 +887,13 @@ mod tests {
             WorkflowStep::CompressPsg,
             WorkflowStep::BuildCdx,
             WorkflowStep::GeneratePrevis,
+            WorkflowStep::MergePrevis,
         ];
         assert_eq!(run.runnable_steps(), runnable.as_slice());
         assert!(
             run.diagnostics()
                 .contains(&RunDiagnostic::LaterStepsNotImplemented {
-                    skipped: 2,
+                    skipped: 1,
                     planned: 5,
                     runnable,
                 }),

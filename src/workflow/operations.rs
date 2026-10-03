@@ -20,6 +20,7 @@ mod compress_psg;
 mod generate_precombines;
 mod generate_previs;
 mod merge_combined_objects;
+mod merge_previs;
 mod precombine_workspace;
 mod previs_workspace;
 
@@ -40,6 +41,7 @@ register_production_operations!(
     compress_psg::DEFINITION,
     build_cdx::DEFINITION,
     generate_previs::DEFINITION,
+    merge_previs::DEFINITION,
 );
 
 type OperationExecution = fn(&WorkflowRun, &OperationPorts<'_>) -> Result<()>;
@@ -321,11 +323,12 @@ mod tests {
     use tempfile::{TempDir, tempdir};
 
     use super::recording_adapters::{
-        COMPLETED_COMBINED_OBJECTS_MERGE_LOG, FO4EDIT_MAIN_FORM, FO4EDIT_MODULE_SELECTION,
-        ONE_POLL_MERGE_DELAYS, QUIET_CK_LOG, RecordingPrompts, behaving_fo4edit_windows,
-        fo4edit_exiting_when, record_successful_cdx_outputs,
+        COMPLETED_COMBINED_OBJECTS_MERGE_LOG, COMPLETED_PREVIS_MERGE_LOG, FO4EDIT_MAIN_FORM,
+        FO4EDIT_MODULE_SELECTION, ONE_POLL_MERGE_DELAYS, QUIET_CK_LOG, RecordingPrompts,
+        behaving_fo4edit_windows, fo4edit_exiting_when, record_successful_cdx_outputs,
         record_successful_combined_objects_merge, record_successful_compress_outputs,
-        record_successful_precombine_outputs, record_successful_previs_outputs,
+        record_successful_precombine_outputs, record_successful_previs_merge,
+        record_successful_previs_outputs,
     };
     use super::*;
     use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
@@ -369,7 +372,11 @@ mod tests {
     fn production_workflow_plan_rejects_unregistered_resume_step() {
         let cases = [
             (BuildMode::Clean, WorkflowStep::AddPrevisToArchive, 8),
-            (BuildMode::Filtered, WorkflowStep::MergePrevis, 7),
+            (
+                BuildMode::Filtered,
+                WorkflowStep::CreateBa2FromPrecombines,
+                3,
+            ),
         ];
 
         for (mode, resume, expected_step) in cases {
@@ -503,7 +510,7 @@ mod tests {
         assert!(!requirements.needs_archive());
 
         let unregistered_requirements = source.toolchain_requirements_for_steps(&[
-            WorkflowStep::MergePrevis,
+            WorkflowStep::CreateBa2FromPrecombines,
             WorkflowStep::AddPrevisToArchive,
         ]);
         assert!(!unregistered_requirements.needs_creation_kit());
@@ -697,10 +704,17 @@ mod tests {
             process: &dyn ProcessRunner,
             desktop: &dyn DesktopWindows,
         ) -> (Result<()>, Vec<BuildWarning>) {
-            self.with_desktop_ports(process, desktop, |ports| {
-                let result = merge_combined_objects::run(&self.run, ports);
-                (result, ports.warnings.raised())
-            })
+            self.run_collecting_warnings_on(merge_combined_objects::run, process, desktop)
+        }
+
+        /// Drive Step 7 over the real FO4Edit episode; see
+        /// [`Self::run_step_two_collecting_warnings`].
+        fn run_step_seven_collecting_warnings(
+            &self,
+            process: &dyn ProcessRunner,
+            desktop: &dyn DesktopWindows,
+        ) -> (Result<()>, Vec<BuildWarning>) {
+            self.run_collecting_warnings_on(merge_previs::run, process, desktop)
         }
 
         /// Drive `operation` over this fixture's ports and return how it ended, with every
@@ -713,7 +727,18 @@ mod tests {
             operation: OperationExecution,
             process: &dyn ProcessRunner,
         ) -> (Result<()>, Vec<BuildWarning>) {
-            self.with_ports(process, |ports| {
+            self.run_collecting_warnings_on(operation, process, &RecordingDesktopWindows::new())
+        }
+
+        /// [`Self::run_collecting_warnings`], with `desktop` as FO4Edit's windows, for the
+        /// FO4Edit steps.
+        fn run_collecting_warnings_on(
+            &self,
+            operation: OperationExecution,
+            process: &dyn ProcessRunner,
+            desktop: &dyn DesktopWindows,
+        ) -> (Result<()>, Vec<BuildWarning>) {
+            self.with_desktop_ports(process, desktop, |ports| {
                 let result = operation(&self.run, ports);
                 (result, ports.warnings.raised())
             })
@@ -750,6 +775,16 @@ mod tests {
             BuildMode::Clean,
             non_interactive,
             Some(WorkflowStep::MergePrecombineObjects),
+        )
+    }
+
+    /// Prepare a real Workflow Run resumed at Step 7, which needs FO4Edit and no Creation Kit
+    /// until Step 8 is registered.
+    fn step_seven_fixture(non_interactive: bool) -> OperationFixture {
+        operation_fixture(
+            BuildMode::Clean,
+            non_interactive,
+            Some(WorkflowStep::MergePrevis),
         )
     }
 
@@ -1178,10 +1213,10 @@ mod tests {
         assert!(!requirements.needs_archive());
     }
 
-    /// A Clean resume at 4 runs Steps 4 to 6: Step 7 is the first planned step with no
+    /// A Clean resume at 4 runs Steps 4 to 7: Step 8 is the first planned step with no
     /// registered operation.
     #[test]
-    fn a_clean_resume_at_step_four_runs_steps_four_to_six() {
+    fn a_clean_resume_at_step_four_runs_steps_four_to_seven() {
         let plan =
             production_workflow_plan(BuildMode::Clean, Some(WorkflowStep::CompressPsg)).unwrap();
 
@@ -1195,6 +1230,7 @@ mod tests {
                 WorkflowStep::CompressPsg,
                 WorkflowStep::BuildCdx,
                 WorkflowStep::GeneratePrevis,
+                WorkflowStep::MergePrevis,
             ]
         );
     }
@@ -1216,7 +1252,10 @@ mod tests {
         let plan =
             production_workflow_plan(BuildMode::Filtered, Some(WorkflowStep::CompressPsg)).unwrap();
 
-        assert_eq!(plan.runnable_steps(), &[WorkflowStep::GeneratePrevis]);
+        assert_eq!(
+            plan.runnable_steps(),
+            &[WorkflowStep::GeneratePrevis, WorkflowStep::MergePrevis]
+        );
     }
 
     /// V2.99 Xbox checks the `.psg` and then skips `CompressPSG` (297–298): the geometry file
@@ -1432,15 +1471,19 @@ mod tests {
         }
     }
 
-    /// A Clean or Xbox resume at 5 runs Steps 5 and 6: Step 7 is not registered yet.
+    /// A Clean or Xbox resume at 5 runs Steps 5 to 7: Step 8 is not registered yet.
     #[test]
-    fn a_clean_build_resumed_at_step_five_runs_steps_five_and_six() {
+    fn a_clean_build_resumed_at_step_five_runs_steps_five_to_seven() {
         for mode in [BuildMode::Clean, BuildMode::Xbox] {
             let plan = production_workflow_plan(mode, Some(WorkflowStep::BuildCdx)).unwrap();
 
             assert_eq!(
                 plan.runnable_steps(),
-                &[WorkflowStep::BuildCdx, WorkflowStep::GeneratePrevis],
+                &[
+                    WorkflowStep::BuildCdx,
+                    WorkflowStep::GeneratePrevis,
+                    WorkflowStep::MergePrevis,
+                ],
                 "mode: {mode:?}"
             );
         }
@@ -1453,7 +1496,39 @@ mod tests {
         let plan =
             production_workflow_plan(BuildMode::Filtered, Some(WorkflowStep::BuildCdx)).unwrap();
 
-        assert_eq!(plan.runnable_steps(), &[WorkflowStep::GeneratePrevis]);
+        assert_eq!(
+            plan.runnable_steps(),
+            &[WorkflowStep::GeneratePrevis, WorkflowStep::MergePrevis]
+        );
+    }
+
+    /// In every Build Mode a resume at 6 runs through into Step 7, and a resume at 7 runs Step 7
+    /// alone, which needs FO4Edit and nothing else: Step 8 is not registered yet.
+    #[test]
+    fn resumes_at_steps_six_and_seven_run_through_step_seven() {
+        for mode in [BuildMode::Clean, BuildMode::Filtered, BuildMode::Xbox] {
+            let (plan, _) = prepare_production_workflow(mode, Some(WorkflowStep::GeneratePrevis))
+                .unwrap()
+                .into_parts();
+            assert_eq!(
+                plan.runnable_steps(),
+                &[WorkflowStep::GeneratePrevis, WorkflowStep::MergePrevis],
+                "mode: {mode:?}"
+            );
+
+            let (plan, requirements) =
+                prepare_production_workflow(mode, Some(WorkflowStep::MergePrevis))
+                    .unwrap()
+                    .into_parts();
+            assert_eq!(
+                plan.runnable_steps(),
+                &[WorkflowStep::MergePrevis],
+                "mode: {mode:?}"
+            );
+            assert!(requirements.needs_fo4edit(), "mode: {mode:?}");
+            assert!(!requirements.needs_creation_kit(), "mode: {mode:?}");
+            assert!(!requirements.needs_archive(), "mode: {mode:?}");
+        }
     }
 
     /// Step 5 has no pre-checks of its own (304–307): a resume at 5 enters at `:BldCDX` (231)
@@ -2255,6 +2330,276 @@ mod tests {
 
         // No mesh either: the preparation error must win over the workspace's own stop.
         let error = merge_combined_objects::run(&fixture.run, &ports).unwrap_err();
+
+        assert!(
+            matches!(error, Error::Fo4EditNotPrepared),
+            "error: {error:?}"
+        );
+        assert_eq!(fixture.wait.delays(), Vec::<u64>::new());
+    }
+
+    /// A `.uvd` beneath `Data\vis`, for Step 7's first entry check.
+    ///
+    /// Nested, as Creation Kit writes one per cluster cell, so the check is shown to look below
+    /// `vis` itself (`dir /s`, 323).
+    fn vis_uvd(fixture: &OperationFixture) -> PathBuf {
+        fixture
+            .run
+            .config()
+            .vis_dir()
+            .join("cell")
+            .join("cluster.uvd")
+    }
+
+    /// Seed what Step 6 leaves for Step 7 to merge: a `.uvd` and `Previs.esp`.
+    ///
+    /// Seeded rather than recorded as an effect, because they are Step 7's *inputs*: a resume at
+    /// 7 finds them already on disk.
+    fn add_previs_outputs(fixture: &OperationFixture) {
+        fixture.files.add_file(vis_uvd(fixture));
+        fixture.files.add_file(previs_plugin(fixture));
+    }
+
+    #[test]
+    fn merge_previs_is_registered_and_requires_fo4edit_alone() {
+        let source = production_operation_source();
+        let requirements = source.toolchain_requirements_for_steps(&[WorkflowStep::MergePrevis]);
+
+        assert!(source.contains(WorkflowStep::MergePrevis));
+        assert!(requirements.needs_fo4edit());
+        assert!(!requirements.needs_creation_kit());
+        assert!(!requirements.needs_archive());
+    }
+
+    /// A resume at 7 merges `Previs.esp` through the whole FO4Edit episode, with no Creation Kit
+    /// prepared even though one is installed, and nothing to warn about.
+    #[test]
+    fn step_seven_merges_previs_through_the_whole_fo4edit_episode() {
+        let fixture = step_seven_fixture(true);
+        assert!(fixture.run.creation_kit().is_none());
+        add_previs_outputs(&fixture);
+        let exit = ExitFlag::new();
+        let process = fo4edit_exiting_when(&exit);
+        let files = &fixture.files;
+        let desktop = behaving_fo4edit_windows(&exit, || record_successful_previs_merge(files));
+
+        let (result, warnings) = fixture.run_step_seven_collecting_warnings(&process, &desktop);
+
+        result.unwrap();
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        // One launch of the run's own FO4Edit, left running, for the Step 7 script and the
+        // run's own plugin; the rest of the argv is pinned in `tools::fo4edit`.
+        let calls = process.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].kind, ProcessCallKind::Spawn);
+        assert_eq!(calls[0].exe, fixture.run.fo4edit().unwrap().exe);
+        for expected in [
+            "-Script:Batch_FO4MergePrevisandCleanRefr.pas",
+            "-Mod:MyMod.esp",
+        ] {
+            assert!(
+                calls[0].args.contains(&std::ffi::OsString::from(expected)),
+                "args: {:?}",
+                calls[0].args
+            );
+        }
+        assert_eq!(fixture.wait.delays(), ONE_POLL_MERGE_DELAYS);
+        assert_eq!(
+            desktop.actions(),
+            vec![
+                DesktopAction::ClickButton {
+                    window: FO4EDIT_MODULE_SELECTION,
+                    caption: "OK".to_owned(),
+                },
+                DesktopAction::RequestClose {
+                    window: FO4EDIT_MAIN_FORM,
+                },
+            ]
+        );
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(
+            session.contains(
+                "Running xEdit script Batch_FO4MergePrevisandCleanRefr.pas against MyMod.esp\n"
+            ),
+            "session log: {session}"
+        );
+        assert!(
+            session.ends_with(COMPLETED_PREVIS_MERGE_LOG),
+            "session log: {session}"
+        );
+    }
+
+    /// A log that completed but lacks `Completed: No Errors.` finishes Step 7 with exactly one
+    /// warning in the batch's words (327–328). The logs are spelled out by hand, and carry the
+    /// `Completed: ` the shared fatal needs, so only Step 7's own criterion is in play.
+    #[test]
+    fn a_merge_log_lacking_no_errors_completes_step_seven_with_one_warning() {
+        for log in [
+            "Merging Previs.esp\nError: could not copy REFR [0001F00D]\nCompleted: 1 errors.\n",
+            // No `Error: ` at all: Step 7 does not look for errors, only for the clean marker.
+            "Merging Previs.esp\nCompleted: No Errors\n",
+        ] {
+            let fixture = step_seven_fixture(true);
+            add_previs_outputs(&fixture);
+            let exit = ExitFlag::new();
+            let process = fo4edit_exiting_when(&exit);
+            let desktop = merge_windows_logging(&fixture, &exit, log);
+
+            let (result, warnings) = fixture.run_step_seven_collecting_warnings(&process, &desktop);
+
+            result.unwrap();
+            assert_eq!(
+                warnings,
+                vec![BuildWarning::MergePrevisHadErrors],
+                "log: {log}"
+            );
+            let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+            assert!(
+                session.ends_with(&format!("{log}WARNING - Merge Previs had errors\n")),
+                "session log: {session}"
+            );
+        }
+    }
+
+    /// `Findstr /I` (327): `Completed: No Errors.` in another letter case still counts as a
+    /// clean run, so no warning is raised.
+    #[test]
+    fn the_no_errors_marker_in_another_case_raises_no_step_seven_warning() {
+        for log in [
+            "Merging Previs.esp\n[00:42] completed: no errors.\n",
+            "Merging Previs.esp\nCOMPLETED: NO ERRORS.\n",
+        ] {
+            let fixture = step_seven_fixture(true);
+            add_previs_outputs(&fixture);
+            let exit = ExitFlag::new();
+            let process = fo4edit_exiting_when(&exit);
+            let desktop = merge_windows_logging(&fixture, &exit, log);
+
+            let (result, warnings) = fixture.run_step_seven_collecting_warnings(&process, &desktop);
+
+            result.unwrap();
+            assert!(warnings.is_empty(), "log: {log}, warnings: {warnings:?}");
+        }
+    }
+
+    /// No `.uvd` under `Data\vis` stops Step 7 with the batch's own words (323), before FO4Edit
+    /// is launched or any delay runs — and before `Previs.esp` is looked at, so a run missing
+    /// both is told about the `.uvd` files first, as the batch tells it.
+    #[test]
+    fn step_seven_stops_without_visibility_files_before_fo4edit() {
+        for with_previs_plugin in [true, false] {
+            let fixture = step_seven_fixture(true);
+            if with_previs_plugin {
+                fixture.files.add_file(previs_plugin(&fixture));
+            }
+            // A non-`.uvd` file in `vis` is not previs, so it does not satisfy the check.
+            fixture
+                .files
+                .add_file(fixture.run.config().vis_dir().join("notes.txt"));
+            let exit = ExitFlag::new();
+            let process = fo4edit_exiting_when(&exit);
+            let files = &fixture.files;
+            let desktop = behaving_fo4edit_windows(&exit, || record_successful_previs_merge(files));
+
+            let (result, warnings) = fixture.run_step_seven_collecting_warnings(&process, &desktop);
+
+            let err = result.unwrap_err();
+            assert!(
+                matches!(err, Error::NoVisibilityFiles),
+                "with Previs.esp: {with_previs_plugin}, error: {err:?}"
+            );
+            assert_eq!(err.to_string(), "No Visibility files Generated");
+            assert!(warnings.is_empty(), "warnings: {warnings:?}");
+            assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
+            assert_eq!(fixture.wait.delays(), Vec::<u64>::new());
+            assert_eq!(desktop.actions(), vec![]);
+        }
+    }
+
+    /// No `Data\Previs.esp` stops Step 7 with the batch's own words (324), before FO4Edit is
+    /// launched or any delay runs.
+    #[test]
+    fn step_seven_stops_without_a_previs_plugin_before_fo4edit() {
+        let fixture = step_seven_fixture(true);
+        fixture.files.add_file(vis_uvd(&fixture));
+        let exit = ExitFlag::new();
+        let process = fo4edit_exiting_when(&exit);
+        let files = &fixture.files;
+        let desktop = behaving_fo4edit_windows(&exit, || record_successful_previs_merge(files));
+
+        let (result, warnings) = fixture.run_step_seven_collecting_warnings(&process, &desktop);
+
+        let err = result.unwrap_err();
+        assert!(matches!(err, Error::NoPrevisPlugin), "{err:?}");
+        assert_eq!(err.to_string(), "No Previs.esp Generated");
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
+        assert_eq!(fixture.wait.delays(), Vec::<u64>::new());
+        assert_eq!(desktop.actions(), vec![]);
+        // Nothing was attempted, so the session log names no script run.
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(
+            !session.contains("Running xEdit script"),
+            "session log: {session}"
+        );
+    }
+
+    /// The `:RunScript` fall-through divergence again, for Step 7: the batch's non-interactive
+    /// `goto failed` inside a `Call` carried on into Step 8 with an unmerged plugin. Both shared
+    /// fatals stop Step 7 whether or not the run is interactive, and neither leaves a Step 7
+    /// warning behind, though neither log holds `Completed: No Errors.`.
+    #[test]
+    fn the_shared_fo4edit_fatals_stop_step_seven_whether_or_not_it_is_interactive() {
+        let missing_modules = "Error: Missing [MyMod.esp] or [Previs.esp] modules\n\
+                               Completed: 1 errors.\n";
+        let never_completed = "Merging Previs.esp\nError: access violation\n";
+
+        for non_interactive in [true, false] {
+            for log in [missing_modules, never_completed] {
+                let fixture = step_seven_fixture(non_interactive);
+                assert_eq!(fixture.run.config().non_interactive, non_interactive);
+                add_previs_outputs(&fixture);
+                let exit = ExitFlag::new();
+                let process = fo4edit_exiting_when(&exit);
+                let desktop = merge_windows_logging(&fixture, &exit, log);
+
+                let (result, warnings) =
+                    fixture.run_step_seven_collecting_warnings(&process, &desktop);
+
+                let err = result.unwrap_err();
+                let case = format!("non-interactive: {non_interactive}, log: {log}");
+                if log == missing_modules {
+                    assert!(
+                        matches!(err, Error::Fo4EditScriptMissingModules { .. }),
+                        "{case}, error: {err:?}"
+                    );
+                } else {
+                    assert!(
+                        matches!(err, Error::Fo4EditScriptFailed { .. }),
+                        "{case}, error: {err:?}"
+                    );
+                }
+                assert!(warnings.is_empty(), "{case}, warnings: {warnings:?}");
+            }
+        }
+    }
+
+    /// Step 7 reaches FO4Edit through `ports.fo4edit()?`: a run that prepared none stops with
+    /// the preparation error before the workspace is looked at.
+    #[test]
+    fn step_seven_without_fo4edit_stops_before_any_launch() {
+        let fixture = step_seven_fixture(true);
+        let warnings = BuildWarnings::new(fixture.run.log_path().to_path_buf(), &fixture.files);
+        let ports = OperationPorts {
+            ck: None,
+            fo4edit: None,
+            prompts: &fixture.prompts,
+            files: &fixture.files,
+            warnings: &warnings,
+        };
+
+        // No `.uvd` either: the preparation error must win over the workspace's own stop.
+        let error = merge_previs::run(&fixture.run, &ports).unwrap_err();
 
         assert!(
             matches!(error, Error::Fo4EditNotPrepared),

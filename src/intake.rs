@@ -1599,6 +1599,7 @@ mod tests {
                 WorkflowStep::CompressPsg,
                 WorkflowStep::BuildCdx,
                 WorkflowStep::GeneratePrevis,
+                WorkflowStep::MergePrevis,
             ]
         );
         assert_eq!(prompts.call_count(), 0);
