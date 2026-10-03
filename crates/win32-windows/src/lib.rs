@@ -12,8 +12,12 @@
 //! behaviour against real windows was established by the FO4Edit window probe (issue #40) and is
 //! re-checked by the manual integration checklist.
 //!
-//! The probe ranked `BM_CLICK` above a posted ENTER, so there is deliberately no "post a key";
-//! ADR-0003 was amended to drop it from its original list.
+//! Every action is a message posted to one named window, so nothing this crate does can reach a
+//! window it was not given. ENTER in particular is posted, never typed: `SendInput` takes no
+//! target and types into whichever window has the foreground when the key is processed, and no
+//! Win32 call makes "check the foreground, then type" atomic, so a program that takes the
+//! foreground in between would receive the key. The probe (issue #40) found a posted ENTER
+//! dismisses Module Selection as reliably as `BM_CLICK`, with the dialog in the background.
 //!
 //! Off Windows the crate is empty.
 #![cfg(windows)]
@@ -21,14 +25,12 @@
 use std::io;
 
 use windows::Win32::Foundation::{ERROR_INVALID_WINDOW_HANDLE, HWND, LPARAM, WPARAM};
-use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, IsWindowEnabled, KEYBD_EVENT_FLAGS, KEYBDINPUT,
-    KEYEVENTF_KEYUP, SendInput, VK_RETURN,
-};
+use windows::Win32::UI::Input::KeyboardAndMouse::{IsWindowEnabled, VK_RETURN};
 use windows::Win32::UI::WindowsAndMessaging::{
-    BM_CLICK, EnumChildWindows, EnumWindows, GW_OWNER, GetClassNameW, GetForegroundWindow,
-    GetWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
-    PostMessageW, SMTO_ABORTIFHUNG, SendMessageTimeoutW, SetForegroundWindow, WM_CLOSE, WM_GETTEXT,
+    BM_CLICK, EnumChildWindows, EnumWindows, GUITHREADINFO, GW_OWNER, GetClassNameW,
+    GetGUIThreadInfo, GetWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+    IsChild, IsWindowVisible, PostMessageW, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_CLOSE,
+    WM_GETTEXT, WM_KEYDOWN, WM_KEYUP,
 };
 use windows::core::BOOL;
 
@@ -41,17 +43,13 @@ const SENT_TEXT_CAPACITY: usize = 512;
 /// How long the `WM_GETTEXT` fallback waits on the window's thread before giving up.
 const SENT_TEXT_TIMEOUT_MS: u32 = 500;
 
-/// `SendInput`'s `cbsize`: the size of one `INPUT`.
-// The assertion makes the narrowing cast provably lossless, at compile time.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    reason = "asserted to fit in an i32 just above the cast"
-)]
-const INPUT_SIZE: i32 = {
-    assert!(size_of::<INPUT>() <= i32::MAX as usize);
-    size_of::<INPUT>() as i32
-};
+/// `WM_KEYDOWN`'s `lparam` for ENTER: repeat count 1, scan code `0x1C`. The values a real key
+/// press carries, and the ones the probe posted.
+const ENTER_DOWN_LPARAM: isize = 0x001C_0001;
+
+/// `WM_KEYUP`'s `lparam` for ENTER: as for the key-down, plus the previous-state (bit 30) and
+/// transition-state (bit 31) flags every key-up carries.
+const ENTER_UP_LPARAM: isize = 0xC01C_0001;
 
 /// A window handle, bound to the process that owned the window when the handle was read.
 ///
@@ -209,100 +207,77 @@ pub fn find_child(parent: Hwnd, class_name: &str, caption: &str) -> io::Result<O
 /// Post `BM_CLICK` to `button`, as if the user clicked it. Returns without waiting for the
 /// button's window to process the click.
 pub fn post_button_click(button: Hwnd) -> io::Result<()> {
-    post_message(button, BM_CLICK)
+    post_message(button, BM_CLICK, WPARAM(0), LPARAM(0))
 }
 
 /// Post `WM_CLOSE` to `window`, asking it to close. Returns without waiting for the window to
 /// act on the request, which it is free to refuse.
 pub fn post_close(window: Hwnd) -> io::Result<()> {
-    post_message(window, WM_CLOSE)
+    post_message(window, WM_CLOSE, WPARAM(0), LPARAM(0))
 }
 
-/// Ask Windows to make `window` the foreground window.
+/// Post one ENTER key press — `WM_KEYDOWN`, then `WM_KEYUP`, for `VK_RETURN` — to `window`'s
+/// focused control, or to `window` itself when focus is not inside it. Returns without waiting
+/// for the window to process the key.
 ///
-/// Returns whether Windows granted the request. The foreground rules often refuse it to a
-/// background process, so `false` is an ordinary answer rather than an error. A window that no
-/// longer belongs to the process it was read from is refused without asking.
-#[must_use]
-pub fn set_foreground(window: Hwnd) -> bool {
-    let Ok(hwnd) = window.checked() else {
-        return false;
+/// Both messages go to `window` or one of its own descendants, never to whichever window has
+/// the foreground, so the key can reach no other program whatever the user is doing meanwhile.
+/// The focused control is the one a typed key would reach; for Module Selection that is its
+/// module tree, which is where the probe (issue #40) posted the ENTER that dismissed it.
+///
+/// A posted key does not change the keyboard state, so the receiver sees the real modifier
+/// keys: a physically held Ctrl turns Module Selection's ENTER into a single-module load. And
+/// if the key-up cannot be posted after the key-down was, nothing is left held down. An error
+/// means `window` no longer belongs to the process it was read from, or a post failed (for
+/// instance because UIPI blocks posting to a higher-integrity process).
+pub fn post_enter(window: Hwnd) -> io::Result<()> {
+    let target = focused_control(window)?.unwrap_or(window);
+    post_message(
+        target,
+        WM_KEYDOWN,
+        WPARAM(VK_RETURN.0.into()),
+        LPARAM(ENTER_DOWN_LPARAM),
+    )?;
+    post_message(
+        target,
+        WM_KEYUP,
+        WPARAM(VK_RETURN.0.into()),
+        LPARAM(ENTER_UP_LPARAM),
+    )
+}
+
+/// The window with keyboard focus on `window`'s thread, when that is `window` itself or one of
+/// its descendants in the same process; `Ok(None)` when focus is anywhere else or nowhere.
+///
+/// Fails when `window` no longer belongs to the process it was read from.
+fn focused_control(window: Hwnd) -> io::Result<Option<Hwnd>> {
+    let hwnd = window.checked()?;
+    // SAFETY: `GetWindowThreadProcessId` accepts any handle and, with no out-pointer, only
+    // returns the thread id; a window destroyed since the check gives 0.
+    let thread = unsafe { GetWindowThreadProcessId(hwnd, None) };
+    if thread == 0 {
+        return Err(invalid_window_handle());
+    }
+
+    let mut info = GUITHREADINFO {
+        cbSize: u32::try_from(size_of::<GUITHREADINFO>()).expect("GUITHREADINFO fits in a u32"),
+        ..Default::default()
     };
-    // SAFETY: `SetForegroundWindow` accepts any handle; a stale one is refused.
-    unsafe { SetForegroundWindow(hwnd) }.as_bool()
-}
-
-/// The current foreground window, or `None` when there is none (for instance while focus is
-/// changing).
-#[must_use]
-pub fn foreground_window() -> Option<Hwnd> {
-    // SAFETY: `GetForegroundWindow` takes no arguments and only reads state.
-    Hwnd::from_win32(unsafe { GetForegroundWindow() })
-}
-
-/// Send one ENTER key press to `window`, but only if `window` is the foreground window.
-///
-/// `SendInput` takes no target: it types into whichever window has keyboard focus. So this
-/// reads the foreground window immediately before sending, and returns `Ok(false)` without
-/// typing anything when it is not `window` (or `window`'s number now names another process's
-/// window). That keeps the check and the send in one call, a few instructions apart; no Win32
-/// call makes them atomic, so a program that takes the foreground in that span still receives
-/// the key. Returns `Ok(true)` once both events are inserted, and an error when `window` no
-/// longer exists or Windows inserts fewer than both events, for instance because input is
-/// blocked.
-pub fn send_enter_to(window: Hwnd) -> io::Result<bool> {
-    window.checked()?;
-    if foreground_window() != Some(window) {
-        return Ok(false);
+    // SAFETY: `info` is a live local of the size its `cbSize` states, which the call fills in.
+    // A thread that has since exited makes the call fail, which reads as "no focus" below.
+    if unsafe { GetGUIThreadInfo(thread, &raw mut info) }.is_err() {
+        return Ok(None);
     }
-    send_enter()?;
-    Ok(true)
-}
 
-/// Send one ENTER key press — key down, then key up — through `SendInput`, to whichever window
-/// has keyboard focus.
-///
-/// If only the key-down is inserted, the key-up is sent on its own so ENTER is not left held
-/// down; the original failure is returned either way.
-fn send_enter() -> io::Result<()> {
-    let key = |flags: KEYBD_EVENT_FLAGS| INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: VK_RETURN,
-                wScan: 0,
-                dwFlags: flags,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    };
-    let inputs = [key(KEYBD_EVENT_FLAGS(0)), key(KEYEVENTF_KEYUP)];
-
-    // SAFETY: `inputs` is a fully initialised array of keyboard `INPUT`s and `INPUT_SIZE` is
-    // the size of one element, as `SendInput` requires.
-    let inserted = unsafe { SendInput(&inputs, INPUT_SIZE) };
-    if inserted as usize == inputs.len() {
-        return Ok(());
-    }
-    // Read before the key-up retry below can overwrite it.
-    let error = io::Error::last_os_error();
-    if inserted == 1 {
-        // Only the key-down went in. Release the key, or the system would treat ENTER as held
-        // until something else sends a key-up. Best effort: if this fails too, there is nothing
-        // more to try, and the original failure is what gets reported.
-        // SAFETY: as above; the slice holds the one fully initialised key-up `INPUT`.
-        let _ = unsafe { SendInput(&inputs[1..], INPUT_SIZE) };
-    }
-    // Input blocked by UIPI sets no last error, which would otherwise read as "The operation
-    // completed successfully".
-    if error.raw_os_error() == Some(0) {
-        return Err(io::Error::other(format!(
-            "SendInput inserted {inserted} of {} key events",
-            inputs.len()
-        )));
-    }
-    Err(error)
+    // The focus window is bound to its process like any other handle, so a focus in another
+    // process (a thread attached with `AttachThreadInput`) is never a target, and the post
+    // re-checks that binding.
+    Ok(Hwnd::from_win32(info.hwndFocus).filter(|&focus| {
+        focus.pid == window.pid
+            && (focus == window
+                // SAFETY: `IsChild` accepts any pair of handles and only reads the window tree.
+                || unsafe { IsChild(hwnd, focus.to_win32()) }.as_bool())
+    }))
 }
 
 /// `EnumWindows`/`EnumChildWindows` callback: push each handle into the `Vec<Hwnd>` whose
@@ -422,14 +397,17 @@ fn control_text(window: Hwnd) -> String {
     String::from_utf16_lossy(&buffer[..copied.min(buffer.len())])
 }
 
-/// Post `message`, with no parameters, to `window`, once it is confirmed to still belong to the
-/// process it was read from.
-fn post_message(window: Hwnd, message: u32) -> io::Result<()> {
+/// Post `message` to `window`, once it is confirmed to still belong to the process it was read
+/// from.
+///
+/// Only for messages whose parameters are plain values: a posted message is handled after this
+/// returns, so a pointer in it could dangle.
+fn post_message(window: Hwnd, message: u32, wparam: WPARAM, lparam: LPARAM) -> io::Result<()> {
     let hwnd = window.checked()?;
-    // SAFETY: the messages this crate posts (`BM_CLICK`, `WM_CLOSE`) carry no pointers, so
-    // nothing the receiver reads can dangle. A stale handle makes the call fail, which is
-    // returned.
-    unsafe { PostMessageW(Some(hwnd), message, WPARAM(0), LPARAM(0)) }?;
+    // SAFETY: the messages this crate posts (`BM_CLICK`, `WM_CLOSE`, `WM_KEYDOWN`, `WM_KEYUP`)
+    // carry a key code and key flags at most, never a pointer, so nothing the receiver reads can
+    // dangle. A stale handle makes the call fail, which is returned.
+    unsafe { PostMessageW(Some(hwnd), message, wparam, lparam) }?;
     Ok(())
 }
 

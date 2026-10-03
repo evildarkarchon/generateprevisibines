@@ -140,8 +140,10 @@ closing. Sources: `docs/research/fo4edit-window-automation.md` on branch
 **Port divergences, decided on #28:**
 
 - Dismissal targets this run's `Module Selection` window only. The port tries a targeted
-  message, then foreground plus `SendInput`, then prints an instruction to press OK. It never
-  sends input to any other window.
+  message, then an ENTER posted to the dialog, then prints an instruction to press OK. It never
+  sends input to any other window, so it never types through `SendInput`, which goes to
+  whichever window has the foreground (amended after #80's review; see
+  [ADR-0003](adr/0003-win32-window-calls-in-a-helper-crate.md)).
 - The poll stops the run if FO4Edit exits before the log appears.
 - Close requests go to this run's PID only, and the port never kills FO4Edit. If FO4Edit is
   still running after the close sequence, the run stops.

@@ -72,9 +72,10 @@ pub(crate) struct WindowSnapshot {
 
 /// Read the desktop's top-level windows and act on one window at a time.
 ///
-/// Every action names its target. [`send_enter`](Self::send_enter) types rather than posts, so
-/// it can only reach whichever window has the foreground; it therefore checks that its target
-/// is that window, in the same call, and types nothing otherwise.
+/// Every action names its target and is delivered to that window alone. There is deliberately
+/// no way to type a key: typed input goes to whichever window has the foreground when it is
+/// processed, which no check made beforehand can pin down, so ENTER is
+/// [posted](Self::post_enter) instead.
 ///
 /// Implementors must be `Debug` so the adapters that hold a `DesktopWindows` can keep deriving
 /// `Debug`.
@@ -93,21 +94,14 @@ pub(crate) trait DesktopWindows: std::fmt::Debug {
     /// exists or the post failed.
     fn click_button(&self, window: WindowHandle, caption: &str) -> Result<bool>;
 
-    /// Ask for `window` to become the foreground window. Returns whether Windows granted it; the
-    /// foreground rules often refuse, so `false` is an ordinary answer.
-    fn set_foreground(&self, window: WindowHandle) -> bool;
-
-    /// The current foreground window, if there is one.
-    fn foreground_window(&self) -> Option<WindowHandle>;
-
-    /// Send one ENTER key press to `window`, if `window` has the foreground.
+    /// Post one ENTER key press to `window`: to its focused control, as a typed key would reach,
+    /// or to `window` itself when focus is not inside it. Works whether or not `window` has the
+    /// foreground, and never reaches any other window.
     ///
-    /// Returns `Ok(true)` when the key was sent, and `Ok(false)`, having typed nothing, when
-    /// another window (or none) has the foreground. The foreground is read immediately before
-    /// typing, inside this call, since a check made earlier by the caller could be stale by the
-    /// time the key is sent. An error means `window` no longer exists or the key could not be
-    /// sent.
-    fn send_enter(&self, window: WindowHandle) -> Result<bool>;
+    /// Returns once the key is posted; whether the window acted on it is for a later
+    /// [`top_level_windows`](Self::top_level_windows) to show. An error means `window` no longer
+    /// exists or the post failed.
+    fn post_enter(&self, window: WindowHandle) -> Result<()>;
 
     /// Ask `window` to close, by posting it `WM_CLOSE`. Returns once the request is posted, not
     /// once the window has closed; it may refuse. An error means `window` no longer exists or
@@ -158,16 +152,8 @@ impl DesktopWindows for SystemDesktopWindows {
         Ok(true)
     }
 
-    fn set_foreground(&self, window: WindowHandle) -> bool {
-        win32::set_foreground(to_helper(window))
-    }
-
-    fn foreground_window(&self) -> Option<WindowHandle> {
-        win32::foreground_window().map(from_helper)
-    }
-
-    fn send_enter(&self, window: WindowHandle) -> Result<bool> {
-        Ok(win32::send_enter_to(to_helper(window))?)
+    fn post_enter(&self, window: WindowHandle) -> Result<()> {
+        Ok(win32::post_enter(to_helper(window))?)
     }
 
     fn request_close(&self, window: WindowHandle) -> Result<()> {
@@ -186,16 +172,8 @@ impl DesktopWindows for SystemDesktopWindows {
         Ok(false)
     }
 
-    fn set_foreground(&self, _window: WindowHandle) -> bool {
-        false
-    }
-
-    fn foreground_window(&self) -> Option<WindowHandle> {
-        None
-    }
-
-    fn send_enter(&self, _window: WindowHandle) -> Result<bool> {
-        Ok(false)
+    fn post_enter(&self, _window: WindowHandle) -> Result<()> {
+        Ok(())
     }
 
     fn request_close(&self, _window: WindowHandle) -> Result<()> {
@@ -235,12 +213,8 @@ mod recording {
             window: WindowHandle,
             caption: String,
         },
-        /// [`DesktopWindows::set_foreground`].
-        SetForeground { window: WindowHandle },
-        /// [`DesktopWindows::send_enter`] aimed at `window`. `sent` is whether the key was
-        /// actually typed — only when `window` had the foreground — so an effect can react to a
-        /// real keystroke and a test can see one that was withheld.
-        SendEnter { window: WindowHandle, sent: bool },
+        /// [`DesktopWindows::post_enter`].
+        PostEnter { window: WindowHandle },
         /// [`DesktopWindows::request_close`].
         RequestClose { window: WindowHandle },
     }
@@ -306,13 +280,11 @@ mod recording {
     /// The desktop as a [`RecordingDesktopWindows`] currently reports it.
     ///
     /// Effects receive it mutably, which is how the script changes in response to actions:
-    /// Module Selection disappears once its `OK` is clicked, the process's windows go away once
-    /// it is asked to close, another program steals the foreground.
+    /// Module Selection disappears once its `OK` is clicked or it is posted ENTER, the process's
+    /// windows go away once it is asked to close, another dialog appears.
     #[derive(Debug, Default)]
     pub(crate) struct DesktopScript {
         windows: Vec<ScriptedWindow>,
-        foreground: Option<WindowHandle>,
-        foreground_refused: bool,
     }
 
     impl DesktopScript {
@@ -321,13 +293,10 @@ mod recording {
             self.windows.push(window);
         }
 
-        /// Destroy the window `handle`. If it had the foreground, nothing has it any more.
+        /// Destroy the window `handle`.
         pub(crate) fn remove_window(&mut self, handle: WindowHandle) {
             self.windows
                 .retain(|window| window.snapshot.handle != handle);
-            if self.foreground == Some(handle) {
-                self.foreground = None;
-            }
         }
 
         /// Show or hide the window `handle`. Does nothing if no such window is scripted.
@@ -335,17 +304,6 @@ mod recording {
             if let Some(window) = self.window_mut(handle) {
                 window.snapshot.visible = visible;
             }
-        }
-
-        /// Make `handle` the foreground window, or leave none with `None`, regardless of the
-        /// foreground rules — as another program taking focus would.
-        pub(crate) fn set_foreground_window(&mut self, handle: Option<WindowHandle>) {
-            self.foreground = handle;
-        }
-
-        /// Make [`DesktopWindows::set_foreground`] refuse (`true`) or grant (`false`) from now on.
-        pub(crate) fn refuse_foreground(&mut self, refused: bool) {
-            self.foreground_refused = refused;
         }
 
         fn window(&self, handle: WindowHandle) -> Option<&ScriptedWindow> {
@@ -371,15 +329,12 @@ mod recording {
     ///   order they were scripted.
     /// - [`click_button`] answers `true` when the target window was scripted
     ///   [`with_button`](ScriptedWindow::with_button) for that caption, and `false` otherwise.
-    /// - [`set_foreground`] grants the request — making the window the foreground — unless the
-    ///   double was built [`refusing_foreground`](Self::refusing_foreground).
-    /// - [`send_enter`] answers `true`, and records the key as sent, only when the target window
-    ///   has the foreground.
+    /// - [`post_enter`] and [`request_close`] succeed for any scripted window and change nothing
+    ///   themselves; an effect decides what the key or the close request does.
     /// - An action aimed at a window that is not scripted (never was, or has been removed) fails
-    ///   the way Win32 does for a destroyed window: [`set_foreground`] answers `false`, and
-    ///   [`click_button`], [`send_enter`] and [`request_close`] return an error. Handles match
-    ///   on process as well as number, so a handle whose number now belongs to another process's
-    ///   scripted window counts as not scripted, as the production adapter treats a recycled one.
+    ///   with an error, the way Win32 does for a destroyed window. Handles match on process as
+    ///   well as number, so a handle whose number now belongs to another process's scripted
+    ///   window counts as not scripted, as the production adapter treats a recycled one.
     ///
     /// Every action is recorded, failed ones included, and every [`on_action`](Self::on_action)
     /// effect runs on it in installation order. The action's own answer comes from the script as
@@ -390,8 +345,7 @@ mod recording {
     ///
     /// [`top_level_windows`]: DesktopWindows::top_level_windows
     /// [`click_button`]: DesktopWindows::click_button
-    /// [`set_foreground`]: DesktopWindows::set_foreground
-    /// [`send_enter`]: DesktopWindows::send_enter
+    /// [`post_enter`]: DesktopWindows::post_enter
     /// [`request_close`]: DesktopWindows::request_close
     #[derive(Default)]
     pub(crate) struct RecordingDesktopWindows<'a> {
@@ -401,7 +355,7 @@ mod recording {
     }
 
     impl<'a> RecordingDesktopWindows<'a> {
-        /// A desktop with no windows and no foreground window.
+        /// A desktop with no windows.
         #[must_use]
         pub(crate) fn new() -> Self {
             Self::default()
@@ -411,22 +365,6 @@ mod recording {
         #[must_use]
         pub(crate) fn with_window(self, window: ScriptedWindow) -> Self {
             self.script.borrow_mut().add_window(window);
-            self
-        }
-
-        /// Start with `handle` as the foreground window.
-        #[must_use]
-        pub(crate) fn with_foreground(self, handle: WindowHandle) -> Self {
-            self.script.borrow_mut().set_foreground_window(Some(handle));
-            self
-        }
-
-        /// Refuse every [`DesktopWindows::set_foreground`], as Windows' foreground rules often do
-        /// for a background process. An effect can lift the refusal through
-        /// [`DesktopScript::refuse_foreground`].
-        #[must_use]
-        pub(crate) fn refusing_foreground(self) -> Self {
-            self.script.borrow_mut().refuse_foreground(true);
             self
         }
 
@@ -496,32 +434,11 @@ mod recording {
             found.ok_or_else(|| no_such_window(window))
         }
 
-        fn set_foreground(&self, window: WindowHandle) -> bool {
-            let granted = {
-                let mut script = self.script.borrow_mut();
-                let granted = !script.foreground_refused && script.window(window).is_some();
-                if granted {
-                    script.foreground = Some(window);
-                }
-                granted
-            };
-            self.record(DesktopAction::SetForeground { window });
-            granted
-        }
-
-        fn foreground_window(&self) -> Option<WindowHandle> {
-            self.script.borrow().foreground
-        }
-
-        fn send_enter(&self, window: WindowHandle) -> Result<bool> {
-            let (exists, sent) = {
-                let script = self.script.borrow();
-                let exists = script.window(window).is_some();
-                (exists, exists && script.foreground == Some(window))
-            };
-            self.record(DesktopAction::SendEnter { window, sent });
+        fn post_enter(&self, window: WindowHandle) -> Result<()> {
+            let exists = self.script.borrow().window(window).is_some();
+            self.record(DesktopAction::PostEnter { window });
             if exists {
-                Ok(sent)
+                Ok(())
             } else {
                 Err(no_such_window(window))
             }
@@ -659,9 +576,7 @@ mod tests {
 
         assert!(desktop.click_button(gone, "OK").is_err());
         assert!(desktop.request_close(gone).is_err());
-        assert!(desktop.send_enter(gone).is_err());
-        assert!(!desktop.set_foreground(gone));
-        assert_eq!(desktop.foreground_window(), None);
+        assert!(desktop.post_enter(gone).is_err());
 
         // Failed actions are still recorded: the caller did attempt them.
         assert_eq!(
@@ -672,11 +587,7 @@ mod tests {
                     caption: "OK".to_owned(),
                 },
                 DesktopAction::RequestClose { window: gone },
-                DesktopAction::SendEnter {
-                    window: gone,
-                    sent: false,
-                },
-                DesktopAction::SetForeground { window: gone },
+                DesktopAction::PostEnter { window: gone },
             ]
         );
     }
@@ -691,17 +602,14 @@ mod tests {
             if matches!(action, DesktopAction::ClickButton { .. }) {
                 script.remove_window(MODULE_SELECTION);
                 script.add_window(ScriptedWindow::new(recycled, "Save As").with_button("OK"));
-                script.set_foreground_window(Some(recycled));
             }
         });
         assert!(desktop.click_button(MODULE_SELECTION, "OK").unwrap());
 
         assert_ne!(recycled, MODULE_SELECTION);
         assert!(desktop.click_button(MODULE_SELECTION, "OK").is_err());
-        assert!(desktop.send_enter(MODULE_SELECTION).is_err());
+        assert!(desktop.post_enter(MODULE_SELECTION).is_err());
         assert!(desktop.request_close(MODULE_SELECTION).is_err());
-        assert!(!desktop.set_foreground(MODULE_SELECTION));
-        assert_ne!(desktop.foreground_window(), Some(MODULE_SELECTION));
     }
 
     #[test]
@@ -709,8 +617,7 @@ mod tests {
         let desktop = fo4edit_during_module_selection();
 
         desktop.click_button(MODULE_SELECTION, "OK").unwrap();
-        desktop.set_foreground(MODULE_SELECTION);
-        desktop.send_enter(MODULE_SELECTION).unwrap();
+        desktop.post_enter(MODULE_SELECTION).unwrap();
         desktop.request_close(MAIN_FORM).unwrap();
         desktop.request_close(HELPER).unwrap();
 
@@ -721,12 +628,8 @@ mod tests {
                     window: MODULE_SELECTION,
                     caption: "OK".to_owned(),
                 },
-                DesktopAction::SetForeground {
+                DesktopAction::PostEnter {
                     window: MODULE_SELECTION,
-                },
-                DesktopAction::SendEnter {
-                    window: MODULE_SELECTION,
-                    sent: true,
                 },
                 DesktopAction::RequestClose { window: MAIN_FORM },
                 DesktopAction::RequestClose { window: HELPER },
@@ -735,41 +638,23 @@ mod tests {
     }
 
     #[test]
-    fn a_granted_foreground_request_makes_the_window_the_target_of_enter() {
-        let desktop = fo4edit_during_module_selection().with_foreground(OTHER_WINDOW);
+    fn an_effect_can_dismiss_module_selection_when_it_is_posted_enter() {
+        let desktop = fo4edit_during_module_selection().on_action(|action, script| {
+            if *action
+                == (DesktopAction::PostEnter {
+                    window: MODULE_SELECTION,
+                })
+            {
+                script.remove_window(MODULE_SELECTION);
+            }
+        });
 
-        assert!(desktop.set_foreground(MODULE_SELECTION));
-        assert_eq!(desktop.foreground_window(), Some(MODULE_SELECTION));
+        // ENTER posted elsewhere in FO4Edit dismisses nothing.
+        desktop.post_enter(MAIN_FORM).unwrap();
+        assert!(module_selection_is_listed(&desktop));
 
-        assert!(desktop.send_enter(MODULE_SELECTION).unwrap());
-        assert_eq!(
-            desktop.actions().last(),
-            Some(&DesktopAction::SendEnter {
-                window: MODULE_SELECTION,
-                sent: true,
-            })
-        );
-    }
-
-    #[test]
-    fn a_refused_foreground_request_leaves_the_foreground_where_it_was() {
-        let desktop = fo4edit_during_module_selection()
-            .with_foreground(OTHER_WINDOW)
-            .refusing_foreground();
-
-        assert!(!desktop.set_foreground(MODULE_SELECTION));
-        assert_eq!(desktop.foreground_window(), Some(OTHER_WINDOW));
-
-        // An ENTER aimed at Module Selection anyway is withheld rather than typed into the
-        // other program's window.
-        assert!(!desktop.send_enter(MODULE_SELECTION).unwrap());
-        assert_eq!(
-            desktop.actions().last(),
-            Some(&DesktopAction::SendEnter {
-                window: MODULE_SELECTION,
-                sent: false,
-            })
-        );
+        desktop.post_enter(MODULE_SELECTION).unwrap();
+        assert!(!module_selection_is_listed(&desktop));
     }
 
     #[test]
@@ -803,52 +688,21 @@ mod tests {
     }
 
     #[test]
-    fn an_effect_can_hide_a_window_and_steal_the_foreground() {
+    fn an_effect_can_hide_a_window() {
         let desktop = fo4edit_during_module_selection().on_action(|action, script| {
-            if let DesktopAction::SetForeground { window } = action {
+            if let DesktopAction::PostEnter { window } = action {
                 script.set_visible(*window, false);
-                script.set_foreground_window(Some(OTHER_WINDOW));
             }
         });
 
-        // Granted, yet by the time the caller checks, another program has the foreground.
-        assert!(desktop.set_foreground(MODULE_SELECTION));
-        assert_eq!(desktop.foreground_window(), Some(OTHER_WINDOW));
+        desktop.post_enter(MODULE_SELECTION).unwrap();
+
         let module_selection = desktop
             .top_level_windows(FO4EDIT)
             .into_iter()
             .find(|window| window.handle == MODULE_SELECTION)
             .unwrap();
         assert!(!module_selection.visible);
-    }
-
-    #[test]
-    fn an_effect_can_lift_a_foreground_refusal() {
-        let desktop = fo4edit_during_module_selection()
-            .refusing_foreground()
-            .on_action(|action, script| {
-                if matches!(action, DesktopAction::SetForeground { .. }) {
-                    script.refuse_foreground(false);
-                }
-            });
-
-        assert!(!desktop.set_foreground(MODULE_SELECTION));
-        assert!(desktop.set_foreground(MODULE_SELECTION));
-    }
-
-    #[test]
-    fn removing_the_foreground_window_leaves_no_foreground() {
-        let desktop = fo4edit_during_module_selection()
-            .with_foreground(MODULE_SELECTION)
-            .on_action(|action, script| {
-                if let DesktopAction::ClickButton { window, .. } = action {
-                    script.remove_window(*window);
-                }
-            });
-
-        desktop.click_button(MODULE_SELECTION, "OK").unwrap();
-
-        assert_eq!(desktop.foreground_window(), None);
     }
 
     #[test]
