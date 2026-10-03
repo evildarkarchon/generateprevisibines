@@ -14,7 +14,10 @@ use crate::tools::clock::SystemClock;
 use crate::tools::desktop::SystemDesktopWindows;
 use crate::tools::process::SystemProcessRunner;
 use crate::tools::wait::SystemWait;
-use crate::tools::{CkPorts, CreationKitPaths, Fo4EditPaths, Fo4EditPorts};
+use crate::tools::{
+    ArchivePaths, ArchivePorts, CkPorts, CreationKitPaths, Fo4EditPaths, Fo4EditPorts,
+    restore_archive_work_folders,
+};
 use crate::validation;
 use crate::warning::BuildWarnings;
 use crate::workflow::WorkflowPlan;
@@ -109,6 +112,8 @@ pub struct WorkflowRun {
     creation_kit: Option<CreationKitPaths>,
     /// Resolved FO4Edit paths, or `None` when no runnable step required FO4Edit.
     fo4edit: Option<Fo4EditPaths>,
+    /// Resolved archive-tool paths, or `None` when no runnable step required the archive tool.
+    archive: Option<ArchivePaths>,
     plan: WorkflowPlan,
     diagnostics: Vec<RunDiagnostic>,
     log_path: PathBuf,
@@ -136,7 +141,7 @@ impl WorkflowRun {
     /// Complete preparation from a validated config and registration-resolved workflow state.
     ///
     /// Returns the ready-to-execute run, or propagates toolchain readiness, log initialization,
-    /// and Creation Kit or FO4Edit context errors. The plan and requirements must come from the same
+    /// and Creation Kit, FO4Edit or archive-tool context errors. The plan and requirements must come from the same
     /// Workflow Operation registration before this helper is called.
     fn prepare_with_registration(
         config: ProjectConfig,
@@ -183,11 +188,19 @@ impl WorkflowRun {
         } else {
             None
         };
+        // And for the archive tool: a run whose runnable steps include no archive step never
+        // resolves it, and a resume at Step 8 needs nothing else.
+        let archive = if requirements.needs_archive() {
+            Some(toolchain.archive_paths(log_path.clone())?)
+        } else {
+            None
+        };
 
         Ok(Self {
             config,
             creation_kit,
             fo4edit,
+            archive,
             plan,
             diagnostics,
             log_path,
@@ -198,8 +211,8 @@ impl WorkflowRun {
     ///
     /// Every exit is reported before this returns; see [`Self::execute_with_ports`]. Only the tool
     /// episodes this run prepared are bound; an operation that reaches one that was not stops
-    /// the run with [`Error::CreationKitNotPrepared`] or [`Error::Fo4EditNotPrepared`], reported
-    /// the same way.
+    /// the run with [`Error::CreationKitNotPrepared`], [`Error::Fo4EditNotPrepared`] or
+    /// [`Error::ArchiveNotPrepared`], reported the same way.
     ///
     /// # Errors
     ///
@@ -213,11 +226,12 @@ impl WorkflowRun {
         let prompts = InteractivePrompts;
         let warnings = BuildWarnings::new(self.log_path.clone(), &files);
 
-        // Bind each episode whose paths were prepared, and leave the other absent rather than
-        // failing up front: a resume at Step 2 or Step 7 needs FO4Edit and no Creation Kit. An
-        // operation that reaches an absent episode stops through `ports.ck()?` or
-        // `ports.fo4edit()?`, and `execute_with_ports` reports that stop like any other, since
-        // the session log exists by now.
+        // Bind each episode whose paths were prepared, and leave the others absent rather than
+        // failing up front: a resume at Step 2 or Step 7 needs FO4Edit and no Creation Kit, and
+        // a resume at Step 8 needs only the archive tool. An operation that reaches an
+        // absent episode stops through `ports.ck()?`, `ports.fo4edit()?` or `ports.archive()?`,
+        // and `execute_with_ports` reports that stop like any other, since the session log
+        // exists by now.
         let ck = self.creation_kit().map(|creation_kit| {
             creation_kit.bind(CkPorts {
                 process: &process,
@@ -234,10 +248,19 @@ impl WorkflowRun {
                 files: &files,
             })
         });
+        let archive = self.archive().map(|archive| {
+            archive.bind(ArchivePorts {
+                process: &process,
+                wait: &wait,
+                files: &files,
+                warnings: &warnings,
+            })
+        });
 
         self.execute_with_ports(&OperationPorts {
             ck: ck.as_ref(),
             fo4edit: fo4edit.as_ref(),
+            archive: archive.as_ref(),
             prompts: &prompts,
             files: &files,
             warnings: &warnings,
@@ -255,14 +278,27 @@ impl WorkflowRun {
     /// by [`Self::report_stop`]. Both happen here rather than in `main` so that Finish, once
     /// ported, can run ahead of `See Log at` (batch 368 follows `:Fin`).
     ///
+    /// Before the first dispatch, every leftover archive work folder is restored and cleared;
+    /// see [`restore_archive_work_folders`].
+    ///
     /// # Errors
     ///
-    /// Returns [`RunStopped`] when a dispatched Workflow Operation stops the run.
+    /// Returns [`RunStopped`] when a dispatched Workflow Operation stops the run, or when a
+    /// Build Warning the run-start restore raises cannot be appended to the session log.
     pub(crate) fn execute_with_ports(
         &self,
         ports: &OperationPorts<'_>,
     ) -> std::result::Result<(), RunStopped> {
-        if let Err(error) = execute_registered_workflow(self, ports) {
+        // On every run, whatever the resume point and whether or not the plan reaches an archive
+        // step, and even when no archive tool was prepared: a crashed run may have left the only
+        // copy of the user's precombines, `vis` or new archive in a work folder, and this run may
+        // not be the one that would have rebuilt it. It needs only the Fallout 4 directory, since
+        // each restore-list target is a full path. The installation lock `main` holds for the
+        // whole run (ADR-0005) is what makes every folder it finds a dead run's.
+        let outcome =
+            restore_archive_work_folders(&self.config.fallout4_dir, ports.files, ports.warnings)
+                .and_then(|()| execute_registered_workflow(self, ports));
+        if let Err(error) = outcome {
             return Err(self.report_stop(error, ports.files));
         }
 
@@ -348,6 +384,14 @@ impl WorkflowRun {
     pub(crate) const fn fo4edit(&self) -> Option<&Fo4EditPaths> {
         self.fo4edit.as_ref()
     }
+
+    /// Resolved paths this run's Archive episodes run against.
+    ///
+    /// `None` when no runnable Workflow Operation required archive readiness, so nothing was
+    /// resolved. Narrow for the same reason as [`Self::creation_kit`].
+    pub(crate) const fn archive(&self) -> Option<&ArchivePaths> {
+        self.archive.as_ref()
+    }
 }
 
 #[cfg(test)]
@@ -359,14 +403,18 @@ mod tests {
     use crate::files::InMemoryFileSpace;
     use crate::toolchain::write_fo4edit_install;
     use crate::tools::clock::ScriptedClock;
+    use crate::tools::leftovers;
     use crate::tools::process::{
         ExitFlag, ProcessCallKind, RecordedProcessCall, RecordingProcessRunner,
     };
     use crate::tools::wait::{MO2_DELAY_AFTER_CK_SECS, RecordingWait};
+    use crate::warning::{BuildWarning, LeftoverItems};
     use crate::workflow::operations::recording_adapters::{
-        ONE_POLL_MERGE_DELAYS, RecordingPrompts, behaving_fo4edit_windows, fo4edit_exiting_when,
-        record_successful_combined_objects_merge, record_successful_precombine_outputs,
+        FaultyFileSpace, ONE_POLL_MERGE_DELAYS, RecordingPrompts, behaving_fo4edit_windows,
+        fo4edit_exiting_when, record_successful_combined_objects_merge,
+        record_successful_precombine_outputs,
     };
+    use std::cell::RefCell;
     use std::fs;
     use tempfile::{TempDir, tempdir};
 
@@ -488,6 +536,8 @@ mod tests {
         result: std::result::Result<(), RunStopped>,
         delays: Vec<u64>,
         prompts_asked: Vec<crate::workflow::operations::Confirmation>,
+        /// Every Build Warning the run raised, including the run-start restore's.
+        warnings: Vec<BuildWarning>,
     }
 
     /// Execute a prepared run over recording ports, with `process` standing in for Creation
@@ -505,6 +555,20 @@ mod tests {
         process: &RecordingProcessRunner<'_>,
         fo4edit_exit: &ExitFlag,
     ) -> RecordedExecution {
+        execute_through(run, files, files, process, fo4edit_exit)
+    }
+
+    /// [`execute_over_recording_ports`], with every port seeing `files` through `ports_files`.
+    ///
+    /// `ports_files` is a [`FaultyFileSpace`] over `files` when a test needs an operation
+    /// refused; the simulated tools still write into `files` directly.
+    fn execute_through(
+        run: &WorkflowRun,
+        files: &InMemoryFileSpace,
+        ports_files: &dyn FileSpace,
+        process: &RecordingProcessRunner<'_>,
+        fo4edit_exit: &ExitFlag,
+    ) -> RecordedExecution {
         let wait = RecordingWait::new();
         // The subject here is the run's dispatch, not the session log, so a clock that never
         // moves is all this needs.
@@ -513,6 +577,9 @@ mod tests {
         let desktop = behaving_fo4edit_windows(fo4edit_exit, || {
             record_successful_combined_objects_merge(files);
         });
+        // Shadowed only after the desktop above, whose simulated merge writes straight into the
+        // underlying space as the real FO4Edit would.
+        let files = ports_files;
         let ck = run.creation_kit().map(|paths| {
             paths.bind(CkPorts {
                 process,
@@ -530,10 +597,19 @@ mod tests {
             })
         });
         let warnings = BuildWarnings::new(run.log_path().to_path_buf(), files);
+        let archive = run.archive().map(|paths| {
+            paths.bind(ArchivePorts {
+                process,
+                wait: &wait,
+                files,
+                warnings: &warnings,
+            })
+        });
 
         let result = run.execute_with_ports(&OperationPorts {
             ck: ck.as_ref(),
             fo4edit: fo4edit.as_ref(),
+            archive: archive.as_ref(),
             prompts: &prompts,
             files,
             warnings: &warnings,
@@ -542,6 +618,7 @@ mod tests {
             result,
             delays: wait.delays(),
             prompts_asked: prompts.asked(),
+            warnings: warnings.raised(),
         }
     }
 
@@ -951,5 +1028,547 @@ mod tests {
             WorkflowRun::prepare(&request, dir.path(), &probe, &InMemoryFileSpace::new()).unwrap();
 
         assert_eq!(run.creation_kit().unwrap().ck_log_path, fo4.join("CK.log"));
+    }
+
+    // --- the run-start restore of leftover archive work folders ------------------------------
+
+    const ARCHIVE_NAME: &str = "MyMod - Main.ba2";
+
+    /// A prepared fresh Clean run whose Fallout 4 directory a test seeds with leftover work
+    /// folders before executing it.
+    struct LeftoverRun {
+        fixture: ReadyWorkflowFixture,
+        run: WorkflowRun,
+    }
+
+    /// What starting a run over leftover work folders did.
+    struct LeftoverExecution {
+        result: std::result::Result<(), RunStopped>,
+        warnings: Vec<BuildWarning>,
+        /// The Fallout 4 directory's subfolders when Step 1 launched Creation Kit, or `None`
+        /// when Step 1 stopped before launching it.
+        folders_at_launch: Option<Vec<PathBuf>>,
+    }
+
+    impl LeftoverRun {
+        /// A fresh Clean run, which plans no archive step and so prepares no archive tool.
+        fn new() -> Self {
+            let fixture = ready_workflow_fixture();
+            let run = prepared_run(&fixture);
+            assert!(run.archive().is_none());
+            Self { fixture, run }
+        }
+
+        fn files(&self) -> &InMemoryFileSpace {
+            &self.fixture.files
+        }
+
+        fn fo4(&self) -> PathBuf {
+            self.fixture.fallout4_directory.clone()
+        }
+
+        fn data(&self) -> PathBuf {
+            self.fo4().join("Data")
+        }
+
+        fn folder(&self, name: &str) -> PathBuf {
+            self.fo4().join(name)
+        }
+
+        /// Write `lines` as the restore list of the work folder `name`.
+        fn list(&self, name: &str, lines: &[String]) {
+            self.files().add_file_with_contents(
+                leftovers::restore_list(&self.folder(name)),
+                lines.concat(),
+            );
+        }
+
+        /// Execute over the fixture's space.
+        fn execute(&self) -> LeftoverExecution {
+            self.execute_through(self.files())
+        }
+
+        /// Execute with every port seeing the fixture's space through `ports_files`, and a
+        /// Creation Kit that records the Fallout 4 directory's subfolders when it is launched.
+        fn execute_through(&self, ports_files: &dyn FileSpace) -> LeftoverExecution {
+            let launched = RefCell::new(None);
+            let fo4 = self.fo4();
+            let process = RecordingProcessRunner::new().with_effects(self.files(), |space| {
+                let mut folders = space.child_dirs(&fo4);
+                folders.sort();
+                *launched.borrow_mut() = Some(folders);
+            });
+
+            let execution = execute_through(
+                &self.run,
+                self.files(),
+                ports_files,
+                &process,
+                &ExitFlag::new(),
+            );
+            let folders_at_launch = launched.borrow().clone();
+            LeftoverExecution {
+                result: execution.result,
+                warnings: execution.warnings,
+                folders_at_launch,
+            }
+        }
+    }
+
+    /// Nothing to restore: a list-less `ArchiveWork` (a stale archive and an unlisted unpacked
+    /// mesh) and an `ArchiveWork.3` with an empty list (a gap) are both gone before the first
+    /// step dispatches, and nothing is warned about.
+    #[test]
+    fn leftovers_with_nothing_to_restore_are_removed_before_the_first_step() {
+        let leftover = LeftoverRun::new();
+        let files = leftover.files();
+        files.add_file(leftover.folder("ArchiveWork").join(ARCHIVE_NAME));
+        files.add_file(
+            leftover
+                .folder("ArchiveWork")
+                .join("staging")
+                .join("meshes")
+                .join("precombined")
+                .join("unpacked.nif"),
+        );
+        leftover.list("ArchiveWork.3", &[]);
+
+        let execution = leftover.execute();
+
+        // Creation Kit ran, so Step 1 was dispatched, and by then both were gone.
+        assert!(matches!(
+            execution.result.unwrap_err().error(),
+            Error::MissingCombinedObjects
+        ));
+        let at_launch = execution.folders_at_launch.unwrap();
+        assert!(!at_launch.contains(&leftover.folder("ArchiveWork")));
+        assert!(!at_launch.contains(&leftover.folder("ArchiveWork.3")));
+        assert_eq!(execution.warnings, []);
+    }
+
+    /// A crash while BSArch held the staged precombines: they go back into `Data` with their
+    /// bytes, one warning names them, and the folder is removed — before Step 1, which then
+    /// finds them.
+    #[test]
+    fn staged_precombines_from_a_crashed_step_three_are_moved_back() {
+        let leftover = LeftoverRun::new();
+        let staged = leftover
+            .folder("ArchiveWork")
+            .join("staging")
+            .join("meshes")
+            .join("precombined");
+        let loose = leftover.data().join("meshes").join("precombined");
+        leftover
+            .files()
+            .add_file_with_bytes(staged.join("cell").join("mesh.nif"), b"\x00mesh".to_vec());
+        leftover.list(
+            "ArchiveWork",
+            &[leftovers::source_line(
+                &PathBuf::from("staging").join("meshes").join("precombined"),
+                &loose,
+            )],
+        );
+
+        let execution = leftover.execute();
+
+        assert_eq!(
+            leftover
+                .files()
+                .contents(&loose.join("cell").join("mesh.nif")),
+            Some(b"\x00mesh".to_vec())
+        );
+        assert_eq!(
+            execution.warnings,
+            [BuildWarning::ArchiveWorkRestored {
+                item: staged,
+                target: loose,
+            }]
+        );
+        assert!(!leftover.files().is_dir(&leftover.folder("ArchiveWork")));
+        // Step 1 ran after the restore, and found the restored meshes.
+        assert!(matches!(
+            execution.result.unwrap_err().error(),
+            Error::PrecombinedMeshesExist
+        ));
+    }
+
+    /// A crash while BSArch held `vis`: it goes back, while the unpacked precombines, unlisted
+    /// copies, are discarded with the folder.
+    #[test]
+    fn staged_previs_from_a_crashed_step_eight_is_moved_back() {
+        let leftover = LeftoverRun::new();
+        let work = leftover.folder("ArchiveWork");
+        let loose_vis = leftover.data().join("vis");
+        leftover
+            .files()
+            .add_file_with_contents(work.join("staging").join("vis").join("c.uvd"), "previs");
+        leftover.files().add_file(
+            work.join("staging")
+                .join("meshes")
+                .join("precombined")
+                .join("unpacked.nif"),
+        );
+        leftover.list(
+            "ArchiveWork",
+            &[leftovers::source_line(
+                &PathBuf::from("staging").join("vis"),
+                &loose_vis,
+            )],
+        );
+
+        let execution = leftover.execute();
+
+        assert_eq!(
+            leftover
+                .files()
+                .read_lossy(&loose_vis.join("c.uvd"))
+                .unwrap(),
+            "previs"
+        );
+        assert!(
+            !leftover
+                .files()
+                .is_dir(&leftover.data().join("meshes").join("precombined"))
+        );
+        assert!(!leftover.files().is_dir(&work));
+        assert_eq!(execution.warnings.len(), 1);
+    }
+
+    /// A crash between the swap's delete and its rename: with no archive in `Data` the listed
+    /// one is moved in; with one there, the entry is skipped silently and the old one kept.
+    #[test]
+    fn a_listed_archive_goes_back_only_when_data_has_none() {
+        for archive_in_data in [false, true] {
+            let leftover = LeftoverRun::new();
+            let work = leftover.folder("ArchiveWork");
+            let target = leftover.data().join(ARCHIVE_NAME);
+            leftover
+                .files()
+                .add_file_with_contents(work.join(ARCHIVE_NAME), "new");
+            if archive_in_data {
+                leftover.files().add_file_with_contents(&target, "old");
+            }
+            leftover.list(
+                "ArchiveWork",
+                &[leftovers::archive_line(
+                    &PathBuf::from(ARCHIVE_NAME),
+                    &target,
+                )],
+            );
+
+            let execution = leftover.execute();
+
+            let expected = if archive_in_data { "old" } else { "new" };
+            assert_eq!(leftover.files().read_lossy(&target).unwrap(), expected);
+            let expected_warnings = if archive_in_data {
+                vec![]
+            } else {
+                vec![BuildWarning::ArchiveWorkRestored {
+                    item: work.join(ARCHIVE_NAME),
+                    target: target.clone(),
+                }]
+            };
+            assert_eq!(execution.warnings, expected_warnings);
+            assert!(!leftover.files().is_dir(&work));
+        }
+    }
+
+    /// A listed item that never reached the folder (the crash came before the move) is skipped
+    /// silently, and the folder removed.
+    #[test]
+    fn an_entry_whose_item_never_moved_is_skipped() {
+        let leftover = LeftoverRun::new();
+        leftover.list(
+            "ArchiveWork",
+            &[leftovers::source_line(
+                &PathBuf::from("staging").join("vis"),
+                &leftover.data().join("vis"),
+            )],
+        );
+
+        let execution = leftover.execute();
+
+        assert_eq!(execution.warnings, []);
+        assert!(!leftover.files().is_dir(&leftover.folder("ArchiveWork")));
+        assert!(!leftover.files().is_dir(&leftover.data().join("vis")));
+    }
+
+    /// A `source` whose place in `Data` is occupied sets the folder aside, intact and with its
+    /// list, under the first free `ArchiveWork.orphaned.<n>`; one already there is left alone.
+    #[test]
+    fn a_folder_whose_source_is_blocked_is_set_aside() {
+        for orphan_present in [false, true] {
+            let leftover = LeftoverRun::new();
+            let staged_uvd = PathBuf::from("staging").join("vis").join("c.uvd");
+            leftover
+                .files()
+                .add_file_with_contents(leftover.folder("ArchiveWork").join(&staged_uvd), "staged");
+            leftover
+                .files()
+                .add_file_with_contents(leftover.data().join("vis").join("other.uvd"), "other");
+            let lines = [leftovers::source_line(
+                &PathBuf::from("staging").join("vis"),
+                &leftover.data().join("vis"),
+            )];
+            leftover.list("ArchiveWork", &lines);
+            let earlier_orphan = leftover.folder("ArchiveWork.orphaned.1").join("kept.txt");
+            if orphan_present {
+                leftover
+                    .files()
+                    .add_file_with_contents(&earlier_orphan, "kept");
+            }
+
+            let execution = leftover.execute();
+
+            let set_aside = leftover.folder(if orphan_present {
+                "ArchiveWork.orphaned.2"
+            } else {
+                "ArchiveWork.orphaned.1"
+            });
+            assert_eq!(
+                execution.warnings,
+                [BuildWarning::ArchiveWorkSetAside {
+                    from: leftover.folder("ArchiveWork"),
+                    to: set_aside.clone(),
+                    items: LeftoverItems::Listed(vec![PathBuf::from("staging").join("vis")]),
+                }]
+            );
+            assert_eq!(
+                leftover
+                    .files()
+                    .read_lossy(&set_aside.join(&staged_uvd))
+                    .unwrap(),
+                "staged"
+            );
+            assert_eq!(
+                leftover
+                    .files()
+                    .read_lossy(&leftovers::restore_list(&set_aside))
+                    .unwrap(),
+                lines.concat()
+            );
+            assert!(!leftover.files().is_dir(&leftover.folder("ArchiveWork")));
+            if orphan_present {
+                assert_eq!(
+                    leftover.files().read_lossy(&earlier_orphan).unwrap(),
+                    "kept"
+                );
+            }
+        }
+    }
+
+    /// An invalid line sets the folder aside before anything is moved.
+    #[test]
+    fn an_invalid_restore_list_sets_the_folder_aside_untouched() {
+        for invalid in [
+            "source\tstaging\\vis\n",
+            "copied\tstaging\\vis\tData\\vis\n",
+            "source\t..\\vis\tData\\vis\n",
+        ] {
+            let leftover = LeftoverRun::new();
+            let staged = leftover
+                .folder("ArchiveWork")
+                .join("staging")
+                .join("meshes")
+                .join("precombined")
+                .join("mesh.nif");
+            leftover.files().add_file(&staged);
+            let loose = leftover.data().join("meshes").join("precombined");
+            leftover.list(
+                "ArchiveWork",
+                &[
+                    leftovers::source_line(
+                        &PathBuf::from("staging").join("meshes").join("precombined"),
+                        &loose,
+                    ),
+                    invalid.to_string(),
+                ],
+            );
+
+            let execution = leftover.execute();
+
+            assert_eq!(
+                execution.warnings,
+                [BuildWarning::ArchiveWorkSetAside {
+                    from: leftover.folder("ArchiveWork"),
+                    to: leftover.folder("ArchiveWork.orphaned.1"),
+                    items: LeftoverItems::UnreadableList,
+                }],
+                "line: {invalid:?}"
+            );
+            assert!(!leftover.files().is_dir(&loose), "line: {invalid:?}");
+        }
+    }
+
+    /// Two entries, the first restorable and the second blocked: the first goes back with its
+    /// warning, then the folder is set aside naming only the second.
+    #[test]
+    fn a_partial_restore_sets_aside_only_what_is_left() {
+        let leftover = LeftoverRun::new();
+        let work = leftover.folder("ArchiveWork");
+        let loose_precombined = leftover.data().join("meshes").join("precombined");
+        let loose_vis = leftover.data().join("vis");
+        leftover.files().add_file(
+            work.join("staging")
+                .join("meshes")
+                .join("precombined")
+                .join("mesh.nif"),
+        );
+        leftover
+            .files()
+            .add_file(work.join("staging").join("vis").join("c.uvd"));
+        leftover.files().add_file(loose_vis.join("other.uvd"));
+        leftover.list(
+            "ArchiveWork",
+            &[
+                leftovers::source_line(
+                    &PathBuf::from("staging").join("meshes").join("precombined"),
+                    &loose_precombined,
+                ),
+                leftovers::source_line(&PathBuf::from("staging").join("vis"), &loose_vis),
+            ],
+        );
+
+        let execution = leftover.execute();
+
+        assert_eq!(
+            execution.warnings,
+            [
+                BuildWarning::ArchiveWorkRestored {
+                    item: work.join("staging").join("meshes").join("precombined"),
+                    target: loose_precombined.clone(),
+                },
+                BuildWarning::ArchiveWorkSetAside {
+                    from: work,
+                    to: leftover.folder("ArchiveWork.orphaned.1"),
+                    items: LeftoverItems::Listed(vec![PathBuf::from("staging").join("vis")]),
+                },
+            ]
+        );
+        assert!(
+            leftover
+                .files()
+                .is_file(&loose_precombined.join("mesh.nif"))
+        );
+    }
+
+    /// Folders that only look like work folders are never touched.
+    #[test]
+    fn folders_that_are_not_work_folders_are_left_alone() {
+        let leftover = LeftoverRun::new();
+        let names = [
+            "ArchiveWorkspace",
+            "ArchiveWork.bak",
+            "ArchiveWork.1x",
+            "ArchiveWork.orphaned.1",
+        ];
+        for name in names {
+            leftover
+                .files()
+                .add_file(leftover.folder(name).join("keep.txt"));
+        }
+
+        let execution = leftover.execute();
+
+        for name in names {
+            assert!(
+                leftover
+                    .files()
+                    .is_file(&leftover.folder(name).join("keep.txt")),
+                "{name}"
+            );
+        }
+        assert_eq!(execution.warnings, []);
+    }
+
+    /// A folder that cannot be removed is one warning, the next leftover is still handled, and
+    /// the run goes on to dispatch its first step.
+    #[test]
+    fn a_stuck_leftover_is_a_warning_and_the_run_goes_on() {
+        let leftover = LeftoverRun::new();
+        leftover
+            .files()
+            .add_file(leftover.folder("ArchiveWork").join(ARCHIVE_NAME));
+        leftover
+            .files()
+            .add_file(leftover.folder("ArchiveWork.1").join(ARCHIVE_NAME));
+        let files = FaultyFileSpace::over(leftover.files())
+            .refusing_dir_removal(leftover.folder("ArchiveWork"));
+
+        let execution = leftover.execute_through(&files);
+
+        assert_eq!(
+            execution.warnings,
+            [BuildWarning::ArchiveWorkFolderNotCleared {
+                path: leftover.folder("ArchiveWork"),
+            }]
+        );
+        let at_launch = execution.folders_at_launch.unwrap();
+        assert!(at_launch.contains(&leftover.folder("ArchiveWork")));
+        assert!(!at_launch.contains(&leftover.folder("ArchiveWork.1")));
+    }
+
+    /// A blocked folder that cannot be set aside either is one warning and stays where it is,
+    /// never removed.
+    #[test]
+    fn a_blocked_folder_that_cannot_be_set_aside_is_left_in_place() {
+        let leftover = LeftoverRun::new();
+        let staged = leftover
+            .folder("ArchiveWork")
+            .join("staging")
+            .join("vis")
+            .join("c.uvd");
+        leftover.files().add_file(&staged);
+        leftover
+            .files()
+            .add_file(leftover.data().join("vis").join("other.uvd"));
+        leftover.list(
+            "ArchiveWork",
+            &[leftovers::source_line(
+                &PathBuf::from("staging").join("vis"),
+                &leftover.data().join("vis"),
+            )],
+        );
+        let files = FaultyFileSpace::over(leftover.files())
+            .refusing_dir_move_to(leftover.folder("ArchiveWork.orphaned.1"));
+
+        let execution = leftover.execute_through(&files);
+
+        assert_eq!(
+            execution.warnings,
+            [BuildWarning::ArchiveWorkNotRestored {
+                path: leftover.folder("ArchiveWork"),
+                items: LeftoverItems::Listed(vec![PathBuf::from("staging").join("vis")]),
+            }]
+        );
+        assert!(leftover.files().is_file(&staged));
+    }
+
+    /// The restore runs whatever the resume point: a resume at Step 2, which prepares FO4Edit
+    /// alone, clears a leftover before its merge.
+    #[test]
+    fn the_restore_runs_on_a_resume_at_step_two() {
+        let fixture = prepare_fo4edit_only_run(WorkflowStep::MergePrecombineObjects);
+        let leftover = fixture
+            .data
+            .parent()
+            .unwrap()
+            .join("ArchiveWork")
+            .join(ARCHIVE_NAME);
+        fixture.files.add_file(&leftover);
+        fixture.files.add_file(
+            fixture
+                .data
+                .join("meshes")
+                .join("precombined")
+                .join("mesh.nif"),
+        );
+        fixture
+            .files
+            .add_file(fixture.data.join("CombinedObjects.esp"));
+
+        assert_executes_one_fo4edit_merge(&fixture, "Batch_FO4MergeCombinedObjectsAndCheck.pas");
+
+        assert!(!fixture.files.is_file(&leftover));
     }
 }

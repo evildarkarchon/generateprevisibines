@@ -51,13 +51,6 @@ pub(crate) trait ProcessRunner: std::fmt::Debug {
     /// only when the process cannot be started or its output cannot be read. The child gets
     /// a null stdin, so a tool that prompts for input reads end-of-file instead of hanging
     /// the run.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "the Archive episode (ArchiveOps) that runs Archive2 and BSArch is not ported yet"
-        )
-    )]
     fn run_capturing(&self, exe: &Path, args: &[OsString], cwd: &Path) -> Result<ProcessOutput>;
 
     /// Spawn `exe` with `args`, working directory `cwd`, and return without waiting.
@@ -89,13 +82,6 @@ pub(crate) trait RunningProcess: std::fmt::Debug {
 ///
 /// Both streams are decoded lossily: neither Archive2 nor BSArch promises UTF-8, and a
 /// mangled character in a log line is better than losing the line.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the Archive episode (ArchiveOps) that reads Archive2's and BSArch's output is not ported yet"
-    )
-)]
 #[derive(Debug, Clone)]
 pub(crate) struct ProcessOutput {
     /// How the process exited. A non-zero status is not an error at this seam.

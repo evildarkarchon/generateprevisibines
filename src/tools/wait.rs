@@ -32,6 +32,15 @@ pub(crate) const FO4EDIT_POLL_INTERVAL_SECS: u64 = 5;
 /// plugin, not FO4Edit time to close (docs/workarounds.md §2).
 pub(crate) const FO4EDIT_CLOSE_DELAYS_SECS: [u64; 3] = [10, 15, 10];
 
+/// Delay after Archive2 extracts the Plugin Archive into `Data`, before the repack (batch 439).
+pub(crate) const MO2_DELAY_AFTER_ARCHIVE2_EXTRACT_SECS: u64 = 5;
+
+/// Delay before every BSArch pack, once its staging folder is filled.
+///
+/// A port addition (docs/workarounds.md §2): the batch's BSArch path has no wait, and under MO2
+/// files moved out of the virtual `Data` may not have settled when BSArch reads them.
+pub(crate) const MO2_DELAY_BEFORE_BSARCH_PACK_SECS: u64 = 5;
+
 /// Pause so the MO2 virtual filesystem can settle.
 ///
 /// Implementors must be `Debug` so the adapters that hold a `Wait` can keep deriving `Debug`.
@@ -134,8 +143,9 @@ mod tests {
 
     use super::{
         FO4EDIT_CLOSE_DELAYS_SECS, FO4EDIT_POLL_INTERVAL_SECS, FO4EDIT_STARTUP_DELAY_SECS,
-        MO2_DELAY_AFTER_CK_SECS, MO2_DELAY_AFTER_SEED_COPY_SECS, MO2_DELAY_BEFORE_FO4EDIT_SECS,
-        RecordingWait, SystemWait, Wait,
+        MO2_DELAY_AFTER_ARCHIVE2_EXTRACT_SECS, MO2_DELAY_AFTER_CK_SECS,
+        MO2_DELAY_AFTER_SEED_COPY_SECS, MO2_DELAY_BEFORE_BSARCH_PACK_SECS,
+        MO2_DELAY_BEFORE_FO4EDIT_SECS, RecordingWait, SystemWait, Wait,
     };
     use crate::files::{FileSpace, InMemoryFileSpace};
 
@@ -148,6 +158,9 @@ mod tests {
         assert_eq!(FO4EDIT_STARTUP_DELAY_SECS, 5);
         assert_eq!(FO4EDIT_POLL_INTERVAL_SECS, 5);
         assert_eq!(FO4EDIT_CLOSE_DELAYS_SECS, [10, 15, 10]);
+        // Batch `:AddToArchive`, 439, and the port's own BSArch wait (workarounds §2).
+        assert_eq!(MO2_DELAY_AFTER_ARCHIVE2_EXTRACT_SECS, 5);
+        assert_eq!(MO2_DELAY_BEFORE_BSARCH_PACK_SECS, 5);
     }
 
     #[test]

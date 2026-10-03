@@ -43,11 +43,87 @@ pub(crate) enum BuildWarning {
     /// finished, but the script did not report a clean run. The inverse polarity of
     /// [`Self::MergePrecombinesHadErrors`], as the batch tests each log.
     MergePrevisHadErrors,
+    /// The Archive episode could not remove something the Plugin Archive no longer depends on:
+    /// its work folder after a step, or the loose `meshes\precombined` or `vis` after a swap.
+    ///
+    /// Never a stop. On a step that then fails, the step's own error is still what stops the
+    /// run, so a cleanup problem never hides why it stopped.
+    ArchiveCleanupFailed { path: PathBuf },
+    /// The run-start restore found nothing to restore in a leftover `ArchiveWork*` folder, but
+    /// could not remove it. Each archive step then builds in the next free name instead.
+    ArchiveWorkFolderNotCleared { path: PathBuf },
+    /// The run-start restore moved `item`, which only a leftover work folder held, back to
+    /// `target` in `Data`. A warning because files moved under the operator, who should know
+    /// which step to rerun.
+    ArchiveWorkRestored { item: PathBuf, target: PathBuf },
+    /// The run-start restore could not put a leftover work folder's `items` back, so it renamed
+    /// the folder `from` to `to` rather than delete the only copy of anything.
+    ArchiveWorkSetAside {
+        from: PathBuf,
+        to: PathBuf,
+        items: LeftoverItems,
+    },
+    /// As [`Self::ArchiveWorkSetAside`], but the rename failed too, so the folder at `path` was
+    /// left where it is. It is never removed.
+    ArchiveWorkNotRestored { path: PathBuf, items: LeftoverItems },
+}
+
+/// What a leftover archive work folder still holds when the run-start restore gives up on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LeftoverItems {
+    /// The listed items still in the folder, as paths relative to it.
+    Listed(Vec<PathBuf>),
+    /// The folder's restore list could not be read or parsed, so what it holds is unknown.
+    UnreadableList,
+}
+
+impl fmt::Display for LeftoverItems {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Listed(items) => {
+                let items = items
+                    .iter()
+                    .map(|item| item.display().to_string())
+                    .collect::<Vec<_>>();
+                f.write_str(&items.join(", "))
+            }
+            Self::UnreadableList => {
+                f.write_str("whatever its restore list names (the list could not be read)")
+            }
+        }
+    }
 }
 
 impl fmt::Display for BuildWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ArchiveCleanupFailed { path } => {
+                write!(f, "Could not remove {}. Remove it by hand.", path.display())
+            }
+            Self::ArchiveWorkFolderNotCleared { path } => write!(
+                f,
+                "Could not remove leftover archive work folder {}. Remove it by hand.",
+                path.display()
+            ),
+            Self::ArchiveWorkRestored { item, target } => write!(
+                f,
+                "Moved {} back to {}. An earlier run stopped before it had finished with it.",
+                item.display(),
+                target.display()
+            ),
+            Self::ArchiveWorkSetAside { from, to, items } => write!(
+                f,
+                "Set leftover archive work folder {} aside as {}. It still holds {items}, which \
+                 could not be moved back into Data. Recover them, then delete the folder.",
+                from.display(),
+                to.display()
+            ),
+            Self::ArchiveWorkNotRestored { path, items } => write!(
+                f,
+                "Leftover archive work folder {} still holds {items}, which could not be moved \
+                 back into Data or set aside. Recover them by hand.",
+                path.display()
+            ),
             Self::MergePrecombinesHadErrors => f.write_str("Merge Precombines had errors"),
             Self::MergePrevisHadErrors => f.write_str("Merge Previs had errors"),
             Self::VisibilityTaskIncomplete => {
@@ -170,6 +246,67 @@ mod tests {
         assert_eq!(
             BuildWarning::MergePrevisHadErrors.to_string(),
             "Merge Previs had errors"
+        );
+    }
+
+    #[test]
+    fn the_archive_cleanup_warnings_name_the_path_to_remove_by_hand() {
+        let path = PathBuf::from(r"C:\Fallout4\ArchiveWork");
+
+        assert_eq!(
+            BuildWarning::ArchiveCleanupFailed { path: path.clone() }.to_string(),
+            format!("Could not remove {}. Remove it by hand.", path.display())
+        );
+        assert_eq!(
+            BuildWarning::ArchiveWorkFolderNotCleared { path: path.clone() }.to_string(),
+            format!(
+                "Could not remove leftover archive work folder {}. Remove it by hand.",
+                path.display()
+            )
+        );
+    }
+
+    #[test]
+    fn the_run_start_restore_warnings_say_what_moved_and_where() {
+        let from = PathBuf::from(r"C:\Fallout4\ArchiveWork");
+        let to = PathBuf::from(r"C:\Fallout4\ArchiveWork.orphaned.1");
+        let items = LeftoverItems::Listed(vec![
+            PathBuf::from(r"staging\vis"),
+            PathBuf::from("MyMod - Main.ba2"),
+        ]);
+
+        assert_eq!(
+            BuildWarning::ArchiveWorkRestored {
+                item: from.join("staging").join("vis"),
+                target: PathBuf::from(r"C:\Fallout4\Data\vis"),
+            }
+            .to_string(),
+            format!(
+                "Moved {} back to C:\\Fallout4\\Data\\vis. An earlier run stopped before it had \
+                 finished with it.",
+                from.join("staging").join("vis").display()
+            )
+        );
+        assert_eq!(
+            BuildWarning::ArchiveWorkSetAside {
+                from: from.clone(),
+                to: to.clone(),
+                items: items.clone(),
+            }
+            .to_string(),
+            "Set leftover archive work folder C:\\Fallout4\\ArchiveWork aside as \
+             C:\\Fallout4\\ArchiveWork.orphaned.1. It still holds staging\\vis, MyMod - Main.ba2, \
+             which could not be moved back into Data. Recover them, then delete the folder."
+        );
+        assert_eq!(
+            BuildWarning::ArchiveWorkNotRestored {
+                path: from,
+                items: LeftoverItems::UnreadableList,
+            }
+            .to_string(),
+            "Leftover archive work folder C:\\Fallout4\\ArchiveWork still holds whatever its \
+             restore list names (the list could not be read), which could not be moved back \
+             into Data or set aside. Recover them by hand."
         );
     }
 

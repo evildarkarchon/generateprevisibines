@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::config::{ArchiveTool, CkpeConfigKind, PluginIdentity};
 use crate::discovery::{self, ToolPaths};
 use crate::error::{Error, Result};
-use crate::tools::{CreationKitPaths, Fo4EditPaths};
+use crate::tools::{ArchivePaths, CreationKitPaths, Fo4EditPaths};
 use crate::validation;
 
 /// Pre-intake toolchain facts needed before a Workflow Request becomes a Workflow Run.
@@ -139,7 +139,10 @@ impl WorkflowToolchainProbe {
         };
 
         let archive = if requirements.needs_archive() {
-            Some(required_archive_tool(&self.tools, archive_tool)?)
+            Some(ArchiveToolchain {
+                tool: archive_tool,
+                executable: required_archive_tool(&self.tools, archive_tool)?,
+            })
         } else {
             None
         };
@@ -234,7 +237,8 @@ pub struct WorkflowToolchain {
     discovered_fo4edit: Option<PathBuf>,
     /// FO4Edit as prepared for the runnable operations; `None` when none required it.
     fo4edit: Option<Fo4EditToolchain>,
-    archive: Option<PathBuf>,
+    /// The archive tool as prepared for the runnable operations; `None` when none required it.
+    archive: Option<ArchiveToolchain>,
     diagnostics: Vec<ToolchainDiagnostic>,
 }
 
@@ -270,7 +274,9 @@ impl WorkflowToolchain {
     /// Prepared archive executable path when archive-backed operations require it.
     #[must_use]
     pub fn archive_path(&self) -> Option<&Path> {
-        self.archive.as_deref()
+        self.archive
+            .as_ref()
+            .map(|archive| archive.executable.as_path())
     }
 
     /// Resolve the paths a CK-backed Workflow Operation's Creation Kit episodes run against.
@@ -303,6 +309,23 @@ impl WorkflowToolchain {
         Ok(Fo4EditPaths {
             exe: fo4edit.executable.clone(),
             data_dir_override: fo4edit.data_dir_override.clone(),
+            session_log,
+        })
+    }
+
+    /// Resolve the paths an archive-backed Workflow Operation's Archive episodes run against.
+    ///
+    /// `session_log` is the Workflow Run's own log, which each episode folds the tool's output
+    /// into. Returns [`Error::ArchiveNotPrepared`] when archive readiness was never required,
+    /// and so never prepared, for this Workflow Run.
+    pub(crate) fn archive_paths(&self, session_log: PathBuf) -> Result<ArchivePaths> {
+        let archive = self.archive.as_ref().ok_or(Error::ArchiveNotPrepared)?;
+
+        Ok(ArchivePaths {
+            tool: archive.tool,
+            exe: archive.executable.clone(),
+            fallout4_dir: self.fallout4_dir.clone(),
+            data_dir: self.data_dir.clone(),
             session_log,
         })
     }
@@ -362,6 +385,16 @@ impl ToolchainRequirements {
         }
     }
 
+    /// Create the static readiness requirement for an archive-backed operation.
+    #[must_use]
+    pub const fn archive() -> Self {
+        Self {
+            creation_kit: false,
+            fo4edit: false,
+            archive: true,
+        }
+    }
+
     /// Combine readiness categories required by multiple Workflow Operations.
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -418,6 +451,16 @@ struct Fo4EditToolchain {
     executable: PathBuf,
     /// The run's `Data` directory when `-FO4:` was given; see [`Fo4EditPaths`].
     data_dir_override: Option<PathBuf>,
+}
+
+/// The archive tool as prepared for a Workflow Run whose runnable operations require it.
+///
+/// Records which tool was prepared beside its path, because the Archive episode's command lines
+/// differ by tool and the path alone does not say which one it is.
+#[derive(Debug, Clone)]
+struct ArchiveToolchain {
+    tool: ArchiveTool,
+    executable: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -742,6 +785,73 @@ mod tests {
             .unwrap();
 
         assert_eq!(paths.data_dir_override, None);
+    }
+
+    #[test]
+    fn the_archive_requirement_asks_for_the_archive_tool_alone() {
+        let requirements = ToolchainRequirements::archive();
+
+        assert!(requirements.needs_archive());
+        assert!(!requirements.needs_creation_kit());
+        assert!(!requirements.needs_fo4edit());
+    }
+
+    /// The prepared tool is recorded beside its path, and the paths point the episode at the
+    /// install's `Data` and its parent, the home of the work folder.
+    #[test]
+    fn archive_paths_record_the_prepared_tool() {
+        let dir = tempdir().unwrap();
+        let fo4 = dir.path().join("Fallout4");
+        let bsarch = dir.path().join("FO4Edit").join("BSArch.exe");
+        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
+            fallout4_dir: Some(fo4.clone()),
+            bsarch: Some(bsarch.clone()),
+            ..ToolPaths::default()
+        })
+        .unwrap();
+
+        let toolchain = probe
+            .prepare(
+                dir.path(),
+                ArchiveTool::BSArch,
+                ToolchainRequirements::archive(),
+            )
+            .unwrap();
+        let session_log = dir.path().join("session.log");
+        let paths = toolchain.archive_paths(session_log.clone()).unwrap();
+
+        assert_eq!(paths.tool, ArchiveTool::BSArch);
+        assert_eq!(paths.exe, bsarch);
+        assert_eq!(paths.fallout4_dir, fo4);
+        assert_eq!(paths.data_dir, fo4.join("Data"));
+        assert_eq!(paths.session_log, session_log);
+        assert_eq!(toolchain.archive_path(), Some(bsarch.as_path()));
+    }
+
+    /// An archive tool discovered but never required is not prepared.
+    #[test]
+    fn archive_paths_need_archive_readiness() {
+        let dir = tempdir().unwrap();
+        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
+            fallout4_dir: Some(dir.path().join("Fallout4")),
+            archive2: Some(dir.path().join("Archive2.exe")),
+            ..ToolPaths::default()
+        })
+        .unwrap();
+
+        let toolchain = probe
+            .prepare(
+                dir.path(),
+                ArchiveTool::Archive2,
+                ToolchainRequirements::none(),
+            )
+            .unwrap();
+
+        assert!(matches!(
+            toolchain.archive_paths(dir.path().join("session.log")),
+            Err(Error::ArchiveNotPrepared)
+        ));
+        assert_eq!(toolchain.archive_path(), None);
     }
 
     /// FO4Edit discovered but never required is not prepared, so no episode can reach it.

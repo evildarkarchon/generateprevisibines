@@ -49,6 +49,8 @@ Ordered slices recommended for parity work:
    into `Data` ([ADR-0004](adr/0004-plugin-archive-is-the-only-cross-step-archive-state.md)).
    Per-verb command lines for both tools and the Xbox-compression divergence are in
    [episodes.md](episodes.md) § *Archive*.
+   The Archive episode (`tools/archive`, `ArchiveOps::archive_precombines`) is implemented; the
+   Workflow Operation that calls it is not registered yet.
 5. **Steps 4–5 — PSG / CDX** (clean and xbox; filtered skips both) — `- Geometry.psg` presence check on step-4 entry, then `CompressPSG` and delete the intermediate `.psg` (clean only — xbox skips straight to step 5 and keeps the `.psg`), then `BuildCDX`. Mode gates are in [episodes.md](episodes.md) § *Per-step notes*.
    Step 4 is implemented as the `compress_psg` Workflow Operation and Step 5 as `build_cdx`.
 6. **Step 6 — Generate previs** — empty `Data\vis`, `GeneratePreVisData`, visibility task warning.
@@ -61,6 +63,10 @@ Ordered slices recommended for parity work:
      `vis` in and repacks, so the Plugin Archive is the only state carried from Step 3
      ([ADR-0004](adr/0004-plugin-archive-is-the-only-cross-step-archive-state.md)). Both paths
      are in [episodes.md](episodes.md) § *Archive*; the batch's `:ArchiveOnly` fallback is not ported.
+   - The port does not delete the archive before the repack: both tools build the new archive in
+     the work folder and swap it in only after it passes the exists check.
+   - The Archive episode (`ArchiveOps::add_previs`) is implemented; the Workflow Operation that
+     calls it is not registered yet.
 9. **Finish / cleanup** — list output files, optional delete CombinedObjects.esp / Previs.esp, restore DLLs.
 
 Each slice should wire through the Workflow Operation seam and real tool adapters.

@@ -196,7 +196,67 @@ pub(crate) fn append_unattended_log(
     append_tool_log_contents(session_log, contents, files)
 }
 
+/// Open one archive pack's session-log entry (batch `:Archive` lines 392–393 and 426).
+///
+/// `sources` is what is packed, as the batch prints it: `meshes\precombined`, or
+/// `meshes\precombined,vis` for the Step 8 rebuild. The doubled space the batch leaves where the
+/// empty `%Arch2Quals_%` sits is dropped, as the FO4Edit header drops `echo`'s trailing spaces.
+///
+/// Written before the tool runs and before any move or wait, so a pack that hangs still leaves
+/// a record of what was attempted.
+///
+/// Returns [`crate::error::Error::Io`] when the session log cannot be extended.
+pub(crate) fn append_archive_pack_header(
+    session_log: &Path,
+    archive_name: &str,
+    sources: &str,
+    files: &dyn FileSpace,
+) -> Result<()> {
+    files.append(
+        session_log,
+        &format!("Creating Archive {archive_name} of {sources}:\n{CK_RUN_SEPARATOR}\n"),
+    )
+}
+
+/// Open one archive extract's session-log entry (batch `:Extract` line 415).
+///
+/// Also written before BSArch's `unpack`, which the batch never runs but which takes the
+/// extract's place in the port's Step 8 rebuild. Placed before the tool runs for the same reason
+/// as [`append_archive_pack_header`].
+///
+/// Returns [`crate::error::Error::Io`] when the session log cannot be extended.
+pub(crate) fn append_archive_extract_header(
+    session_log: &Path,
+    archive_name: &str,
+    files: &dyn FileSpace,
+) -> Result<()> {
+    files.append(
+        session_log,
+        &format!("Extracting Archive {archive_name}:\n{CK_RUN_SEPARATOR}\n"),
+    )
+}
+
+/// Fold one archive tool run's captured output into the session log: stdout, then stderr.
+///
+/// Each stream gets the same newline normalisation as [`append_ck_log`], and an empty one adds
+/// nothing. There is no stream label. Keeping stderr at all is a divergence: the batch's
+/// `>> "%Logfile_%"` keeps stdout only, which loses Archive2's `-1` stack traces.
+///
+/// Returns [`crate::error::Error::Io`] when the session log cannot be extended.
+pub(crate) fn append_archive_tool_output(
+    session_log: &Path,
+    stdout: &str,
+    stderr: &str,
+    files: &dyn FileSpace,
+) -> Result<()> {
+    append_tool_log_contents(session_log, stdout, files)?;
+    append_tool_log_contents(session_log, stderr, files)
+}
+
 /// Append an external tool's log `contents` so the session log ends on a newline.
+///
+/// The one normalisation every folded tool log shares: Creation Kit's log, FO4Edit's unattended
+/// log, and the archive tools' captured output.
 fn append_tool_log_contents(
     session_log: &Path,
     contents: &str,
@@ -490,6 +550,46 @@ mod tests {
         assert_eq!(
             files.read_lossy(&session_log).unwrap(),
             "Completed: No Errors.\nsecond\n"
+        );
+    }
+
+    /// Batch 392–393 and 415, without the doubled space the empty `%Arch2Quals_%` left.
+    #[test]
+    fn the_archive_headers_name_the_archive_and_what_is_packed() {
+        let files = InMemoryFileSpace::new();
+        let session_log = files.temp_dir().join("MyMod.log");
+
+        append_archive_extract_header(&session_log, "MyMod - Main.ba2", &files).unwrap();
+        append_archive_pack_header(
+            &session_log,
+            "MyMod - Main.ba2",
+            "meshes\\precombined,vis",
+            &files,
+        )
+        .unwrap();
+
+        assert_eq!(
+            files.read_lossy(&session_log).unwrap(),
+            "Extracting Archive MyMod - Main.ba2:\n\
+             ====================================\n\
+             Creating Archive MyMod - Main.ba2 of meshes\\precombined,vis:\n\
+             ====================================\n"
+        );
+    }
+
+    /// Stdout then stderr, each ending on a newline, and an empty stream adds nothing.
+    #[test]
+    fn archive_tool_output_folds_stdout_then_stderr() {
+        let files = InMemoryFileSpace::new();
+        let session_log = files.temp_dir().join("MyMod.log");
+
+        append_archive_tool_output(&session_log, "Packed 2 files", "stack trace\n", &files)
+            .unwrap();
+        append_archive_tool_output(&session_log, "", "", &files).unwrap();
+
+        assert_eq!(
+            files.read_lossy(&session_log).unwrap(),
+            "Packed 2 files\nstack trace\n"
         );
     }
 

@@ -11,7 +11,7 @@ use crate::files::FileSpace;
 use crate::interactive;
 use crate::run::WorkflowRun;
 use crate::toolchain::ToolchainRequirements;
-use crate::tools::{CreationKitOps, Fo4EditOps};
+use crate::tools::{ArchiveOps, CreationKitOps, Fo4EditOps};
 use crate::warning::BuildWarnings;
 use crate::workflow::WorkflowPlan;
 
@@ -217,20 +217,21 @@ pub(crate) fn execute_registered_workflow(
 ///
 /// Deliberately a struct: the bundle itself has exactly one shape, so a trait over it would be
 /// a hypothetical seam. The *fields* are the real seams — `files` has two adapters, `prompts`
-/// will, and the two tool episodes sit above the `ProcessRunner`, `Wait` and `DesktopWindows`
+/// will, and the three tool episodes sit above the `ProcessRunner`, `Wait` and `DesktopWindows`
 /// ports, which have two each.
 ///
-/// `ck` and `fo4edit` are concrete episodes rather than `&dyn` traits for that same reason.
-/// Tests substitute underneath them, at `ProcessRunner`/`Wait`/`DesktopWindows`, and run the
-/// real [`CreationKitOps`] and [`Fo4EditOps`] — which is what puts the DLL guard, the MO2
-/// delays, the log lifecycle, the Module Selection ladder and the close sequence under an
-/// operation's tests instead of leaving their composition untested behind a
-/// one-implementation trait.
+/// `ck`, `fo4edit` and `archive` are concrete episodes rather than `&dyn` traits for that same
+/// reason. Tests substitute underneath them, at `ProcessRunner`/`Wait`/`DesktopWindows`/
+/// `FileSpace`, and run the real [`CreationKitOps`], [`Fo4EditOps`] and [`ArchiveOps`] — which
+/// is what puts the DLL guard, the MO2 delays, the log lifecycle, the Module Selection ladder,
+/// the close sequence, the archive swap and the BSArch move-backs under an operation's tests
+/// instead of leaving their composition untested behind a one-implementation trait.
 ///
 /// Each episode is optional, because a Workflow Run prepares only the tools its runnable
-/// operations require: a resume at Step 2 or Step 7 needs FO4Edit and no Creation Kit. An
-/// operation reaches its episode through [`Self::ck`] or [`Self::fo4edit`], and an absent one
-/// is a preparation bug rather than a user state.
+/// operations require: a resume at Step 2 or Step 7 needs FO4Edit and no Creation Kit, and a
+/// resume at Step 8 needs only the archive tool. An operation reaches its episode
+/// through [`Self::ck`], [`Self::fo4edit`] or [`Self::archive`], and an absent one is a
+/// preparation bug rather than a user state.
 #[derive(Debug)]
 pub(crate) struct OperationPorts<'a> {
     /// The Creation Kit episode: a domain verb per batch operation, its command grammar hidden.
@@ -241,6 +242,12 @@ pub(crate) struct OperationPorts<'a> {
     ///
     /// `None` when no runnable operation required FO4Edit. Read it through [`Self::fo4edit`].
     pub(crate) fo4edit: Option<&'a Fo4EditOps<'a>>,
+    /// The Archive episode: one domain verb per archive step, the tool's command grammar, the
+    /// work folder and the swap hidden.
+    ///
+    /// `None` when no runnable operation required the archive tool. Read it through
+    /// [`Self::archive`].
+    pub(crate) archive: Option<&'a ArchiveOps<'a>>,
     /// The operator questions a Workflow Operation is allowed to ask.
     pub(crate) prompts: &'a dyn Prompts,
     /// The space every Workflow Operation observes and cleans up external-tool outputs in.
@@ -268,6 +275,22 @@ impl<'a> OperationPorts<'a> {
     /// means planning and readiness disagreed about the running operation.
     pub(crate) fn fo4edit(&self) -> Result<&'a Fo4EditOps<'a>> {
         self.fo4edit.ok_or(Error::Fo4EditNotPrepared)
+    }
+
+    /// The Archive episode, for an operation registered with archive readiness.
+    ///
+    /// Returns [`Error::ArchiveNotPrepared`] when the Workflow Run prepared no archive tool,
+    /// which means planning and readiness disagreed about the running operation.
+    // No registered Workflow Operation reaches the archive tool until Steps 3 and 8 land.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "Steps 3 and 8, the operations that reach the Archive episode, are not registered yet"
+        )
+    )]
+    pub(crate) fn archive(&self) -> Result<&'a ArchiveOps<'a>> {
+        self.archive.ok_or(Error::ArchiveNotPrepared)
     }
 }
 
@@ -341,7 +364,7 @@ mod tests {
         ExitFlag, ProcessCallKind, ProcessRunner, RecordedProcessCall, RecordingProcessRunner,
     };
     use crate::tools::wait::{MO2_DELAY_AFTER_CK_SECS, RecordingWait};
-    use crate::tools::{CkPorts, Fo4EditPaths, Fo4EditPorts};
+    use crate::tools::{ArchivePorts, CkPorts, Fo4EditPaths, Fo4EditPorts};
     use crate::warning::BuildWarning;
     use crate::{
         discovery::ToolPaths,
@@ -631,10 +654,19 @@ mod tests {
                 })
             });
             let warnings = BuildWarnings::new(self.run.log_path().to_path_buf(), &self.files);
+            let archive = self.run.archive().map(|paths| {
+                paths.bind(ArchivePorts {
+                    process,
+                    wait: &self.wait,
+                    files: &self.files,
+                    warnings: &warnings,
+                })
+            });
 
             use_ports(&OperationPorts {
                 ck: ck.as_ref(),
                 fo4edit: fo4edit.as_ref(),
+                archive: archive.as_ref(),
                 prompts: &self.prompts,
                 files: &self.files,
                 warnings: &warnings,
@@ -2015,6 +2047,7 @@ mod tests {
         let ports = OperationPorts {
             ck: None,
             fo4edit: None,
+            archive: None,
             prompts: &fixture.prompts,
             files: &fixture.files,
             warnings: &warnings,
@@ -2022,6 +2055,7 @@ mod tests {
 
         assert!(matches!(ports.ck(), Err(Error::CreationKitNotPrepared)));
         assert!(matches!(ports.fo4edit(), Err(Error::Fo4EditNotPrepared)));
+        assert!(matches!(ports.archive(), Err(Error::ArchiveNotPrepared)));
     }
 
     /// A prepared episode comes back from its accessor as the very episode that was bound.
@@ -2051,6 +2085,7 @@ mod tests {
         let ports = OperationPorts {
             ck: Some(&ck),
             fo4edit: Some(&fo4edit),
+            archive: None,
             prompts: &fixture.prompts,
             files: &fixture.files,
             warnings: &warnings,
@@ -2069,6 +2104,7 @@ mod tests {
         let ports = OperationPorts {
             ck: None,
             fo4edit: None,
+            archive: None,
             prompts: &fixture.prompts,
             files: &fixture.files,
             warnings: &warnings,
@@ -2323,6 +2359,7 @@ mod tests {
         let ports = OperationPorts {
             ck: None,
             fo4edit: None,
+            archive: None,
             prompts: &fixture.prompts,
             files: &fixture.files,
             warnings: &warnings,
@@ -2593,6 +2630,7 @@ mod tests {
         let ports = OperationPorts {
             ck: None,
             fo4edit: None,
+            archive: None,
             prompts: &fixture.prompts,
             files: &fixture.files,
             warnings: &warnings,

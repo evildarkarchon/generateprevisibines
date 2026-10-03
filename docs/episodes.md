@@ -291,6 +291,53 @@ files, control falls through to `:ArchiveOnly` (441 → 445) and the archive is 
   batch's `Creating … Archive …` / `====` header. The batch keeps stdout only, which loses
   Archive2's `-1` stack traces.
 
+**The port's command lines** (`src/tools/archive.rs`). Every call runs in cwd `Data`, each
+argument is one argv token, and `<work>` is the step's work folder:
+
+| Call | Argv |
+|---|---|
+| Archive2 pack, Step 3 | `meshes\precombined` `-c=<work>\<name>` `-f=General` `-q` |
+| Archive2 extract, Step 8 | `<name>` `-e=.` `-q` (into `Data`, as 416) |
+| Archive2 repack, Step 8 | `meshes\precombined,vis` `-c=<work>\<name>` `-f=General` `-q` |
+| BSArch unpack, Step 8 | `unpack` `<data>\<name>` `<work>\staging` (the target is created first) |
+| BSArch pack, Steps 3 and 8 | `pack` `<work>\staging` `<work>\<name>` `-mt` `-fo4` `-z` |
+
+Archive2's sources stay relative under cwd `Data`, so the archive's internal paths are the
+batch's. Rust quotes a `-c=` path with spaces itself, which Archive2 accepts (probe, #44), so the
+batch's `-c="…"` form is not reproduced. BSArch's output sits beside `staging\`, never in it.
+
+Before each run, the session log gets a header, then 36 `=`: `Creating Archive <name> of
+meshes\precombined:` (Step 3), `Extracting Archive <name>:` (before the Step 8 extract or
+unpack), and `Creating Archive <name> of meshes\precombined,vis:` (before the Step 8 repack). The
+doubled space the empty `%Arch2Quals_%` left at 392 and 426 is dropped. After each run, stdout
+and then stderr are appended, each ending on a newline, with no stream label.
+
+A non-zero exit stops every run. The batch's literal quotes around the Archive2 lines are
+dropped, and a code-less exit renders as `unknown`:
+
+| Run | Stops with |
+|---|---|
+| Archive2 pack | `Archive2 failed with error <code>` (406) |
+| Archive2 extract | `Archive2 Extract failed with error <code>` (418) |
+| BSArch pack | `BSArch failed with error <code>` (399, 432) |
+| BSArch unpack | `BSArch Unpack failed with error <code>` (new) |
+
+After any pack, a missing `<work>\<name>` stops with `No plugin archive Created` (408).
+
+In the BSArch Step 8 rebuild, an old `vis` the unpack wrote into `<work>\staging\vis` is removed
+before the new `vis` moves in. It is a copy, and packing it would put stale visibility data in
+the archive.
+
+**Known limitation, shared with the batch:** if the Plugin Archive already holds `vis` (for
+example, a resume at 6 to redo previs on a finished build), the Archive2 extract writes the old
+`.uvd` files into `Data\vis` beside the new ones, and the repack packs both. Whether Archive2
+overwrites or skips files that already exist is unverified. BSArch is not affected (see above).
+
+**Known limitation, untested:** an MO2 `overwrite` on a different volume from the game.
+`std::fs::rename`, which moves folders into and out of the work folder and swaps the archive in,
+does not copy across volumes, so those moves would fail there. The batch's `MOVE` has the same
+exposure.
+
 **Known limitation, kept for parity:** BSArch 1.0 roots internal paths after the *first*
 `\data\` in the absolute path, so an install under a `Data`-named ancestor (for example
 `D:\Data\Games\Fallout 4`) mis-roots every file. That applies to `Data\…` sources and to

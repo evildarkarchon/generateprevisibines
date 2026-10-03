@@ -1,10 +1,11 @@
 //! Wrappers for external tools.
 //!
 //! See `docs/workarounds.md` — do not remove the MO2 delays, the DLL renaming around Creation
-//! Kit, or FO4Edit's Module Selection dismissal and close sequence. The Creation Kit and FO4Edit
-//! episodes are here; the archive adapters are not yet, and the invocation detail they must
-//! reproduce lives with slices 4 and 8 in `docs/future-features.md`.
+//! Kit, FO4Edit's Module Selection dismissal and close sequence, or the Archive2 extract-repack.
+//! The Creation Kit, FO4Edit and Archive episodes are all here; `docs/episodes.md` holds the
+//! invocation detail each one reproduces.
 
+mod archive;
 mod creation_kit;
 // `DllGuard` is deliberately not re-exported below. `disable` takes the crate-private
 // `FileSpace`, so the guard cannot be constructed from outside the crate, and its only
@@ -31,3 +32,11 @@ pub(crate) use creation_kit::{CkPorts, CreationKitOps, CreationKitPaths};
 pub(crate) use fo4edit::{
     Fo4EditOps, Fo4EditPaths, Fo4EditPorts, MERGE_COMBINED_OBJECTS_SCRIPT, MERGE_PREVIS_SCRIPT,
 };
+// The same for the archive tools: their command lines, the work folder and the restore list
+// stay inside `archive`, behind the two domain verbs. The run-start restore is re-exported
+// because the Workflow Run calls it before any step, without an episode.
+pub(crate) use archive::{ArchiveOps, ArchivePaths, ArchivePorts, restore_archive_work_folders};
+
+// Test-only seeding of leftover work folders, in the format that stays inside `archive`.
+#[cfg(test)]
+pub(crate) use archive::leftovers;

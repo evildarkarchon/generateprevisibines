@@ -25,12 +25,11 @@ use crate::error::Result;
 /// Precombine Workspace among them — can keep deriving `Debug`.
 // Every operation here has a production caller: `logging` routes the session log through
 // `write`, `append` and `temp_dir`, `DllGuard` renames through `rename`, `exists`, `is_file`
-// and `remove_file`, and seed-plugin setup uses `copy`. The `dead_code` allow that once
+// and `remove_file`, and seed-plugin setup uses `copy`. The Archive episode creates and fills
+// its work folder through `create_dir_all`, `is_dir` and `move_dir`, and the run-start restore
+// of leftover work folders lists them through `child_dirs`. The `dead_code` allow that once
 // covered the unadopted half of the trait is gone with them; if one of these goes quiet again,
-// delete it rather than re-adding the allow. The exception is the directory operations
-// (`create_dir_all`, `is_dir`, `child_dirs` and `move_dir`), added ahead of the Archive
-// episode that will be their first caller: each carries a test-only `dead_code` allow until
-// that episode lands and removes it.
+// delete it rather than re-adding the allow.
 pub(crate) trait FileSpace: std::fmt::Debug {
     /// Whether `path` names an existing file (not a directory).
     fn is_file(&self, path: &Path) -> bool;
@@ -86,23 +85,9 @@ pub(crate) trait FileSpace: std::fmt::Debug {
     ///
     /// An existing directory is success. Returns [`crate::error::Error::Io`] when a directory
     /// cannot be created, including when a file already sits at `path`.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "the Archive episode (ArchiveOps) that creates its work folder is not ported yet"
-        )
-    )]
     fn create_dir_all(&self, path: &Path) -> Result<()>;
 
     /// Whether `path` names an existing directory (not a file).
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "the Archive episode (ArchiveOps) that inspects its work folders is not ported yet"
-        )
-    )]
     fn is_dir(&self, path: &Path) -> bool;
 
     /// The immediate subdirectories of `directory`, in no particular order.
@@ -110,13 +95,6 @@ pub(crate) trait FileSpace: std::fmt::Debug {
     /// Files and deeper descendants are not listed. A missing or unreadable `directory`
     /// yields an empty list, as in [`FileSpace::find_first_file_with_extension`]: "cannot
     /// look" answers the caller's question the same way "nothing there" does.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "the Archive episode (ArchiveOps) whose run-start restore lists ArchiveWork folders is not ported yet"
-        )
-    )]
     fn child_dirs(&self, directory: &Path) -> Vec<PathBuf>;
 
     /// Move the directory `from`, with everything beneath it, to `to`.
@@ -125,13 +103,6 @@ pub(crate) trait FileSpace: std::fmt::Debug {
     /// is **not** created: a missing parent is an error. Returns [`crate::error::Error::Io`]
     /// in each of those cases. This is a separate operation rather than a wider `rename`,
     /// because `rename` replaces an existing destination, which is a file contract.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "the Archive episode (ArchiveOps) that stages loose folders in its work folder is not ported yet"
-        )
-    )]
     fn move_dir(&self, from: &Path, to: &Path) -> Result<()>;
 
     /// Write `contents` to `path`, replacing any existing file rather than appending.

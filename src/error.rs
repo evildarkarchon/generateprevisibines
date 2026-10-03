@@ -159,6 +159,80 @@ pub enum Error {
     #[error("FO4Edit script {script} failed")]
     Fo4EditScriptFailed { script: &'static str },
 
+    // The archive-tool twin of `CreationKitNotPrepared`, and a preparation bug for the same
+    // reason: a Workflow Run resolves the archive tool only when a runnable Workflow Operation
+    // asked for archive readiness.
+    #[error("The archive tool was not prepared for this Workflow Run")]
+    ArchiveNotPrepared,
+
+    // The batch's own wording (`GeneratePrevisibines.bat:406`), without the literal quotes its
+    // `echo "ERROR - …"` printed. Stops every run, interactive or not: the batch's `Call` let a
+    // non-interactive run fall through it.
+    #[error("Archive2 failed with error {}", exit_code_text(*.code))]
+    Archive2Failed { code: Option<i32> },
+
+    // The batch's own wording (`GeneratePrevisibines.bat:418`), quotes dropped as above.
+    #[error("Archive2 Extract failed with error {}", exit_code_text(*.code))]
+    Archive2ExtractFailed { code: Option<i32> },
+
+    // The batch's own wording (`GeneratePrevisibines.bat:399, 432`).
+    #[error("BSArch failed with error {}", exit_code_text(*.code))]
+    BsarchFailed { code: Option<i32> },
+
+    // New: the batch never unpacks. Worded as the Archive2 extract failure is.
+    #[error("BSArch Unpack failed with error {}", exit_code_text(*.code))]
+    BsarchUnpackFailed { code: Option<i32> },
+
+    // The batch's own wording (`GeneratePrevisibines.bat:408`). Load-bearing: `Archive2 -c` with
+    // no sources exits 0 and creates nothing.
+    #[error("No plugin archive Created")]
+    NoPluginArchiveCreated,
+
+    // The new archive was built and checked, but the old one could not be replaced by it. The
+    // work folder is kept: it may hold the only copy of the new archive, and for BSArch of the
+    // staged precombines or `vis`, which the next run's restore moves back.
+    #[error(
+        "The new plugin archive is at {} but could not be moved to {}. The next run moves back \
+         what {} holds the only copy of, or sets {} aside if it cannot.",
+        .built.display(),
+        .target.display(),
+        .work.display(),
+        .work.display()
+    )]
+    ArchiveSwapFailed {
+        built: std::path::PathBuf,
+        target: std::path::PathBuf,
+        work: std::path::PathBuf,
+    },
+
+    // A BSArch pack failed and the staged folder could not be moved back into `Data`. Replaces
+    // the pack's own error, because where the files are now is what the operator needs.
+    #[error(
+        "Could not move {} back to {}. The next run moves it back, or sets {} aside if it cannot.",
+        .from.display(),
+        .to.display(),
+        .work.display()
+    )]
+    ArchiveMoveBackFailed {
+        from: std::path::PathBuf,
+        to: std::path::PathBuf,
+        work: std::path::PathBuf,
+    },
+
+    // A stop even though the swap succeeded: a restore list left behind would make the next run
+    // move files the new archive already holds back into `Data`.
+    #[error(
+        "The new plugin archive is in place, but {} could not be removed. Delete it before \
+         rerunning, or the next run will move files the archive already holds back into Data.",
+        .path.display()
+    )]
+    ArchiveRestoreListNotRemoved { path: std::path::PathBuf },
+
+    // A divergence: the batch rebuilds from `vis` alone when the extract yields no precombines
+    // (441 → 445), which silently drops them. The old archive is untouched when this is raised.
+    #[error("{name} holds no precombined meshes, so previs cannot be added to it")]
+    PluginArchiveHasNoPrecombines { name: String },
+
     // Raised before intake when another process holds `<fo4>\GeneratePrevisibines.lock`
     // (ADR-0005): two runs against one installation would each read the other's live work as
     // crash leftovers. A crashed run's lock is released by Windows, so a retry soon succeeds.
@@ -273,6 +347,112 @@ mod tests {
             Error::Fo4EditStillRunning { pid: 4242 }.to_string(),
             "FO4Edit (PID 4242) is still running after two close requests. Close it, then \
              rerun this step."
+        );
+    }
+
+    /// Batch lines 399, 406, 418 and 432, without the quotes and the `ERROR - ` prefix, plus
+    /// the new BSArch unpack failure worded alongside them.
+    #[test]
+    fn the_archive_tool_failures_read_as_the_batch_wording() {
+        let code = Some(-1);
+
+        assert_eq!(
+            Error::Archive2Failed { code }.to_string(),
+            "Archive2 failed with error -1"
+        );
+        assert_eq!(
+            Error::Archive2ExtractFailed { code }.to_string(),
+            "Archive2 Extract failed with error -1"
+        );
+        assert_eq!(
+            Error::BsarchFailed { code }.to_string(),
+            "BSArch failed with error -1"
+        );
+        assert_eq!(
+            Error::BsarchUnpackFailed { code }.to_string(),
+            "BSArch Unpack failed with error -1"
+        );
+        assert_eq!(
+            Error::NoPluginArchiveCreated.to_string(),
+            "No plugin archive Created"
+        );
+    }
+
+    /// A code-less exit status cannot be built on Windows, so the rendering is pinned here.
+    #[test]
+    fn an_archive_tool_failure_with_no_exit_code_renders_it_as_unknown() {
+        assert_eq!(
+            Error::Archive2Failed { code: None }.to_string(),
+            "Archive2 failed with error unknown"
+        );
+        assert_eq!(
+            Error::BsarchUnpackFailed { code: None }.to_string(),
+            "BSArch Unpack failed with error unknown"
+        );
+    }
+
+    /// The swap and move-back failures say the next run restores the files, not that it
+    /// clears them.
+    #[test]
+    fn the_archive_recovery_stops_name_every_path_and_the_next_run_restore() {
+        let work = std::path::PathBuf::from(r"C:\Fallout4\ArchiveWork");
+
+        assert_eq!(
+            Error::ArchiveSwapFailed {
+                built: work.join("MyMod - Main.ba2"),
+                target: std::path::PathBuf::from(r"C:\Fallout4\Data\MyMod - Main.ba2"),
+                work: work.clone(),
+            }
+            .to_string(),
+            format!(
+                "The new plugin archive is at {} but could not be moved to \
+                 C:\\Fallout4\\Data\\MyMod - Main.ba2. The next run moves back what {} holds \
+                 the only copy of, or sets {} aside if it cannot.",
+                work.join("MyMod - Main.ba2").display(),
+                work.display(),
+                work.display()
+            )
+        );
+        assert_eq!(
+            Error::ArchiveMoveBackFailed {
+                from: work.join("staging").join("vis"),
+                to: std::path::PathBuf::from(r"C:\Fallout4\Data\vis"),
+                work: work.clone(),
+            }
+            .to_string(),
+            format!(
+                "Could not move {} back to C:\\Fallout4\\Data\\vis. The next run moves it back, \
+                 or sets {} aside if it cannot.",
+                work.join("staging").join("vis").display(),
+                work.display()
+            )
+        );
+        assert_eq!(
+            Error::ArchiveRestoreListNotRemoved {
+                path: work.join("restore.txt"),
+            }
+            .to_string(),
+            format!(
+                "The new plugin archive is in place, but {} could not be removed. Delete it \
+                 before rerunning, or the next run will move files the archive already holds \
+                 back into Data.",
+                work.join("restore.txt").display()
+            )
+        );
+    }
+
+    #[test]
+    fn an_archive_without_precombines_is_named() {
+        assert_eq!(
+            Error::PluginArchiveHasNoPrecombines {
+                name: "MyMod - Main.ba2".to_string()
+            }
+            .to_string(),
+            "MyMod - Main.ba2 holds no precombined meshes, so previs cannot be added to it"
+        );
+        assert_eq!(
+            Error::ArchiveNotPrepared.to_string(),
+            "The archive tool was not prepared for this Workflow Run"
         );
     }
 

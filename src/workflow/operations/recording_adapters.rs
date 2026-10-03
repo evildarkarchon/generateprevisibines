@@ -14,16 +14,24 @@
 //! The same holds for FO4Edit: there is no recording FO4Edit either. The real `Fo4EditOps` runs
 //! over a `RecordingDesktopWindows` scripted by [`behaving_fo4edit_windows`], and the merge's
 //! log is recorded as an effect of dismissing Module Selection.
+//!
+//! Nor is there a recording archive episode. The real `ArchiveOps` runs over a
+//! `RecordingProcessRunner` whose calls are scripted with the helpers below, each of which
+//! records what one Archive2 or BSArch call leaves behind as an effect of that call, written
+//! where the call's own arguments say. [`FaultyFileSpace`] refuses chosen operations, for the
+//! swap, move-back and cleanup failures.
 
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::config::ProjectConfig;
 use crate::error::Result;
-use crate::files::InMemoryFileSpace;
+use crate::files::{FileSpace, InMemoryFileSpace};
 use crate::logging;
 use crate::tools::desktop::{DesktopAction, RecordingDesktopWindows, ScriptedWindow, WindowHandle};
-use crate::tools::process::{ExitFlag, RECORDED_PROCESS_ID, RecordingProcessRunner, ScriptedExit};
+use crate::tools::process::{
+    ExitFlag, RECORDED_PROCESS_ID, RecordingProcessRunner, ScriptedCall, ScriptedExit,
+};
 use crate::tools::wait::{
     FO4EDIT_CLOSE_DELAYS_SECS, FO4EDIT_POLL_INTERVAL_SECS, FO4EDIT_STARTUP_DELAY_SECS,
     MO2_DELAY_BEFORE_FO4EDIT_SECS,
@@ -280,4 +288,225 @@ pub(crate) fn behaving_fo4edit_windows<'a>(
             DesktopAction::RequestClose { .. } => exit.set(),
             _ => {}
         })
+}
+
+/// What a simulated archive pack writes as the built Plugin Archive.
+pub(crate) const PACKED_ARCHIVE: &str = "packed archive";
+
+/// The precombined mesh a simulated extract or unpack writes beneath `root`.
+pub(crate) fn extracted_mesh(root: &Path) -> PathBuf {
+    root.join("meshes")
+        .join("precombined")
+        .join("0000ABCD_OC.nif")
+}
+
+/// The old cluster file a simulated extract or unpack writes beneath `root` when the archive
+/// already holds `vis`.
+pub(crate) fn extracted_old_uvd(root: &Path) -> PathBuf {
+    root.join("vis").join("old.uvd")
+}
+
+/// An Archive2 pack that writes [`PACKED_ARCHIVE`] where its `-c=` argument says.
+///
+/// The output path is read from the call's own arguments rather than passed in, so a pack that
+/// named the wrong output leaves the archive somewhere the episode does not look.
+pub(crate) fn archive2_pack_writing_archive(space: &InMemoryFileSpace) -> ScriptedCall<'_> {
+    ScriptedCall::new().with_effect(space, |space, _exe, args| {
+        let built = args
+            .iter()
+            .find_map(|arg| arg.to_str()?.strip_prefix("-c="))
+            .expect("an Archive2 pack names its output with -c=");
+        space.add_file_with_contents(built, PACKED_ARCHIVE);
+    })
+}
+
+/// A BSArch pack (`pack <folder> <archive> …`) that writes [`PACKED_ARCHIVE`] at `<archive>`.
+pub(crate) fn bsarch_pack_writing_archive(space: &InMemoryFileSpace) -> ScriptedCall<'_> {
+    ScriptedCall::new().with_effect(space, |space, _exe, args| {
+        space.add_file_with_contents(&args[2], PACKED_ARCHIVE);
+    })
+}
+
+/// An Archive2 extract (`<archive> -e=. -q`, cwd `Data`) that writes the archive's precombined
+/// mesh into `data_dir`, and its old `vis` too when `with_vis` is set.
+///
+/// Archive2 extracts relative to its working directory, which the call's arguments do not name,
+/// so `data_dir` is passed in.
+pub(crate) fn archive2_extract_writing_precombines(
+    space: &InMemoryFileSpace,
+    data_dir: PathBuf,
+    with_vis: bool,
+) -> ScriptedCall<'_> {
+    ScriptedCall::new().with_effect(space, move |space, _exe, _args| {
+        space.add_file_with_contents(extracted_mesh(&data_dir), "extracted mesh");
+        if with_vis {
+            space.add_file_with_contents(extracted_old_uvd(&data_dir), "old previs");
+        }
+    })
+}
+
+/// A BSArch unpack (`unpack <archive> <folder>`) that writes the archive's precombined mesh
+/// beneath `<folder>`, and its old `vis` too when `with_vis` is set.
+pub(crate) fn bsarch_unpack_writing_precombines(
+    space: &InMemoryFileSpace,
+    with_vis: bool,
+) -> ScriptedCall<'_> {
+    ScriptedCall::new().with_effect(space, move |space, _exe, args| {
+        let target = PathBuf::from(&args[2]);
+        space.add_file_with_contents(extracted_mesh(&target), "unpacked mesh");
+        if with_vis {
+            space.add_file_with_contents(extracted_old_uvd(&target), "old previs");
+        }
+    })
+}
+
+/// A [`FileSpace`] over an [`InMemoryFileSpace`] that refuses chosen operations on chosen paths,
+/// standing in for a usvfs or antivirus lock.
+///
+/// Every other call is forwarded, so the code under test still sees one consistent space.
+#[derive(Debug)]
+pub(crate) struct FaultyFileSpace<'a> {
+    inner: &'a InMemoryFileSpace,
+    refused_dir_removals: Vec<PathBuf>,
+    refused_dir_moves_to: Vec<PathBuf>,
+    refused_renames_to: Vec<PathBuf>,
+    refused_file_removals: Vec<PathBuf>,
+}
+
+impl<'a> FaultyFileSpace<'a> {
+    /// A wrapper that refuses nothing yet.
+    #[must_use]
+    pub(crate) const fn over(inner: &'a InMemoryFileSpace) -> Self {
+        Self {
+            inner,
+            refused_dir_removals: Vec::new(),
+            refused_dir_moves_to: Vec::new(),
+            refused_renames_to: Vec::new(),
+            refused_file_removals: Vec::new(),
+        }
+    }
+
+    /// Fail `remove_dir_all(path)`, leaving everything beneath `path` in place.
+    #[must_use]
+    pub(crate) fn refusing_dir_removal(mut self, path: impl Into<PathBuf>) -> Self {
+        self.refused_dir_removals.push(path.into());
+        self
+    }
+
+    /// Fail every `move_dir` whose destination is `to`.
+    #[must_use]
+    pub(crate) fn refusing_dir_move_to(mut self, to: impl Into<PathBuf>) -> Self {
+        self.refused_dir_moves_to.push(to.into());
+        self
+    }
+
+    /// Fail every `rename` whose destination is `to`.
+    #[must_use]
+    pub(crate) fn refusing_rename_to(mut self, to: impl Into<PathBuf>) -> Self {
+        self.refused_renames_to.push(to.into());
+        self
+    }
+
+    /// Fail `remove_file(path)`, leaving the file in place.
+    #[must_use]
+    pub(crate) fn refusing_file_removal(mut self, path: impl Into<PathBuf>) -> Self {
+        self.refused_file_removals.push(path.into());
+        self
+    }
+
+    /// The error a refused operation reports, as a locked path would.
+    fn refusal(operation: &str, path: &Path) -> crate::error::Error {
+        std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("{operation} refused in space: {}", path.display()),
+        )
+        .into()
+    }
+}
+
+impl FileSpace for FaultyFileSpace<'_> {
+    fn is_file(&self, path: &Path) -> bool {
+        self.inner.is_file(path)
+    }
+
+    fn find_first_file_with_extension(&self, directory: &Path, extension: &str) -> Option<PathBuf> {
+        self.inner
+            .find_first_file_with_extension(directory, extension)
+    }
+
+    fn remove_file(&self, path: &Path) -> Result<()> {
+        if self
+            .refused_file_removals
+            .iter()
+            .any(|refused| refused == path)
+        {
+            return Err(Self::refusal("remove_file", path));
+        }
+        self.inner.remove_file(path)
+    }
+
+    fn remove_dir_all(&self, directory: &Path) -> Result<()> {
+        if self
+            .refused_dir_removals
+            .iter()
+            .any(|refused| refused == directory)
+        {
+            return Err(Self::refusal("remove_dir_all", directory));
+        }
+        self.inner.remove_dir_all(directory)
+    }
+
+    fn read_lossy(&self, path: &Path) -> Result<String> {
+        self.inner.read_lossy(path)
+    }
+
+    fn copy(&self, from: &Path, to: &Path) -> Result<()> {
+        self.inner.copy(from, to)
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+        if self.refused_renames_to.iter().any(|refused| refused == to) {
+            return Err(Self::refusal("rename", to));
+        }
+        self.inner.rename(from, to)
+    }
+
+    fn exists(&self, path: &Path) -> bool {
+        self.inner.exists(path)
+    }
+
+    fn create_dir_all(&self, path: &Path) -> Result<()> {
+        self.inner.create_dir_all(path)
+    }
+
+    fn is_dir(&self, path: &Path) -> bool {
+        self.inner.is_dir(path)
+    }
+
+    fn child_dirs(&self, directory: &Path) -> Vec<PathBuf> {
+        self.inner.child_dirs(directory)
+    }
+
+    fn move_dir(&self, from: &Path, to: &Path) -> Result<()> {
+        if self
+            .refused_dir_moves_to
+            .iter()
+            .any(|refused| refused == to)
+        {
+            return Err(Self::refusal("move_dir", to));
+        }
+        self.inner.move_dir(from, to)
+    }
+
+    fn write(&self, path: &Path, contents: &str) -> Result<()> {
+        self.inner.write(path, contents)
+    }
+
+    fn append(&self, path: &Path, contents: &str) -> Result<()> {
+        self.inner.append(path, contents)
+    }
+
+    fn temp_dir(&self) -> PathBuf {
+        self.inner.temp_dir()
+    }
 }
