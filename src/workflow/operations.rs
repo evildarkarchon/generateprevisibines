@@ -634,7 +634,7 @@ mod tests {
     }
 
     /// Prepare a real Workflow Run resumed at Step 6, the one entry (`:RePreVis`, 244–249) on
-    /// which Step 6 may offer to clear a non-empty `Datais`.
+    /// which Step 6 may offer to clear a non-empty `Data\vis`.
     fn step_six_fixture(mode: BuildMode, non_interactive: bool) -> OperationFixture {
         operation_fixture(mode, non_interactive, Some(WorkflowStep::GeneratePrevis))
     }

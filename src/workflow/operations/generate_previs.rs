@@ -48,7 +48,7 @@ pub(super) fn run(run: &WorkflowRun, ports: &OperationPorts<'_>) -> Result<()> {
     })?;
 
     // Both only with `Previs.esp` confirmed, so a run that produced nothing is never told it
-    // "seemed to finish". Visibility first, then the exit, as the design ticket orders them;
+    // "seemed to finish". Visibility first, then the exit (docs/episodes.md, Step 6 note);
     // the batch prints them the other way round only because its exit warning is raised inside
     // `:RunCK` (472) before the call-site scan (319–320).
     if let Some(warning) = visibility_warning {
