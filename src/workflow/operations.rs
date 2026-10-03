@@ -12,6 +12,7 @@ use crate::interactive;
 use crate::run::WorkflowRun;
 use crate::toolchain::ToolchainRequirements;
 use crate::tools::CreationKitOps;
+use crate::warning::BuildWarnings;
 use crate::workflow::WorkflowPlan;
 
 mod generate_precombines;
@@ -217,6 +218,12 @@ pub(crate) struct OperationPorts<'a> {
     pub(crate) prompts: &'a dyn Prompts,
     /// The space every Workflow Operation observes and cleans up external-tool outputs in.
     pub(crate) files: &'a dyn FileSpace,
+    /// Where a Workflow Operation raises the Build Warnings it completes with.
+    ///
+    /// Concrete, not a trait, for the reason the bundle itself is a struct: there is one way
+    /// to raise a warning. It is shared across every operation in the run, so a warning raised
+    /// by an earlier step is still there when a later one stops.
+    pub(crate) warnings: &'a BuildWarnings<'a>,
 }
 
 /// The operator confirmations a Workflow Operation asks for.
@@ -260,6 +267,7 @@ mod tests {
     use crate::tools::clock::ScriptedClock;
     use crate::tools::process::{ProcessRunner, RecordingProcessRunner};
     use crate::tools::wait::{MO2_DELAY_AFTER_CK_SECS, RecordingWait};
+    use crate::warning::BuildWarning;
     use crate::{discovery::ToolPaths, toolchain::WorkflowToolchainProbe};
 
     /// Provide an execution entry for registration-only tests that must never dispatch.
@@ -493,18 +501,34 @@ mod tests {
                 clock: &self.clock,
                 files: &self.files,
             });
+            let warnings = BuildWarnings::new(self.run.log_path().to_path_buf(), &self.files);
 
             use_ports(&OperationPorts {
                 ck: &ck,
                 prompts: &self.prompts,
                 files: &self.files,
+                warnings: &warnings,
             })
         }
 
         /// Drive Step 1 over the real Creation Kit episode, with `process` standing in for the
         /// spawn and the fixture's recording `Wait` standing in for the mandated delay.
         fn run_step_one(&self, process: &dyn ProcessRunner) -> Result<()> {
-            self.with_ports(process, |ports| generate_precombines::run(&self.run, ports))
+            self.run_step_one_collecting_warnings(process).0
+        }
+
+        /// [`Self::run_step_one`], also returning every Build Warning the run raised.
+        ///
+        /// Read back after the operation returns, whatever it returned, because a warning
+        /// raised before a stop must still be in the collector.
+        fn run_step_one_collecting_warnings(
+            &self,
+            process: &dyn ProcessRunner,
+        ) -> (Result<()>, Vec<BuildWarning>) {
+            self.with_ports(process, |ports| {
+                let result = generate_precombines::run(&self.run, ports);
+                (result, ports.warnings.raised())
+            })
         }
     }
 
@@ -683,6 +707,78 @@ mod tests {
                     .join("d3d11.dll-PJMdisabled")
             )
         );
+    }
+
+    /// A Creation Kit that exits non-zero but leaves every output behind completes Step 1 with
+    /// exactly one warning, in the batch's words, on the console and in the session log (batch
+    /// 472).
+    #[test]
+    fn step_one_warns_about_a_non_zero_exit_that_still_produced_its_outputs() {
+        let fixture = step_one_fixture(BuildMode::Clean, true);
+        let config = fixture.run.config().clone();
+        let ck_log = fixture.ck_log_path();
+        let process = RecordingProcessRunner::new()
+            .returning_exit_code(3)
+            .with_effects(&fixture.files, move |space| {
+                record_successful_precombine_outputs(space, &config, &ck_log);
+            });
+
+        let (result, warnings) = fixture.run_step_one_collecting_warnings(&process);
+
+        result.unwrap();
+        assert_eq!(
+            warnings,
+            vec![BuildWarning::CreationKitNonZeroExit {
+                operation: "GeneratePrecombined",
+                code: Some(3),
+            }]
+        );
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(
+            session.ends_with(
+                "WARNING - GeneratePrecombined ended with error 3 but seemed to finish so error ignored.\n"
+            ),
+            "session log: {session}"
+        );
+    }
+
+    /// The same exit with the output missing stops on the output, and says nothing about the
+    /// exit: "seemed to finish" is never claimed for a run that did not (batch 471 before 472).
+    #[test]
+    fn step_one_raises_no_exit_warning_when_its_output_is_missing() {
+        let fixture = step_one_fixture(BuildMode::Clean, true);
+        let config = fixture.run.config().clone();
+        let ck_log = fixture.ck_log_path();
+        let combined_objects = config.fo4edit_data_dir().join("CombinedObjects.esp");
+        let process = RecordingProcessRunner::new()
+            .returning_exit_code(3)
+            .with_effects(&fixture.files, move |space| {
+                record_successful_precombine_outputs(space, &config, &ck_log);
+                space.remove_file(&combined_objects).unwrap();
+            });
+
+        let (result, warnings) = fixture.run_step_one_collecting_warnings(&process);
+
+        assert!(matches!(result, Err(Error::MissingCombinedObjects)));
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(!session.contains("WARNING - "), "session log: {session}");
+    }
+
+    /// Regression pin for the `:RunCK` fall-through divergence (docs/episodes.md § *Creation
+    /// Kit*): the batch's non-interactive `goto :eof` inside a `Call` carries on past a missing
+    /// output, and the port deliberately stops instead.
+    #[test]
+    fn a_non_interactive_step_one_with_no_combined_objects_stops() {
+        let fixture = step_one_fixture(BuildMode::Filtered, true);
+        assert!(fixture.run.config().non_interactive);
+        // Creation Kit ran, exited cleanly, and wrote nothing at all.
+        let process = RecordingProcessRunner::new();
+
+        let err = fixture.run_step_one(&process).unwrap_err();
+
+        assert!(matches!(err, Error::MissingCombinedObjects));
+        assert_eq!(process.calls().len(), 1);
     }
 
     #[test]

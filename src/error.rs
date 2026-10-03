@@ -51,8 +51,8 @@ pub enum Error {
     VisUvdFilesExist,
 
     // The batch's own wording (`GeneratePrevisibines.bat:277`), which never shows the user the
-    // findstr needle it matched on. `main` prints the `ERROR - ` prefix, so this renders as the
-    // batch's `ERROR - GeneratePrecombined ran out of Reference Handles`.
+    // findstr needle it matched on. The stopped Workflow Run prints the `ERROR - ` prefix, so this
+    // renders as the batch's `ERROR - GeneratePrecombined ran out of Reference Handles`.
     #[error("GeneratePrecombined ran out of Reference Handles")]
     HandleArrayLogError,
 

@@ -19,8 +19,10 @@ fn legacy_and_modern_arguments_share_the_production_dry_run_path() {
         .output()
         .unwrap();
 
-    assert!(
-        output.status.success(),
+    // A deliberate, completed exit is `0`, not merely "success".
+    assert_eq!(
+        output.status.code(),
+        Some(0),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -51,4 +53,51 @@ fn legacy_and_modern_arguments_share_the_production_dry_run_path() {
         0,
         "dry-run must not create logs or workflow artifacts"
     );
+}
+
+#[test]
+fn a_usage_error_exits_with_code_two() {
+    let isolated_working_directory = tempdir().unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_generateprevisibines"))
+        .arg("--definitely-not-a-flag")
+        .current_dir(isolated_working_directory.path())
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A stop before any Workflow Run exists keeps today's bare `ERROR - …` and exits `1`.
+///
+/// There is no session log yet, so there is no `See Log at` to print and no failure line to
+/// attach it to. Naming the plugin on the command line is what makes the run non-interactive,
+/// so nothing here can block on a prompt.
+#[test]
+fn a_stop_before_the_run_exists_exits_with_code_one_and_no_log_line() {
+    let isolated_working_directory = tempdir().unwrap();
+    let missing_fallout4_directory = isolated_working_directory.path().join("Missing Fallout 4");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_generateprevisibines"))
+        .arg("--FO4")
+        .arg(&missing_fallout4_directory)
+        .arg("MyMod.esp")
+        .current_dir(isolated_working_directory.path())
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
+    // Printed once: `main` reports it, and no Workflow Run existed to report it first.
+    assert_eq!(stderr.matches("ERROR - ").count(), 1, "stderr: {stderr}");
+    assert!(!stdout.contains("See Log at"), "stdout: {stdout}");
+    assert!(!stdout.contains("Build of Patch"), "stdout: {stdout}");
 }

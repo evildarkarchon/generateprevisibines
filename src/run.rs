@@ -15,6 +15,7 @@ use crate::tools::process::SystemProcessRunner;
 use crate::tools::wait::SystemWait;
 use crate::tools::{CkPorts, CreationKitPaths};
 use crate::validation;
+use crate::warning::BuildWarnings;
 use crate::workflow::WorkflowPlan;
 use crate::workflow::operations::{
     InteractivePrompts, OperationPorts, ProductionWorkflowPreparation, execute_registered_workflow,
@@ -71,6 +72,24 @@ impl WorkflowRequest {
 pub enum RunDiagnostic {
     Toolchain(ToolchainDiagnostic),
     LaterStepsNotImplemented { skipped: usize, planned: usize },
+}
+
+/// A Workflow Run that stopped, already reported on the console and in the session log.
+///
+/// Returned instead of the bare [`Error`] so `main` can tell an error the run has reported —
+/// `ERROR - …`, `Build of Patch … failed.` and `See Log at …` — from one raised before any run
+/// existed, which still needs its `ERROR - …` printed. Printing it twice is what this prevents.
+#[derive(Debug)]
+pub struct RunStopped {
+    error: Error,
+}
+
+impl RunStopped {
+    /// The error that stopped the run.
+    #[must_use]
+    pub const fn error(&self) -> &Error {
+        &self.error
+    }
 }
 
 /// A prepared build attempt ready to execute through Workflow Operations.
@@ -158,33 +177,42 @@ impl WorkflowRun {
 
     /// Execute the runnable subset of the prepared workflow through the production ports.
     ///
-    /// Returns [`Error::CreationKitNotPrepared`] when the prepared run carries no Creation Kit
-    /// paths, and otherwise propagates whatever the dispatched Workflow Operations report.
-    pub fn execute(&self) -> Result<()> {
+    /// Every exit is reported before this returns; see [`Self::execute_with_ports`]. A run whose
+    /// prepared state carries no Creation Kit paths stops with
+    /// [`Error::CreationKitNotPrepared`], reported the same way.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RunStopped`] when the run stops, carrying the error that stopped it.
+    pub fn execute(&self) -> std::result::Result<(), RunStopped> {
         let files = SystemFileSpace;
         let process = SystemProcessRunner;
         let wait = SystemWait;
         let clock = SystemClock;
         let prompts = InteractivePrompts;
+        let warnings = BuildWarnings::new(self.log_path.clone(), &files);
 
         // Every registered Workflow Operation requires Creation Kit today, so a prepared run
         // that reaches here without its paths is a preparation bug rather than a user state.
         // The check is not removable as dead code, though: the moment an xEdit-backed operation
         // is registered, a plan can be runnable without Creation Kit ever being resolved.
-        let ck = self
-            .creation_kit()
-            .ok_or(Error::CreationKitNotPrepared)?
-            .bind(CkPorts {
-                process: &process,
-                wait: &wait,
-                clock: &clock,
-                files: &files,
-            });
+        let Some(creation_kit) = self.creation_kit() else {
+            // The session log exists by now, so this is a stop *of the run* and is reported
+            // like one, not left for `main` to print bare.
+            return Err(self.report_stop(Error::CreationKitNotPrepared, &files));
+        };
+        let ck = creation_kit.bind(CkPorts {
+            process: &process,
+            wait: &wait,
+            clock: &clock,
+            files: &files,
+        });
 
         self.execute_with_ports(&OperationPorts {
             ck: &ck,
             prompts: &prompts,
             files: &files,
+            warnings: &warnings,
         })
     }
 
@@ -193,8 +221,51 @@ impl WorkflowRun {
     /// The supplied ports replace only external programs, prompts and the filesystem; the
     /// prepared Workflow Plan and registered Workflow Operations continue to own sequencing
     /// and domain behavior.
-    pub(crate) fn execute_with_ports(&self, ports: &OperationPorts<'_>) -> Result<()> {
-        execute_registered_workflow(self, ports)
+    ///
+    /// Owns how the run ends, on the console and in the session log. A completed run prints
+    /// `Build step(s) complete.` then `See Log at …` as its last line; a stopped one is reported
+    /// by [`Self::report_stop`]. Both happen here rather than in `main` so that Finish, once
+    /// ported, can run ahead of `See Log at` (batch 368 follows `:Fin`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RunStopped`] when a dispatched Workflow Operation stops the run.
+    pub(crate) fn execute_with_ports(
+        &self,
+        ports: &OperationPorts<'_>,
+    ) -> std::result::Result<(), RunStopped> {
+        if let Err(error) = execute_registered_workflow(self, ports) {
+            return Err(self.report_stop(error, ports.files));
+        }
+
+        println!("Build step(s) complete.");
+        println!("{}", logging::see_log_line(&self.log_path));
+        Ok(())
+    }
+
+    /// Report a stopped run: `ERROR - <error>`, `Build of Patch <name> failed.`, then
+    /// `See Log at <path>`, each once and in that order (batch `:Failed` -> `:Done`, 376 -> 368).
+    ///
+    /// The first two are also appended to the session log — an additive divergence (the batch
+    /// only echoes them), so a log read later explains why the run ended. A failed append is
+    /// noted and otherwise ignored: the error being reported is what the operator needs, and an
+    /// unwritable session log must not replace it.
+    fn report_stop(&self, error: Error, files: &dyn FileSpace) -> RunStopped {
+        let error_line = logging::error_line(&error);
+        let failed_line = logging::build_failed_line(&self.config.plugin.base_name);
+
+        // Stderr for the error, where `main` prints the errors raised before a run exists.
+        eprintln!("{error_line}");
+        println!("{failed_line}");
+
+        for line in [&error_line, &failed_line] {
+            if let Err(append_error) = logging::append_log_line(&self.log_path, line, files) {
+                tracing::warn!("Could not record the failure in the session log: {append_error}");
+            }
+        }
+
+        println!("{}", logging::see_log_line(&self.log_path));
+        RunStopped { error }
     }
 
     /// Diagnostics collected while preparing the run.
@@ -398,12 +469,14 @@ mod tests {
             clock: &clock,
             files: &fixture.files,
         });
+        let warnings = BuildWarnings::new(run.log_path().to_path_buf(), &fixture.files);
 
         assert_eq!(run.runnable_steps(), &[WorkflowStep::GeneratePrecombines]);
         run.execute_with_ports(&OperationPorts {
             ck: &ck,
             prompts: &prompts,
             files: &fixture.files,
+            warnings: &warnings,
         })
         .unwrap();
 
@@ -427,6 +500,104 @@ mod tests {
         // a dispatch fact about the run, not an artifact check: the simulated Creation Kit
         // established no prior meshes, so nothing here asserts what the test put in place.
         assert_eq!(prompts.clear_prompt_count(), 0);
+    }
+
+    /// Execute a prepared run's Step 1 over recording ports, with `process` standing in for
+    /// Creation Kit, and hand back how the run ended.
+    ///
+    /// The ports are assembled here rather than in each test because `CreationKitOps` and the
+    /// warnings collector borrow the fixture's space, so the chain has to live in one frame.
+    fn execute_over_recording_ports(
+        run: &WorkflowRun,
+        files: &InMemoryFileSpace,
+        process: &RecordingProcessRunner<'_>,
+    ) -> std::result::Result<(), RunStopped> {
+        let wait = RecordingWait::new();
+        let clock = ScriptedClock::fixed();
+        let prompts = RecordingPrompts::new();
+        let ck = run.creation_kit().unwrap().bind(CkPorts {
+            process,
+            wait: &wait,
+            clock: &clock,
+            files,
+        });
+        let warnings = BuildWarnings::new(run.log_path().to_path_buf(), files);
+
+        run.execute_with_ports(&OperationPorts {
+            ck: &ck,
+            prompts: &prompts,
+            files,
+            warnings: &warnings,
+        })
+    }
+
+    /// Prepare the fixture's Clean Step 1 request into a ready Workflow Run.
+    fn prepared_run(fixture: &ReadyWorkflowFixture) -> WorkflowRun {
+        WorkflowRun::prepare(
+            &fixture.request,
+            fixture.directory.path(),
+            &fixture.probe,
+            &fixture.files,
+        )
+        .unwrap()
+    }
+
+    /// A stopped run records why it ended: the error, then the batch's failure line, in that
+    /// order, as the last two lines of the session log.
+    #[test]
+    fn a_stopped_run_appends_its_error_and_failure_line_to_the_session_log() {
+        let fixture = ready_workflow_fixture();
+        let run = prepared_run(&fixture);
+        // Creation Kit ran and wrote nothing, so Step 1 stops on its first postcondition.
+        let process = RecordingProcessRunner::new();
+
+        let stopped = execute_over_recording_ports(&run, &fixture.files, &process).unwrap_err();
+
+        assert!(matches!(stopped.error(), Error::MissingCombinedObjects));
+        let session = fixture.files.read_lossy(run.log_path()).unwrap();
+        assert!(
+            session.ends_with(
+                "ERROR - CombinedObjects.esp was not created by Creation Kit\n\
+                 Build of Patch MyMod failed.\n"
+            ),
+            "session log: {session}"
+        );
+        // Console-only, as in the batch: the log has no use for its own path.
+        assert!(!session.contains("See Log at"), "session log: {session}");
+    }
+
+    /// An unwritable session log must not replace the error being reported.
+    #[test]
+    fn a_failed_session_log_append_never_masks_the_stopping_error() {
+        let fixture = ready_workflow_fixture();
+        let run = prepared_run(&fixture);
+        // A precondition stop, so nothing before the report needs the session log either.
+        fixture.files.add_file(run.config().plugin_archive_path());
+        fixture.files.refuse_appends_to(run.log_path());
+        let process = RecordingProcessRunner::new();
+
+        let stopped = execute_over_recording_ports(&run, &fixture.files, &process).unwrap_err();
+
+        assert!(matches!(stopped.error(), Error::PluginAlreadyHasArchive));
+        assert!(process.calls().is_empty());
+    }
+
+    /// A completed run leaves its session log free of failure lines.
+    #[test]
+    fn a_completed_run_records_no_failure() {
+        let fixture = ready_workflow_fixture();
+        let run = prepared_run(&fixture);
+        let config = run.config().clone();
+        let ck_log = run.creation_kit().unwrap().ck_log_path.clone();
+        let process = RecordingProcessRunner::new().with_effects(&fixture.files, move |space| {
+            record_successful_precombine_outputs(space, &config, &ck_log);
+        });
+
+        execute_over_recording_ports(&run, &fixture.files, &process).unwrap();
+
+        let session = fixture.files.read_lossy(run.log_path()).unwrap();
+        assert!(!session.contains("ERROR - "), "session log: {session}");
+        assert!(!session.contains("failed."), "session log: {session}");
     }
 
     #[test]

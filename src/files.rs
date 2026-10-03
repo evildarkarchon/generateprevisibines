@@ -213,7 +213,7 @@ pub(crate) use in_memory::InMemoryFileSpace;
 #[cfg(test)]
 mod in_memory {
     use std::cell::RefCell;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
 
     use super::FileSpace;
@@ -230,6 +230,8 @@ mod in_memory {
     #[derive(Debug, Default)]
     pub(crate) struct InMemoryFileSpace {
         files: RefCell<BTreeMap<PathBuf, Option<Vec<u8>>>>,
+        /// Paths whose appends fail, standing in for a session log something else has locked.
+        refused_appends: RefCell<BTreeSet<PathBuf>>,
     }
 
     impl InMemoryFileSpace {
@@ -264,6 +266,14 @@ mod in_memory {
             self.files
                 .borrow_mut()
                 .insert(path.into(), Some(contents.into()));
+        }
+
+        /// Make every later append to `path` fail with an `Io` error, as a locked file would.
+        ///
+        /// Only appends: a test that needs the session log to stop growing mid-run still wants
+        /// the reads that check what reached it to work.
+        pub(crate) fn refuse_appends_to(&self, path: impl Into<PathBuf>) {
+            self.refused_appends.borrow_mut().insert(path.into());
         }
 
         /// Return a copy of `path`'s byte payload, or `None` when it is absent or contentless.
@@ -386,6 +396,14 @@ mod in_memory {
         }
 
         fn append(&self, path: &Path, contents: &str) -> Result<()> {
+            if self.refused_appends.borrow().contains(path) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("appends refused in space: {}", path.display()),
+                )
+                .into());
+            }
+
             // Parent creation is vacuous here exactly as it is in `write` above.
             let mut files = self.files.borrow_mut();
             let entry = files.entry(path.to_path_buf()).or_default();

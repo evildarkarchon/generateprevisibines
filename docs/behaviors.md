@@ -39,4 +39,6 @@ cites.
 - Ability to run non-interactively with plugin name parameter
 - Clear step-by-step progress messages
 - Comprehensive logging to temp file
+- **Run endings**: a stopped Workflow Run prints `ERROR - <error>`, `Build of Patch <name> failed.` (batch 376) and `See Log at <log>` (368), in that order, and appends the first two to the session log (an additive divergence: the batch only echoes them). A completed run ends on `See Log at`. Build Warnings print and log as `WARNING - <text>` when raised. Errors raised before a Workflow Run exists print `ERROR - …` only, since there is no session log yet
+- **Exit codes** (new; the batch set none that meant anything): `0` when the run reached the end of its runnable steps, warnings and a deliberate intake exit included; `1` for any stop, before or during the run; `2` for command-line usage errors
 - Command-line parameters: `-clean`/`-filtered`/`-xbox`, `-bsarch`, `-FO4:<dir>`, `<plugin.esp>`

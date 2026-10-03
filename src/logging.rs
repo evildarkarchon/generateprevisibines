@@ -9,8 +9,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::config::PluginIdentity;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::files::FileSpace;
+use crate::warning::BuildWarning;
 
 /// Path for the per-run log file, rooted in `files`' temporary directory.
 #[must_use]
@@ -150,6 +151,37 @@ pub fn append_ck_log(
     }
 
     files.append(session_log, &format!("{contents}\n"))
+}
+
+/// The console and session-log line for a raised Build Warning (batch `WARNING - …`, line 472).
+///
+/// One line, two destinations: the collector prints exactly what it appends, so the console and
+/// the session log can never disagree on a warning's wording.
+#[must_use]
+pub(crate) fn warning_line(warning: &BuildWarning) -> String {
+    format!("WARNING - {warning}")
+}
+
+/// The line that opens a stopped Workflow Run's report (batch `ERROR - …`, e.g. line 471).
+#[must_use]
+pub(crate) fn error_line(error: &Error) -> String {
+    format!("ERROR - {error}")
+}
+
+/// The failure line a stopped Workflow Run prints after its error (batch `:Failed`, line 376).
+///
+/// `plugin_base_name` is the batch's `%PluginName_%`: the plugin without its extension.
+#[must_use]
+pub(crate) fn build_failed_line(plugin_base_name: &str) -> String {
+    format!("Build of Patch {plugin_base_name} failed.")
+}
+
+/// The last line of every Workflow Run that got as far as executing (batch line 368).
+///
+/// Console-only, as in the batch: the session log has no use for its own path.
+#[must_use]
+pub(crate) fn see_log_line(session_log: &Path) -> String {
+    format!("See Log at {}", session_log.display())
 }
 
 #[cfg(test)]

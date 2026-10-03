@@ -1,13 +1,19 @@
 //! Creation Kit invocation (`:RunCK` in batch).
 //!
 //! [`CreationKitOps`] owns the whole Creation Kit episode: the ENB/ReShade DLL guard, the
-//! stale-log delete, the spawn, the mandated MO2 sync delay, the session-log fold-in, and the
-//! non-zero-exit policy. Callers state build meaning — "generate the precombines for this
-//! plugin in this build mode" — and never Creation Kit's command grammar, which is why
-//! [`CkOperation`] and the batch qualifier strings are private to this module.
+//! stale-log delete, the spawn, the mandated MO2 sync delay, and the session-log fold-in.
+//! Callers state build meaning — "generate the precombines for this plugin in this build
+//! mode" — and never Creation Kit's command grammar, which is why [`CkOperation`] and the batch
+//! qualifier strings are private to this module.
+//!
+//! The episode does not judge a non-zero exit. It reports how the run ended in [`CkRun`], and
+//! the Workflow Operation raises the non-zero-exit Build Warning only once its postconditions
+//! pass — the batch checks the output (471) before it warns about the exit (472), so a run
+//! that produced nothing is never told it "seemed to finish".
 
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::process::ExitStatus;
 
 use crate::config::BuildMode;
 use crate::error::Result;
@@ -17,6 +23,7 @@ use crate::tools::clock::Clock;
 use crate::tools::dll::DllGuard;
 use crate::tools::process::ProcessRunner;
 use crate::tools::wait::{MO2_DELAY_AFTER_CK_SECS, Wait};
+use crate::warning::BuildWarning;
 
 /// Creation Kit command-line operations from the batch workflow.
 ///
@@ -44,12 +51,21 @@ impl CkOperation {
 
 /// What a completed Creation Kit run leaves for the caller to judge.
 ///
-/// Deliberately carries no exit status: the batch's `:RunCK` treats a non-zero exit uniformly
-/// across all four operations, and that policy is settled inside [`CreationKitOps::run`], so a
-/// field for it would have no reader. Success criteria stay with the Workflow Operation, which
-/// is what the log content is for.
+/// Carries how the run ended as well as what it logged, because *when* a non-zero exit becomes
+/// a Build Warning is the Workflow Operation's call: only after its postconditions pass (batch
+/// 471–472). The episode supplies *what* the warning says through
+/// [`CkRun::non_zero_exit_warning`], which is what keeps the batch verb — and with it
+/// [`CkOperation`] — out of the operation. Success criteria stay with the Workflow Operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CkRun {
+    /// The operation that ran; private, so a caller never names a Creation Kit verb.
+    operation: CkOperation,
+    /// How `CreationKit.exe` exited.
+    ///
+    /// Private, so the only thing a caller can do with a non-zero exit is take the Build Warning
+    /// [`CkRun::non_zero_exit_warning`] offers; branching on the raw status would be a second
+    /// exit-code policy beside the batch's one.
+    status: ExitStatus,
     /// Creation Kit log contents after the run.
     ///
     /// `None` when Creation Kit wrote no log — a state the batch distinguishes explicitly
@@ -57,6 +73,21 @@ pub(crate) struct CkRun {
     /// The Generate Precombines Operation reads this for its handle-array scan, which is why
     /// the log never reaches a Workflow Operation as a path.
     pub(crate) log: Option<String>,
+}
+
+impl CkRun {
+    /// The Build Warning a non-zero exit earns, or `None` when Creation Kit exited cleanly.
+    ///
+    /// Answers regardless of whether the run's output exists: raising it only once the
+    /// operation's postconditions pass is the caller's responsibility, and the point of
+    /// returning it rather than raising it here.
+    #[must_use]
+    pub(crate) fn non_zero_exit_warning(&self) -> Option<BuildWarning> {
+        (!self.status.success()).then(|| BuildWarning::CreationKitNonZeroExit {
+            operation: self.operation.flag(),
+            code: self.status.code(),
+        })
+    }
 }
 
 /// The resolved paths one Workflow Run's Creation Kit episodes run against.
@@ -220,8 +251,9 @@ impl<'a> CreationKitOps<'a> {
     /// 6. wait for MO2's virtual filesystem to sync
     /// 7. read the log once, serving both the session-log append and the return value
     /// 8. append it to the session log, or record that Creation Kit wrote none
-    /// 9. warn — never fail — on a non-zero exit; the Workflow Operation's postconditions
-    ///    decide whether the step succeeded
+    /// 9. report the exit status — never fail, and never warn, on a non-zero exit; the Workflow
+    ///    Operation decides from its postconditions whether the step succeeded, and only then
+    ///    raises [`CkRun::non_zero_exit_warning`]
     /// 10. restore the DLLs as the guard drops, on every exit path including an error
     ///
     /// Steps 3 and 5 are written when the batch writes them rather than assembled into one
@@ -273,14 +305,11 @@ impl<'a> CreationKitOps<'a> {
             logging::append_ck_log(session, log.as_deref(), &self.ck_log_path, self.ports.files)?;
         }
 
-        if !status.success() {
-            tracing::warn!(
-                code = ?status.code(),
-                "Creation Kit exited with non-zero status; workflow operation postconditions determine success"
-            );
-        }
-
-        Ok(CkRun { log })
+        Ok(CkRun {
+            operation,
+            status,
+            log,
+        })
     }
 
     /// The Creation Kit log after a run, or `None` when Creation Kit wrote none.
@@ -338,6 +367,7 @@ mod tests {
     use crate::tools::clock::ScriptedClock;
     use crate::tools::process::{RecordedProcessCall, RecordingProcessRunner};
     use crate::tools::wait::RecordingWait;
+    use crate::warning::BuildWarning;
 
     fn fallout4_dir() -> PathBuf {
         PathBuf::from("Fallout4")
@@ -805,10 +835,11 @@ mod tests {
         );
     }
 
-    /// A non-zero exit is a warning, not an error: `:RunCK` treats it uniformly across all
-    /// four operations, and the Workflow Operation's postconditions decide the outcome.
+    /// A non-zero exit is not an error, and the episode no longer judges it either: it reports
+    /// how the run ended, and the Workflow Operation raises the warning once its postconditions
+    /// pass (batch 471–472 check the output *before* warning about the exit).
     #[test]
-    fn a_non_zero_creation_kit_exit_is_not_an_error() {
+    fn a_non_zero_creation_kit_exit_is_reported_rather_than_judged() {
         let files = InMemoryFileSpace::new();
         let wait = RecordingWait::new();
         let clock = scripted_clock();
@@ -824,6 +855,65 @@ mod tests {
 
         // The log still comes back, so the caller can judge the run on its own criteria.
         assert_eq!(ck_run.log.as_deref(), Some(QUIET_CK_LOG));
+        assert_eq!(ck_run.status.code(), Some(2));
+        // The warning names the batch verb that ran, so the operation never has to.
+        assert_eq!(
+            ck_run.non_zero_exit_warning(),
+            Some(BuildWarning::CreationKitNonZeroExit {
+                operation: "GeneratePrecombined",
+                code: Some(2),
+            })
+        );
+    }
+
+    /// One Creation Kit domain method, as a value a table-driven test can iterate over.
+    type DomainMethod = fn(&CreationKitOps<'_>) -> Result<CkRun>;
+
+    /// Each domain method attributes its warning to its own batch verb.
+    #[test]
+    fn the_non_zero_exit_warning_names_the_operation_that_ran() {
+        let cases: [(&str, DomainMethod); 4] = [
+            ("GeneratePrecombined", |ck| {
+                ck.generate_precombined("MyMod.esp", BuildMode::Clean)
+            }),
+            ("CompressPSG", |ck| ck.compress_psg("MyMod.esp")),
+            ("BuildCDX", |ck| ck.build_cdx("MyMod.esp")),
+            ("GeneratePreVisData", |ck| {
+                ck.generate_previs_data("MyMod.esp")
+            }),
+        ];
+
+        for (expected_operation, operation) in cases {
+            let files = InMemoryFileSpace::new();
+            let wait = RecordingWait::new();
+            let clock = scripted_clock();
+            let process = RecordingProcessRunner::new().returning_exit_code(1);
+
+            let ck_run = operation(&ops(&process, &wait, &clock, &files)).unwrap();
+
+            assert_eq!(
+                ck_run.non_zero_exit_warning(),
+                Some(BuildWarning::CreationKitNonZeroExit {
+                    operation: expected_operation,
+                    code: Some(1),
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn a_zero_creation_kit_exit_has_no_warning_to_raise() {
+        let files = InMemoryFileSpace::new();
+        let wait = RecordingWait::new();
+        let clock = scripted_clock();
+        let process = RecordingProcessRunner::new();
+
+        let ck_run = ops(&process, &wait, &clock, &files)
+            .build_cdx("MyMod.esp")
+            .unwrap();
+
+        assert!(ck_run.status.success());
+        assert_eq!(ck_run.non_zero_exit_warning(), None);
     }
 
     /// The guard restores on every exit path, including one that never reaches the spawn's
