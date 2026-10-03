@@ -27,9 +27,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     BM_CLICK, EnumChildWindows, EnumWindows, GW_OWNER, GetClassNameW, GetForegroundWindow,
-    GetWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
-    IsWindowVisible, PostMessageW, SMTO_ABORTIFHUNG, SendMessageTimeoutW, SetForegroundWindow,
-    WM_CLOSE, WM_GETTEXT,
+    GetWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+    PostMessageW, SMTO_ABORTIFHUNG, SendMessageTimeoutW, SetForegroundWindow, WM_CLOSE, WM_GETTEXT,
 };
 use windows::core::BOOL;
 
@@ -54,37 +53,76 @@ const INPUT_SIZE: i32 = {
     size_of::<INPUT>() as i32
 };
 
-/// A window handle, held as the integer it is.
+/// A window handle, bound to the process that owned the window when the handle was read.
 ///
 /// An `HWND` is an index into user32's handle table, not a pointer into memory, so it is kept as
-/// a `usize`: comparable, hashable and `Send`. Any value is safe to pass to the functions in this
-/// crate, because user32 validates every handle it is given — a stale or made-up handle only
-/// makes the call fail or find nothing.
+/// a `usize`: comparable, hashable and `Send`. user32 validates every handle it is given, so any
+/// value is memory-safe to pass. But it recycles handles: once a window is destroyed, its number
+/// can name a later window of any process. So each handle carries the id of the process that
+/// owned its window, and every function here that acts on a window first checks that the window
+/// still belongs to that process, failing as for a destroyed window when it does not. A stale
+/// handle therefore fails or finds nothing rather than reaching another program's window.
+///
+/// Equality compares the process too, so a recycled handle never equals the one it replaced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Hwnd(usize);
+pub struct Hwnd {
+    raw: usize,
+    pid: u32,
+}
 
 impl Hwnd {
-    /// Wrap a raw handle value, such as one previously read through [`Hwnd::raw`].
+    /// Rebuild a handle from values previously read through [`Hwnd::raw`] and [`Hwnd::pid`].
     #[must_use]
-    pub const fn from_raw(raw: usize) -> Self {
-        Self(raw)
+    pub const fn from_raw(raw: usize, pid: u32) -> Self {
+        Self { raw, pid }
     }
 
     /// The raw handle value.
     #[must_use]
     pub const fn raw(self) -> usize {
-        self.0
+        self.raw
     }
 
-    /// The `windows` crate's view of this handle.
+    /// The id of the process that owned the window when the handle was read.
+    #[must_use]
+    pub const fn pid(self) -> u32 {
+        self.pid
+    }
+
+    /// The `windows` crate's view of this handle, with no ownership check.
     fn to_win32(self) -> HWND {
         // A handle carries no provenance: it is never dereferenced, only handed back to user32.
-        HWND(std::ptr::without_provenance_mut(self.0))
+        HWND(std::ptr::without_provenance_mut(self.raw))
     }
 
-    /// Wrap a handle returned by Win32, or `None` for the null handle Win32 uses for "none".
+    /// Bind a handle returned by Win32 to the process that owns its window now.
+    ///
+    /// `None` for the null handle Win32 uses for "none", and for a window destroyed before its
+    /// owner could be read.
     fn from_win32(hwnd: HWND) -> Option<Self> {
-        (!hwnd.is_invalid()).then(|| Self(hwnd.0.addr()))
+        if hwnd.is_invalid() {
+            return None;
+        }
+        let raw = hwnd.0.addr();
+        let pid = process_id_of(raw);
+        // 0 is what `process_id_of` reports for a destroyed window; no live window has it.
+        (pid != 0).then_some(Self { raw, pid })
+    }
+
+    /// This handle as Win32 takes it, after checking that its window still exists and still
+    /// belongs to the process the handle was read from.
+    ///
+    /// Fails with `ERROR_INVALID_WINDOW_HANDLE` otherwise — including when the number has been
+    /// recycled for another process's window. The check and the caller's use of the handle are
+    /// separate calls, so a window destroyed and recycled in between is not caught; but that
+    /// span is a few instructions, where an unchecked handle is exposed for as long as the caller
+    /// keeps it.
+    fn checked(self) -> io::Result<HWND> {
+        if process_id_of(self.raw) == self.pid {
+            Ok(self.to_win32())
+        } else {
+            Err(invalid_window_handle())
+        }
     }
 }
 
@@ -106,8 +144,8 @@ pub struct TopLevelWindow {
 /// Hidden windows are included, with `visible: false`. A `pid` that owns no windows — including
 /// one that names no process, and 0, the idle process — gives an empty list.
 pub fn top_level_windows(pid: u32) -> io::Result<Vec<TopLevelWindow>> {
-    // 0 is also what `process_id` reports for a window destroyed mid-listing, so without this a
-    // request for pid 0 would return those destroyed windows.
+    // 0 is the idle process, which owns no windows (and the id `process_id_of` reports for a
+    // destroyed one, which `collect_handle` already drops), so there is nothing to enumerate.
     if pid == 0 {
         return Ok(Vec::new());
     }
@@ -121,7 +159,7 @@ pub fn top_level_windows(pid: u32) -> io::Result<Vec<TopLevelWindow>> {
 
     Ok(handles
         .into_iter()
-        .filter(|&handle| process_id(handle) == pid)
+        .filter(|&handle| handle.pid == pid)
         .map(|handle| TopLevelWindow {
             handle,
             caption: caption(handle),
@@ -138,33 +176,34 @@ pub fn top_level_windows(pid: u32) -> io::Result<Vec<TopLevelWindow>> {
 /// Find a descendant of `parent` whose class is `class_name` and whose caption is `caption`.
 ///
 /// Searches every descendant, not only direct children (`EnumChildWindows` recurses), because a
-/// dialog's buttons often sit on a panel. Both strings must match exactly; the first match in
-/// enumeration order wins. Returns `Ok(None)` when no descendant matches, and an error when
-/// `parent` is not a window.
+/// dialog's buttons often sit on a panel. Only descendants of `parent`'s own process count. Both
+/// strings must match exactly; the first match in enumeration order wins. Returns `Ok(None)`
+/// when no descendant matches, and an error when `parent` is no longer a window of the process
+/// it was read from.
 pub fn find_child(parent: Hwnd, class_name: &str, caption: &str) -> io::Result<Option<Hwnd>> {
-    // SAFETY: `IsWindow` accepts any value.
-    if !unsafe { IsWindow(Some(parent.to_win32())) }.as_bool() {
-        return Err(invalid_window_handle());
-    }
+    let parent_hwnd = parent.checked()?;
 
     let mut handles: Vec<Hwnd> = Vec::new();
     // SAFETY: as in `top_level_windows`: the callback only pushes into `handles`, which nothing
     // else touches until this synchronous enumeration has returned. The return value carries no
     // meaning (per the Win32 documentation), so it is not read. A parent destroyed since the
-    // `IsWindow` check just enumerates nothing.
+    // ownership check just enumerates nothing.
     let _ = unsafe {
         EnumChildWindows(
-            Some(parent.to_win32()),
+            Some(parent_hwnd),
             Some(collect_handle),
             vec_lparam(&mut handles),
         )
     };
 
-    // Class first: it is read without a message, so only controls of the right class are ever
-    // sent `WM_GETTEXT`.
-    Ok(handles
-        .into_iter()
-        .find(|&handle| self::class_name(handle) == class_name && control_text(handle) == caption))
+    // A child hosted from another process is not the parent's control, and is never sent
+    // `WM_GETTEXT`. Class next: it is read without a message, so only controls of the right
+    // class are ever sent `WM_GETTEXT`.
+    Ok(handles.into_iter().find(|&handle| {
+        handle.pid == parent.pid
+            && self::class_name(handle) == class_name
+            && control_text(handle) == caption
+    }))
 }
 
 /// Post `BM_CLICK` to `button`, as if the user clicked it. Returns without waiting for the
@@ -182,11 +221,15 @@ pub fn post_close(window: Hwnd) -> io::Result<()> {
 /// Ask Windows to make `window` the foreground window.
 ///
 /// Returns whether Windows granted the request. The foreground rules often refuse it to a
-/// background process, so `false` is an ordinary answer rather than an error.
+/// background process, so `false` is an ordinary answer rather than an error. A window that no
+/// longer belongs to the process it was read from is refused without asking.
 #[must_use]
 pub fn set_foreground(window: Hwnd) -> bool {
+    let Ok(hwnd) = window.checked() else {
+        return false;
+    };
     // SAFETY: `SetForegroundWindow` accepts any handle; a stale one is refused.
-    unsafe { SetForegroundWindow(window.to_win32()) }.as_bool()
+    unsafe { SetForegroundWindow(hwnd) }.as_bool()
 }
 
 /// The current foreground window, or `None` when there is none (for instance while focus is
@@ -197,12 +240,31 @@ pub fn foreground_window() -> Option<Hwnd> {
     Hwnd::from_win32(unsafe { GetForegroundWindow() })
 }
 
-/// Send one ENTER key press — key down, then key up — through `SendInput`.
+/// Send one ENTER key press to `window`, but only if `window` is the foreground window.
 ///
-/// The keystroke goes to whichever window has keyboard focus when Windows delivers it. This
-/// function does not choose a target; the caller is responsible for knowing which window that
-/// is. Fails when Windows inserts fewer than both events, for instance because input is blocked.
-pub fn send_enter() -> io::Result<()> {
+/// `SendInput` takes no target: it types into whichever window has keyboard focus. So this
+/// reads the foreground window immediately before sending, and returns `Ok(false)` without
+/// typing anything when it is not `window` (or `window`'s number now names another process's
+/// window). That keeps the check and the send in one call, a few instructions apart; no Win32
+/// call makes them atomic, so a program that takes the foreground in that span still receives
+/// the key. Returns `Ok(true)` once both events are inserted, and an error when `window` no
+/// longer exists or Windows inserts fewer than both events, for instance because input is
+/// blocked.
+pub fn send_enter_to(window: Hwnd) -> io::Result<bool> {
+    window.checked()?;
+    if foreground_window() != Some(window) {
+        return Ok(false);
+    }
+    send_enter()?;
+    Ok(true)
+}
+
+/// Send one ENTER key press — key down, then key up — through `SendInput`, to whichever window
+/// has keyboard focus.
+///
+/// If only the key-down is inserted, the key-up is sent on its own so ENTER is not left held
+/// down; the original failure is returned either way.
+fn send_enter() -> io::Result<()> {
     let key = |flags: KEYBD_EVENT_FLAGS| INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
@@ -223,9 +285,17 @@ pub fn send_enter() -> io::Result<()> {
     if inserted as usize == inputs.len() {
         return Ok(());
     }
+    // Read before the key-up retry below can overwrite it.
+    let error = io::Error::last_os_error();
+    if inserted == 1 {
+        // Only the key-down went in. Release the key, or the system would treat ENTER as held
+        // until something else sends a key-up. Best effort: if this fails too, there is nothing
+        // more to try, and the original failure is what gets reported.
+        // SAFETY: as above; the slice holds the one fully initialised key-up `INPUT`.
+        let _ = unsafe { SendInput(&inputs[1..], INPUT_SIZE) };
+    }
     // Input blocked by UIPI sets no last error, which would otherwise read as "The operation
     // completed successfully".
-    let error = io::Error::last_os_error();
     if error.raw_os_error() == Some(0) {
         return Err(io::Error::other(format!(
             "SendInput inserted {inserted} of {} key events",
@@ -263,12 +333,17 @@ fn vec_lparam(handles: &mut Vec<Hwnd>) -> LPARAM {
     )
 }
 
-/// The id of the process that created `window`, or 0 when the handle is stale.
-fn process_id(window: Hwnd) -> u32 {
+/// The id of the process that created the window `raw` names now, or 0 when it names none.
+fn process_id_of(raw: usize) -> u32 {
     let mut pid = 0u32;
     // SAFETY: `pid` is a live local the call writes through; any handle is accepted, and a stale
     // one leaves `pid` at 0, which is never a process that owns windows.
-    unsafe { GetWindowThreadProcessId(window.to_win32(), Some(&raw mut pid)) };
+    unsafe {
+        GetWindowThreadProcessId(
+            HWND(std::ptr::without_provenance_mut(raw)),
+            Some(&raw mut pid),
+        )
+    };
     pid
 }
 
@@ -315,12 +390,15 @@ fn caption(window: Hwnd) -> String {
 /// the stored caption only for top-level windows there), so this sends `WM_GETTEXT`, the
 /// documented way, with a timeout so a hung window cannot stall the caller.
 fn control_text(window: Hwnd) -> String {
-    let mut buffer = [0u16; SENT_TEXT_CAPACITY];
+    // On the heap, not the stack, so a failed send can leak it (below) rather than free it.
+    let mut buffer = vec![0u16; SENT_TEXT_CAPACITY].into_boxed_slice();
     let mut copied = 0usize;
     // SAFETY: `WM_GETTEXT`'s `wparam` is the buffer's capacity and its `lparam` the buffer's
-    // address. Windows marshals the message across processes and copies at most that many units
-    // back into this live local buffer; `copied` is a live local the call writes through. The
-    // timeout and `SMTO_ABORTIFHUNG` bound how long a hung window can hold the call.
+    // address. Windows copies at most that many units into the buffer, which stays allocated
+    // for as long as the receiver could write to it: until this call returns when it succeeds,
+    // and forever when it fails (see below). `copied` is a live local written by this call
+    // itself before it returns, never by the receiver. The timeout and `SMTO_ABORTIFHUNG` bound
+    // how long a hung window can hold the call.
     let sent = unsafe {
         SendMessageTimeoutW(
             window.to_win32(),
@@ -334,17 +412,24 @@ fn control_text(window: Hwnd) -> String {
         )
     };
     if sent.0 == 0 {
+        // A message that timed out is not withdrawn: the window can still handle it later.
+        // Across processes the reply is copied back only while this call waits, but within this
+        // process `WM_GETTEXT` is not marshalled, so a late handler writes straight into the
+        // buffer. Leaking its 1 KiB is the price of never freeing memory under that writer.
+        Box::leak(buffer);
         return String::new();
     }
     String::from_utf16_lossy(&buffer[..copied.min(buffer.len())])
 }
 
-/// Post `message`, with no parameters, to `window`.
+/// Post `message`, with no parameters, to `window`, once it is confirmed to still belong to the
+/// process it was read from.
 fn post_message(window: Hwnd, message: u32) -> io::Result<()> {
+    let hwnd = window.checked()?;
     // SAFETY: the messages this crate posts (`BM_CLICK`, `WM_CLOSE`) carry no pointers, so
     // nothing the receiver reads can dangle. A stale handle makes the call fail, which is
     // returned.
-    unsafe { PostMessageW(Some(window.to_win32()), message, WPARAM(0), LPARAM(0)) }?;
+    unsafe { PostMessageW(Some(hwnd), message, WPARAM(0), LPARAM(0)) }?;
     Ok(())
 }
 

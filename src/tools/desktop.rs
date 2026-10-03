@@ -33,17 +33,25 @@ use crate::error::Result;
 ///
 /// Only a `DesktopWindows` implementation hands these out; callers compare them and pass them
 /// back, and never read what is inside.
+///
+/// It holds the window's handle number and the id of the process that owned the window when it
+/// was read. Windows recycles handle numbers, so the number alone could come to name another
+/// program's window; with the process id, the production adapter refuses to act on it instead,
+/// and two handles are equal only if both match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct WindowHandle(usize);
+pub(crate) struct WindowHandle {
+    raw: usize,
+    pid: u32,
+}
 
 impl WindowHandle {
-    /// Wrap a raw window-handle value.
+    /// Wrap a raw window-handle value and the id of the process that owns its window.
     ///
     /// For the production adapter, which round-trips the helper crate's handle, and for tests,
     /// which make up handles for their scripted windows.
     #[cfg(any(windows, test))]
-    pub(crate) const fn from_raw(raw: usize) -> Self {
-        Self(raw)
+    pub(crate) const fn from_raw(raw: usize, pid: u32) -> Self {
+        Self { raw, pid }
     }
 }
 
@@ -64,14 +72,12 @@ pub(crate) struct WindowSnapshot {
 
 /// Read the desktop's top-level windows and act on one window at a time.
 ///
-/// Every action names its target, except [`send_enter`](Self::send_enter), whose target is
-/// whichever window has the foreground — which is why [`foreground_window`] exists: the caller
-/// checks it before typing, so a keystroke never lands in a window it did not choose.
+/// Every action names its target. [`send_enter`](Self::send_enter) types rather than posts, so
+/// it can only reach whichever window has the foreground; it therefore checks that its target
+/// is that window, in the same call, and types nothing otherwise.
 ///
 /// Implementors must be `Debug` so the adapters that hold a `DesktopWindows` can keep deriving
 /// `Debug`.
-///
-/// [`foreground_window`]: Self::foreground_window
 pub(crate) trait DesktopWindows: std::fmt::Debug {
     /// Every top-level window belonging to process `pid`, hidden ones included, in Z order.
     ///
@@ -94,12 +100,14 @@ pub(crate) trait DesktopWindows: std::fmt::Debug {
     /// The current foreground window, if there is one.
     fn foreground_window(&self) -> Option<WindowHandle>;
 
-    /// Send one ENTER key press to whichever window has the foreground.
+    /// Send one ENTER key press to `window`, if `window` has the foreground.
     ///
-    /// This picks no target. Callers must first confirm through
-    /// [`foreground_window`](Self::foreground_window) that the foreground window is the one they
-    /// mean to type into.
-    fn send_enter(&self) -> Result<()>;
+    /// Returns `Ok(true)` when the key was sent, and `Ok(false)`, having typed nothing, when
+    /// another window (or none) has the foreground. The foreground is read immediately before
+    /// typing, inside this call, since a check made earlier by the caller could be stale by the
+    /// time the key is sent. An error means `window` no longer exists or the key could not be
+    /// sent.
+    fn send_enter(&self, window: WindowHandle) -> Result<bool>;
 
     /// Ask `window` to close, by posting it `WM_CLOSE`. Returns once the request is posted, not
     /// once the window has closed; it may refuse. An error means `window` no longer exists or
@@ -158,8 +166,8 @@ impl DesktopWindows for SystemDesktopWindows {
         win32::foreground_window().map(from_helper)
     }
 
-    fn send_enter(&self) -> Result<()> {
-        Ok(win32::send_enter()?)
+    fn send_enter(&self, window: WindowHandle) -> Result<bool> {
+        Ok(win32::send_enter_to(to_helper(window))?)
     }
 
     fn request_close(&self, window: WindowHandle) -> Result<()> {
@@ -186,8 +194,8 @@ impl DesktopWindows for SystemDesktopWindows {
         None
     }
 
-    fn send_enter(&self) -> Result<()> {
-        Ok(())
+    fn send_enter(&self, _window: WindowHandle) -> Result<bool> {
+        Ok(false)
     }
 
     fn request_close(&self, _window: WindowHandle) -> Result<()> {
@@ -198,13 +206,13 @@ impl DesktopWindows for SystemDesktopWindows {
 /// The helper crate's handle for `window`.
 #[cfg(windows)]
 fn to_helper(window: WindowHandle) -> win32::Hwnd {
-    win32::Hwnd::from_raw(window.0)
+    win32::Hwnd::from_raw(window.raw, window.pid)
 }
 
 /// This seam's handle for the helper crate's `handle`.
 #[cfg(windows)]
 fn from_helper(handle: win32::Hwnd) -> WindowHandle {
-    WindowHandle::from_raw(handle.raw())
+    WindowHandle::from_raw(handle.raw(), handle.pid())
 }
 
 #[cfg(test)]
@@ -229,30 +237,30 @@ mod recording {
         },
         /// [`DesktopWindows::set_foreground`].
         SetForeground { window: WindowHandle },
-        /// [`DesktopWindows::send_enter`]. Its target is the window that had the foreground when
-        /// the key was sent, recorded so a test can assert where the keystroke would have landed.
-        SendEnter { foreground: Option<WindowHandle> },
+        /// [`DesktopWindows::send_enter`] aimed at `window`. `sent` is whether the key was
+        /// actually typed — only when `window` had the foreground — so an effect can react to a
+        /// real keystroke and a test can see one that was withheld.
+        SendEnter { window: WindowHandle, sent: bool },
         /// [`DesktopWindows::request_close`].
         RequestClose { window: WindowHandle },
     }
 
-    /// One scripted top-level window: what [`DesktopWindows::top_level_windows`] reports for it,
-    /// which process owns it, and which buttons a click can find inside it.
+    /// One scripted top-level window: what [`DesktopWindows::top_level_windows`] reports for it
+    /// and which buttons a click can find inside it. The process that owns it is the one its
+    /// handle names.
     ///
     /// Starts visible and enabled, with an empty class name and no buttons.
     #[derive(Debug, Clone)]
     pub(crate) struct ScriptedWindow {
-        pid: u32,
         snapshot: WindowSnapshot,
         buttons: Vec<String>,
     }
 
     impl ScriptedWindow {
-        /// A visible, enabled window of process `pid`, captioned `caption`.
+        /// A visible, enabled window with handle `handle`, captioned `caption`.
         #[must_use]
-        pub(crate) fn new(pid: u32, handle: WindowHandle, caption: &str) -> Self {
+        pub(crate) fn new(handle: WindowHandle, caption: &str) -> Self {
             Self {
-                pid,
                 snapshot: WindowSnapshot {
                     handle,
                     caption: caption.to_owned(),
@@ -365,9 +373,13 @@ mod recording {
     ///   [`with_button`](ScriptedWindow::with_button) for that caption, and `false` otherwise.
     /// - [`set_foreground`] grants the request — making the window the foreground — unless the
     ///   double was built [`refusing_foreground`](Self::refusing_foreground).
+    /// - [`send_enter`] answers `true`, and records the key as sent, only when the target window
+    ///   has the foreground.
     /// - An action aimed at a window that is not scripted (never was, or has been removed) fails
     ///   the way Win32 does for a destroyed window: [`set_foreground`] answers `false`, and
-    ///   [`click_button`] and [`request_close`] return an error.
+    ///   [`click_button`], [`send_enter`] and [`request_close`] return an error. Handles match
+    ///   on process as well as number, so a handle whose number now belongs to another process's
+    ///   scripted window counts as not scripted, as the production adapter treats a recycled one.
     ///
     /// Every action is recorded, failed ones included, and every [`on_action`](Self::on_action)
     /// effect runs on it in installation order. The action's own answer comes from the script as
@@ -379,6 +391,7 @@ mod recording {
     /// [`top_level_windows`]: DesktopWindows::top_level_windows
     /// [`click_button`]: DesktopWindows::click_button
     /// [`set_foreground`]: DesktopWindows::set_foreground
+    /// [`send_enter`]: DesktopWindows::send_enter
     /// [`request_close`]: DesktopWindows::request_close
     #[derive(Default)]
     pub(crate) struct RecordingDesktopWindows<'a> {
@@ -463,7 +476,7 @@ mod recording {
                 .borrow()
                 .windows
                 .iter()
-                .filter(|window| window.pid == pid)
+                .filter(|window| window.snapshot.handle.pid == pid)
                 .map(|window| window.snapshot.clone())
                 .collect()
         }
@@ -500,10 +513,18 @@ mod recording {
             self.script.borrow().foreground
         }
 
-        fn send_enter(&self) -> Result<()> {
-            let foreground = self.script.borrow().foreground;
-            self.record(DesktopAction::SendEnter { foreground });
-            Ok(())
+        fn send_enter(&self, window: WindowHandle) -> Result<bool> {
+            let (exists, sent) = {
+                let script = self.script.borrow();
+                let exists = script.window(window).is_some();
+                (exists, exists && script.foreground == Some(window))
+            };
+            self.record(DesktopAction::SendEnter { window, sent });
+            if exists {
+                Ok(sent)
+            } else {
+                Err(no_such_window(window))
+            }
         }
 
         fn request_close(&self, window: WindowHandle) -> Result<()> {
@@ -556,27 +577,27 @@ mod tests {
     const FO4EDIT: u32 = RECORDED_PROCESS_ID;
     const OTHER_PROCESS: u32 = 77;
 
-    const MAIN_FORM: WindowHandle = WindowHandle::from_raw(0x100);
-    const MODULE_SELECTION: WindowHandle = WindowHandle::from_raw(0x200);
-    const HELPER: WindowHandle = WindowHandle::from_raw(0x300);
-    const OTHER_WINDOW: WindowHandle = WindowHandle::from_raw(0x400);
+    const MAIN_FORM: WindowHandle = WindowHandle::from_raw(0x100, FO4EDIT);
+    const MODULE_SELECTION: WindowHandle = WindowHandle::from_raw(0x200, FO4EDIT);
+    const HELPER: WindowHandle = WindowHandle::from_raw(0x300, FO4EDIT);
+    const OTHER_WINDOW: WindowHandle = WindowHandle::from_raw(0x400, OTHER_PROCESS);
 
     /// FO4Edit's windows while Module Selection is modal, as the probe (issue #40) recorded them:
     /// a disabled main form, the dialog with its `OK` button, and a hidden helper.
     fn fo4edit_during_module_selection<'a>() -> RecordingDesktopWindows<'a> {
         RecordingDesktopWindows::new()
             .with_window(
-                ScriptedWindow::new(FO4EDIT, MAIN_FORM, "FO4Script 4.1.5q x64")
+                ScriptedWindow::new(MAIN_FORM, "FO4Script 4.1.5q x64")
                     .with_class("TfrmMain")
                     .disabled(),
             )
             .with_window(
-                ScriptedWindow::new(FO4EDIT, MODULE_SELECTION, "Module Selection")
+                ScriptedWindow::new(MODULE_SELECTION, "Module Selection")
                     .with_class("TfrmModuleSelect")
                     .with_button("OK"),
             )
-            .with_window(ScriptedWindow::new(FO4EDIT, HELPER, "").hidden())
-            .with_window(ScriptedWindow::new(OTHER_PROCESS, OTHER_WINDOW, "xEdit"))
+            .with_window(ScriptedWindow::new(HELPER, "").hidden())
+            .with_window(ScriptedWindow::new(OTHER_WINDOW, "xEdit"))
     }
 
     /// The system adapter must answer, not fail or panic, for a process that does not exist —
@@ -633,11 +654,12 @@ mod tests {
 
     #[test]
     fn recording_desktop_fails_an_action_on_a_window_that_does_not_exist() {
-        let gone = WindowHandle::from_raw(0xdead);
+        let gone = WindowHandle::from_raw(0xdead, FO4EDIT);
         let desktop = fo4edit_during_module_selection();
 
         assert!(desktop.click_button(gone, "OK").is_err());
         assert!(desktop.request_close(gone).is_err());
+        assert!(desktop.send_enter(gone).is_err());
         assert!(!desktop.set_foreground(gone));
         assert_eq!(desktop.foreground_window(), None);
 
@@ -650,9 +672,36 @@ mod tests {
                     caption: "OK".to_owned(),
                 },
                 DesktopAction::RequestClose { window: gone },
+                DesktopAction::SendEnter {
+                    window: gone,
+                    sent: false,
+                },
                 DesktopAction::SetForeground { window: gone },
             ]
         );
+    }
+
+    /// Windows recycles handle numbers: once Module Selection is gone, its number can name
+    /// another program's window. A handle saved from FO4Edit must then fail like a destroyed
+    /// window rather than reach that program.
+    #[test]
+    fn a_handle_whose_number_was_recycled_by_another_process_is_not_acted_on() {
+        let recycled = WindowHandle::from_raw(MODULE_SELECTION.raw, OTHER_PROCESS);
+        let desktop = fo4edit_during_module_selection().on_action(move |action, script| {
+            if matches!(action, DesktopAction::ClickButton { .. }) {
+                script.remove_window(MODULE_SELECTION);
+                script.add_window(ScriptedWindow::new(recycled, "Save As").with_button("OK"));
+                script.set_foreground_window(Some(recycled));
+            }
+        });
+        assert!(desktop.click_button(MODULE_SELECTION, "OK").unwrap());
+
+        assert_ne!(recycled, MODULE_SELECTION);
+        assert!(desktop.click_button(MODULE_SELECTION, "OK").is_err());
+        assert!(desktop.send_enter(MODULE_SELECTION).is_err());
+        assert!(desktop.request_close(MODULE_SELECTION).is_err());
+        assert!(!desktop.set_foreground(MODULE_SELECTION));
+        assert_ne!(desktop.foreground_window(), Some(MODULE_SELECTION));
     }
 
     #[test]
@@ -661,7 +710,7 @@ mod tests {
 
         desktop.click_button(MODULE_SELECTION, "OK").unwrap();
         desktop.set_foreground(MODULE_SELECTION);
-        desktop.send_enter().unwrap();
+        desktop.send_enter(MODULE_SELECTION).unwrap();
         desktop.request_close(MAIN_FORM).unwrap();
         desktop.request_close(HELPER).unwrap();
 
@@ -676,7 +725,8 @@ mod tests {
                     window: MODULE_SELECTION,
                 },
                 DesktopAction::SendEnter {
-                    foreground: Some(MODULE_SELECTION),
+                    window: MODULE_SELECTION,
+                    sent: true,
                 },
                 DesktopAction::RequestClose { window: MAIN_FORM },
                 DesktopAction::RequestClose { window: HELPER },
@@ -691,11 +741,12 @@ mod tests {
         assert!(desktop.set_foreground(MODULE_SELECTION));
         assert_eq!(desktop.foreground_window(), Some(MODULE_SELECTION));
 
-        desktop.send_enter().unwrap();
+        assert!(desktop.send_enter(MODULE_SELECTION).unwrap());
         assert_eq!(
             desktop.actions().last(),
             Some(&DesktopAction::SendEnter {
-                foreground: Some(MODULE_SELECTION),
+                window: MODULE_SELECTION,
+                sent: true,
             })
         );
     }
@@ -709,13 +760,14 @@ mod tests {
         assert!(!desktop.set_foreground(MODULE_SELECTION));
         assert_eq!(desktop.foreground_window(), Some(OTHER_WINDOW));
 
-        // An ENTER sent anyway would land in the other program's window — which is what the
-        // recorded target lets a test catch.
-        desktop.send_enter().unwrap();
+        // An ENTER aimed at Module Selection anyway is withheld rather than typed into the
+        // other program's window.
+        assert!(!desktop.send_enter(MODULE_SELECTION).unwrap());
         assert_eq!(
             desktop.actions().last(),
             Some(&DesktopAction::SendEnter {
-                foreground: Some(OTHER_WINDOW),
+                window: MODULE_SELECTION,
+                sent: false,
             })
         );
     }
@@ -801,10 +853,10 @@ mod tests {
 
     #[test]
     fn an_effect_can_add_a_window() {
-        let dialog = WindowHandle::from_raw(0x500);
+        let dialog = WindowHandle::from_raw(0x500, FO4EDIT);
         let desktop = fo4edit_during_module_selection().on_action(move |action, script| {
             if matches!(action, DesktopAction::ClickButton { .. }) {
-                script.add_window(ScriptedWindow::new(FO4EDIT, dialog, "Message"));
+                script.add_window(ScriptedWindow::new(dialog, "Message"));
             }
         });
 
