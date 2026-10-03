@@ -331,7 +331,7 @@ mod tests {
     use crate::error::Error;
     use crate::files::InMemoryFileSpace;
     use crate::tools::clock::ScriptedClock;
-    use crate::tools::process::RecordingProcessRunner;
+    use crate::tools::process::{RecordedProcessCall, RecordingProcessRunner};
     use crate::tools::wait::{MO2_DELAY_AFTER_CK_SECS, RecordingWait};
     use crate::workflow::operations::recording_adapters::{
         RecordingPrompts, record_successful_precombine_outputs,
@@ -589,7 +589,7 @@ mod tests {
         let stopped = execute_over_recording_ports(&run, &fixture.files, &process).unwrap_err();
 
         assert!(matches!(stopped.error(), Error::PluginAlreadyHasArchive));
-        assert!(process.calls().is_empty());
+        assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
     }
 
     /// A completed run leaves its session log free of failure lines.

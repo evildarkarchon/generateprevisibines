@@ -297,7 +297,7 @@ mod tests {
     use crate::run::WorkflowRequest;
     use crate::tools::CkPorts;
     use crate::tools::clock::ScriptedClock;
-    use crate::tools::process::{ProcessRunner, RecordingProcessRunner};
+    use crate::tools::process::{ProcessRunner, RecordedProcessCall, RecordingProcessRunner};
     use crate::tools::wait::{MO2_DELAY_AFTER_CK_SECS, RecordingWait};
     use crate::warning::BuildWarning;
     use crate::{discovery::ToolPaths, toolchain::WorkflowToolchainProbe};
@@ -905,9 +905,9 @@ mod tests {
         let err = fixture.run_step_one(&process).unwrap_err();
 
         assert!(matches!(err, Error::PluginAlreadyHasArchive));
-        assert!(process.calls().is_empty());
+        assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
         // Nothing ran, so nothing waited either — the whole episode is skipped, not just spawn.
-        assert!(fixture.wait.delays().is_empty());
+        assert_eq!(fixture.wait.delays(), Vec::<u64>::new());
     }
 
     #[test]
@@ -921,7 +921,7 @@ mod tests {
         let err = fixture.run_step_one(&process).unwrap_err();
 
         assert!(matches!(err, Error::VisUvdFilesExist));
-        assert!(process.calls().is_empty());
+        assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
     }
 
     #[test]
@@ -973,7 +973,7 @@ mod tests {
                 fixture.run.config().precombined_dir()
             )]
         );
-        assert!(process.calls().is_empty());
+        assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
         // A refusal leaves the meshes alone; the run stops rather than clearing anyway.
         assert!(fixture.files.is_file(&existing_mesh));
     }
@@ -995,7 +995,7 @@ mod tests {
 
         assert!(matches!(err, Error::PrecombinedMeshesExist));
         assert_eq!(fixture.prompts.asked(), []);
-        assert!(process.calls().is_empty());
+        assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
     }
 
     #[test]
@@ -1014,7 +1014,7 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, Error::StepNotImplemented(2)));
-        assert!(process.calls().is_empty());
+        assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
         assert_eq!(fixture.prompts.asked(), []);
     }
 
@@ -1116,8 +1116,8 @@ mod tests {
         let (result, warnings) = fixture.run_step_four_collecting_warnings(&process);
 
         result.unwrap();
-        assert!(process.calls().is_empty());
-        assert!(fixture.wait.delays().is_empty());
+        assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
+        assert_eq!(fixture.wait.delays(), Vec::<u64>::new());
         assert!(warnings.is_empty(), "warnings: {warnings:?}");
         assert_eq!(fixture.files.read_lossy(&psg).unwrap(), "geometry");
         assert!(!fixture.files.is_file(&geometry_csg(&fixture)));

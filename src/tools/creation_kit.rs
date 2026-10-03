@@ -971,7 +971,7 @@ mod tests {
         assert!(!files.is_file(&disabled_enb_dll()));
         assert_eq!(files.read_lossy(&enb_dll()).unwrap(), "enb");
         // A tool that never started has nothing for MO2 to sync.
-        assert!(wait.delays().is_empty());
+        assert_eq!(wait.delays(), Vec::<u64>::new());
     }
 
     /// A Creation Kit that never launches still leaves its record in the session log.
@@ -1006,6 +1006,6 @@ mod tests {
             qualifier_args("  clean   all  ").collect::<Vec<_>>(),
             vec!["clean", "all"]
         );
-        assert!(qualifier_args("").collect::<Vec<_>>().is_empty());
+        assert_eq!(qualifier_args("").collect::<Vec<_>>(), Vec::<&str>::new());
     }
 }
