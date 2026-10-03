@@ -228,6 +228,12 @@ pub enum Error {
     )]
     ArchiveRestoreListNotRemoved { path: std::path::PathBuf },
 
+    // A divergence decided on #29: with no loose meshes the batch silently skips to Step 4 (289).
+    // The port completes only when the archive already holds them (an earlier attempt packed
+    // it), and otherwise stops, because Step 8 would have no precombines to add previs to.
+    #[error("No Precombined meshes found to archive, and {name} does not exist")]
+    NoPrecombinesToArchive { name: String },
+
     // A divergence: the batch rebuilds from `vis` alone when the extract yields no precombines
     // (441 → 445), which silently drops them. The old archive is untouched when this is raised.
     #[error("{name} holds no precombined meshes, so previs cannot be added to it")]
@@ -438,6 +444,19 @@ mod tests {
                  back into Data.",
                 work.join("restore.txt").display()
             )
+        );
+    }
+
+    /// Step 3 with nothing to pack and no archive from an earlier attempt names the archive it
+    /// looked for.
+    #[test]
+    fn nothing_to_archive_at_step_three_names_the_missing_archive() {
+        assert_eq!(
+            Error::NoPrecombinesToArchive {
+                name: "MyMod - Main.ba2".to_string()
+            }
+            .to_string(),
+            "No Precombined meshes found to archive, and MyMod - Main.ba2 does not exist"
         );
     }
 

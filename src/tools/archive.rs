@@ -114,13 +114,6 @@ impl ArchiveOps<'_> {
     /// [`Error::ArchiveMoveBackFailed`], [`Error::ArchiveRestoreListNotRemoved`], or
     /// [`Error::Io`] when the work folder, its restore list, a move or the session log cannot be
     /// written.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "Step 3, Create BA2 from Precombines, which calls this, is not registered yet"
-        )
-    )]
     pub(crate) fn archive_precombines(&self, archive_name: &str) -> Result<()> {
         let work = WorkFolder::choose(&self.paths.fallout4_dir, self.ports.files);
         let result = work

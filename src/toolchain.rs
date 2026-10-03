@@ -547,6 +547,19 @@ pub(crate) fn write_fo4edit_install(dir: &Path) -> PathBuf {
     fo4edit
 }
 
+/// Where discovery finds Archive2 in `fallout4_dir`, for a test probe to report.
+///
+/// Never written: archive readiness only checks that discovery found a path, and nothing in a
+/// test launches it. Crate-visible for every test module that prepares a Workflow Run whose
+/// runnable steps include an archive step — since Step 3 was registered, any fresh run.
+#[cfg(test)]
+pub(crate) fn archive2_exe(fallout4_dir: &Path) -> PathBuf {
+    fallout4_dir
+        .join("Tools")
+        .join("Archive2")
+        .join("Archive2.exe")
+}
+
 fn required_archive_tool(tools: &ToolPaths, archive_tool: ArchiveTool) -> Result<PathBuf> {
     match archive_tool {
         ArchiveTool::Archive2 => tools.archive2.clone().ok_or_else(|| {

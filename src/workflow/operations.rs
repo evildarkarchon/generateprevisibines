@@ -17,6 +17,7 @@ use crate::workflow::WorkflowPlan;
 
 mod build_cdx;
 mod compress_psg;
+mod create_ba2_from_precombines;
 mod generate_precombines;
 mod generate_previs;
 mod merge_combined_objects;
@@ -38,6 +39,7 @@ macro_rules! register_production_operations {
 register_production_operations!(
     generate_precombines::DEFINITION,
     merge_combined_objects::DEFINITION,
+    create_ba2_from_precombines::DEFINITION,
     compress_psg::DEFINITION,
     build_cdx::DEFINITION,
     generate_previs::DEFINITION,
@@ -228,8 +230,8 @@ pub(crate) fn execute_registered_workflow(
 /// instead of leaving their composition untested behind a one-implementation trait.
 ///
 /// Each episode is optional, because a Workflow Run prepares only the tools its runnable
-/// operations require: a resume at Step 2 or Step 7 needs FO4Edit and no Creation Kit, and a
-/// resume at Step 8 needs only the archive tool. An operation reaches its episode
+/// operations require: a resume at Step 7 needs FO4Edit and no Creation Kit, and a resume at
+/// Step 8 will need only the archive tool. An operation reaches its episode
 /// through [`Self::ck`], [`Self::fo4edit`] or [`Self::archive`], and an absent one is a
 /// preparation bug rather than a user state.
 #[derive(Debug)]
@@ -281,14 +283,6 @@ impl<'a> OperationPorts<'a> {
     ///
     /// Returns [`Error::ArchiveNotPrepared`] when the Workflow Run prepared no archive tool,
     /// which means planning and readiness disagreed about the running operation.
-    // No registered Workflow Operation reaches the archive tool until Steps 3 and 8 land.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "Steps 3 and 8, the operations that reach the Archive episode, are not registered yet"
-        )
-    )]
     pub(crate) fn archive(&self) -> Result<&'a ArchiveOps<'a>> {
         self.archive.ok_or(Error::ArchiveNotPrepared)
     }
@@ -347,8 +341,9 @@ mod tests {
 
     use super::recording_adapters::{
         COMPLETED_COMBINED_OBJECTS_MERGE_LOG, COMPLETED_PREVIS_MERGE_LOG, FO4EDIT_MAIN_FORM,
-        FO4EDIT_MODULE_SELECTION, ONE_POLL_MERGE_DELAYS, QUIET_CK_LOG, RecordingPrompts,
-        behaving_fo4edit_windows, fo4edit_exiting_when, record_successful_cdx_outputs,
+        FO4EDIT_MODULE_SELECTION, ONE_POLL_MERGE_DELAYS, PACKED_ARCHIVE, QUIET_CK_LOG,
+        RecordingPrompts, archive2_pack_writing_archive, behaving_fo4edit_windows,
+        fo4edit_exiting_when, record_successful_cdx_outputs,
         record_successful_combined_objects_merge, record_successful_compress_outputs,
         record_successful_precombine_outputs, record_successful_previs_merge,
         record_successful_previs_outputs,
@@ -368,7 +363,7 @@ mod tests {
     use crate::warning::BuildWarning;
     use crate::{
         discovery::ToolPaths,
-        toolchain::{WorkflowToolchainProbe, write_fo4edit_install},
+        toolchain::{WorkflowToolchainProbe, archive2_exe, write_fo4edit_install},
     };
 
     /// Provide an execution entry for registration-only tests that must never dispatch.
@@ -376,30 +371,31 @@ mod tests {
         unreachable!("filtering registered steps must not execute operations")
     }
 
+    /// The Clean steps production runs while Step 8 is the only unregistered one.
+    const CLEAN_RUNNABLE_STEPS: [WorkflowStep; 7] = [
+        WorkflowStep::GeneratePrecombines,
+        WorkflowStep::MergePrecombineObjects,
+        WorkflowStep::CreateBa2FromPrecombines,
+        WorkflowStep::CompressPsg,
+        WorkflowStep::BuildCdx,
+        WorkflowStep::GeneratePrevis,
+        WorkflowStep::MergePrevis,
+    ];
+
     #[test]
     fn production_workflow_plan_filters_registered_operations() {
         let plan = production_workflow_plan(BuildMode::Clean, None).unwrap();
 
         assert_eq!(plan.planned_steps().len(), 8);
-        assert_eq!(
-            plan.runnable_steps(),
-            &[
-                WorkflowStep::GeneratePrecombines,
-                WorkflowStep::MergePrecombineObjects,
-            ]
-        );
-        assert_eq!(plan.skipped_unrunnable_count(), 6);
+        assert_eq!(plan.runnable_steps(), &CLEAN_RUNNABLE_STEPS);
+        assert_eq!(plan.skipped_unrunnable_count(), 1);
     }
 
     #[test]
     fn production_workflow_plan_rejects_unregistered_resume_step() {
         let cases = [
             (BuildMode::Clean, WorkflowStep::AddPrevisToArchive, 8),
-            (
-                BuildMode::Filtered,
-                WorkflowStep::CreateBa2FromPrecombines,
-                3,
-            ),
+            (BuildMode::Filtered, WorkflowStep::AddPrevisToArchive, 8),
         ];
 
         for (mode, resume, expected_step) in cases {
@@ -418,16 +414,10 @@ mod tests {
             .unwrap()
             .into_parts();
 
-        assert_eq!(
-            plan.runnable_steps(),
-            &[
-                WorkflowStep::GeneratePrecombines,
-                WorkflowStep::MergePrecombineObjects,
-            ]
-        );
+        assert_eq!(plan.runnable_steps(), &CLEAN_RUNNABLE_STEPS);
         assert!(requirements.needs_creation_kit());
         assert!(requirements.needs_fo4edit());
-        assert!(!requirements.needs_archive());
+        assert!(requirements.needs_archive());
     }
 
     #[test]
@@ -437,14 +427,8 @@ mod tests {
 
         assert!(source.contains(WorkflowStep::GeneratePrecombines));
         assert!(source.contains(WorkflowStep::MergePrecombineObjects));
-        assert!(!source.contains(WorkflowStep::CreateBa2FromPrecombines));
-        assert_eq!(
-            plan.runnable_steps(),
-            &[
-                WorkflowStep::GeneratePrecombines,
-                WorkflowStep::MergePrecombineObjects,
-            ]
-        );
+        assert!(!source.contains(WorkflowStep::AddPrevisToArchive));
+        assert_eq!(plan.runnable_steps(), &CLEAN_RUNNABLE_STEPS);
     }
 
     #[test]
@@ -530,12 +514,10 @@ mod tests {
 
         assert!(requirements.needs_creation_kit());
         assert!(requirements.needs_fo4edit());
-        assert!(!requirements.needs_archive());
+        assert!(requirements.needs_archive());
 
-        let unregistered_requirements = source.toolchain_requirements_for_steps(&[
-            WorkflowStep::CreateBa2FromPrecombines,
-            WorkflowStep::AddPrevisToArchive,
-        ]);
+        let unregistered_requirements =
+            source.toolchain_requirements_for_steps(&[WorkflowStep::AddPrevisToArchive]);
         assert!(!unregistered_requirements.needs_creation_kit());
         assert!(!unregistered_requirements.needs_fo4edit());
         assert!(!unregistered_requirements.needs_archive());
@@ -739,6 +721,15 @@ mod tests {
             self.run_collecting_warnings_on(merge_combined_objects::run, process, desktop)
         }
 
+        /// Drive Step 3 over the real Archive episode, with `process` standing in for the
+        /// archive tool, and return how it ended with every Build Warning it raised.
+        fn run_step_three_collecting_warnings(
+            &self,
+            process: &dyn ProcessRunner,
+        ) -> (Result<()>, Vec<BuildWarning>) {
+            self.run_collecting_warnings(create_ba2_from_precombines::run, process)
+        }
+
         /// Drive Step 7 over the real FO4Edit episode; see
         /// [`Self::run_step_two_collecting_warnings`].
         fn run_step_seven_collecting_warnings(
@@ -800,13 +791,23 @@ mod tests {
         operation_fixture(mode, non_interactive, Some(WorkflowStep::GeneratePrevis))
     }
 
-    /// Prepare a real Workflow Run resumed at Step 2, which needs FO4Edit and no Creation Kit
-    /// until Step 3 is registered.
+    /// Prepare a real Workflow Run resumed at Step 2, which runs through Step 7 and so prepares
+    /// every tool, FO4Edit among them.
     fn step_two_fixture(non_interactive: bool) -> OperationFixture {
         operation_fixture(
             BuildMode::Clean,
             non_interactive,
             Some(WorkflowStep::MergePrecombineObjects),
+        )
+    }
+
+    /// Prepare a real Workflow Run resumed at Step 3, which runs through Step 7 and so prepares
+    /// the archive tool beside Creation Kit and FO4Edit.
+    fn step_three_fixture(non_interactive: bool) -> OperationFixture {
+        operation_fixture(
+            BuildMode::Clean,
+            non_interactive,
+            Some(WorkflowStep::CreateBa2FromPrecombines),
         )
     }
 
@@ -825,8 +826,11 @@ mod tests {
     /// The directory is the only thing that reaches the disk: it holds the `CreationKit.exe` and
     /// the CKPE ini, and an FO4Edit install with its merge scripts, which the toolchain probe
     /// insists on seeing, because probing is not behind a seam. Everything the run then does —
-    /// its session log, the artifacts, the Creation Kit log, FO4Edit's log — lands in the
-    /// fixture's own [`InMemoryFileSpace`].
+    /// its session log, the artifacts, the Creation Kit log, FO4Edit's log, the archive work
+    /// folder — lands in the fixture's own [`InMemoryFileSpace`].
+    ///
+    /// Archive2 is discovered at [`archive2_exe`] but never written: archive readiness checks
+    /// only that discovery found a path, and nothing launches it.
     ///
     /// `resume_from` must name a registered step, because preparation resolves the plan.
     fn operation_fixture(
@@ -848,6 +852,7 @@ mod tests {
             fallout4_dir: Some(fallout4_dir.clone()),
             creation_kit: Some(fallout4_dir.join("CreationKit.exe")),
             fo4edit: Some(write_fo4edit_install(&dir.path().join("FO4Edit"))),
+            archive2: Some(archive2_exe(&fallout4_dir)),
             ..ToolPaths::default()
         })
         .unwrap();
@@ -1189,14 +1194,14 @@ mod tests {
         let err = fixture
             .with_ports(&process, |ports| {
                 production_operation_source().dispatch(
-                    WorkflowStep::CreateBa2FromPrecombines,
+                    WorkflowStep::AddPrevisToArchive,
                     &fixture.run,
                     ports,
                 )
             })
             .unwrap_err();
 
-        assert!(matches!(err, Error::StepNotImplemented(3)));
+        assert!(matches!(err, Error::StepNotImplemented(8)));
         assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
         assert_eq!(fixture.prompts.asked(), []);
     }
@@ -1484,23 +1489,55 @@ mod tests {
         assert!(!requirements.needs_archive());
     }
 
-    /// Registering Steps 4 to 6 does not let a fresh clean build skip ahead to them: Step 3 is
-    /// the first planned step with no registered operation, so only Steps 1 and 2 run.
+    /// With Step 3 registered, a fresh clean build runs the contiguous prefix through Step 7:
+    /// Step 8 is the first planned step with no registered operation.
     #[test]
-    fn a_fresh_clean_build_still_runs_only_the_contiguous_registered_prefix() {
+    fn a_fresh_clean_build_runs_the_contiguous_registered_prefix_through_step_seven() {
         for mode in [BuildMode::Clean, BuildMode::Xbox] {
             let plan = production_workflow_plan(mode, None).unwrap();
 
             assert_eq!(plan.planned_steps().len(), 8, "mode: {mode:?}");
             assert_eq!(
                 plan.runnable_steps(),
-                &[
-                    WorkflowStep::GeneratePrecombines,
-                    WorkflowStep::MergePrecombineObjects,
-                ],
+                &CLEAN_RUNNABLE_STEPS,
                 "mode: {mode:?}"
             );
         }
+    }
+
+    /// A Filtered build has no Steps 4 and 5 (`:CompPSG` forwards it to `:PreVis`, 296), so with
+    /// Step 3 registered a fresh one archives its precombines and goes straight on to previs.
+    #[test]
+    fn a_fresh_filtered_build_archives_its_precombines_before_previs() {
+        let plan = production_workflow_plan(BuildMode::Filtered, None).unwrap();
+
+        assert_eq!(
+            plan.runnable_steps(),
+            &[
+                WorkflowStep::GeneratePrecombines,
+                WorkflowStep::MergePrecombineObjects,
+                WorkflowStep::CreateBa2FromPrecombines,
+                WorkflowStep::GeneratePrevis,
+                WorkflowStep::MergePrevis,
+            ]
+        );
+    }
+
+    /// A resume at 3 plans Steps 3 to 7 in a Clean build, so it needs Creation Kit and FO4Edit
+    /// for the later steps as well as the archive tool for Step 3 itself.
+    #[test]
+    fn a_clean_resume_at_step_three_runs_steps_three_to_seven() {
+        let (plan, requirements) = prepare_production_workflow(
+            BuildMode::Clean,
+            Some(WorkflowStep::CreateBa2FromPrecombines),
+        )
+        .unwrap()
+        .into_parts();
+
+        assert_eq!(plan.runnable_steps(), &CLEAN_RUNNABLE_STEPS[2..]);
+        assert!(requirements.needs_archive());
+        assert!(requirements.needs_creation_kit());
+        assert!(requirements.needs_fo4edit());
     }
 
     /// A Clean or Xbox resume at 5 runs Steps 5 to 7: Step 8 is not registered yet.
@@ -2159,12 +2196,12 @@ mod tests {
         assert!(!requirements.needs_archive());
     }
 
-    /// A resume at 2 merges `CombinedObjects.esp` through the whole FO4Edit episode, with no
-    /// Creation Kit prepared even though one is installed, and nothing to warn about.
+    /// A resume at 2 merges `CombinedObjects.esp` through the whole FO4Edit episode, and nothing
+    /// is warned about. That Step 2 needs FO4Edit alone is pinned by its registration test, since
+    /// a resume at 2 now runs on through Step 7 and so prepares every tool.
     #[test]
     fn step_two_merges_combined_objects_through_the_whole_fo4edit_episode() {
         let fixture = step_two_fixture(true);
-        assert!(fixture.run.creation_kit().is_none());
         add_precombine_outputs(&fixture);
         let exit = ExitFlag::new();
         let process = fo4edit_exiting_when(&exit);
@@ -2373,6 +2410,262 @@ mod tests {
             "error: {error:?}"
         );
         assert_eq!(fixture.wait.delays(), Vec::<u64>::new());
+    }
+
+    /// A loose precombined mesh Step 1 left in `Data`, nested as Creation Kit writes them.
+    fn loose_precombined_mesh(fixture: &OperationFixture) -> PathBuf {
+        fixture
+            .run
+            .config()
+            .precombined_dir()
+            .join("cell")
+            .join("mesh.nif")
+    }
+
+    /// `Data\<base name> - Main.ba2`, the Plugin Archive Step 3 packs into.
+    fn plugin_archive(fixture: &OperationFixture) -> PathBuf {
+        fixture.run.config().plugin_archive_path()
+    }
+
+    /// An archive tool whose single pack writes the built archive where its `-c=` says.
+    fn successful_archive2_pack(fixture: &OperationFixture) -> RecordingProcessRunner<'_> {
+        RecordingProcessRunner::new()
+            .scripting_call(0, archive2_pack_writing_archive(&fixture.files))
+    }
+
+    #[test]
+    fn create_ba2_from_precombines_is_registered_and_requires_the_archive_tool_alone() {
+        let source = production_operation_source();
+        let requirements =
+            source.toolchain_requirements_for_steps(&[WorkflowStep::CreateBa2FromPrecombines]);
+
+        assert!(source.contains(WorkflowStep::CreateBa2FromPrecombines));
+        assert!(requirements.needs_archive());
+        assert!(!requirements.needs_creation_kit());
+        assert!(!requirements.needs_fo4edit());
+    }
+
+    /// Loose meshes go into the Plugin Archive through the whole Archive episode, and the loose
+    /// copies are gone once the archive holds them.
+    #[test]
+    fn step_three_packs_the_loose_precombines_through_the_whole_archive_episode() {
+        let fixture = step_three_fixture(true);
+        fixture.files.add_file(loose_precombined_mesh(&fixture));
+        let process = successful_archive2_pack(&fixture);
+
+        let (result, warnings) = fixture.run_step_three_collecting_warnings(&process);
+
+        result.unwrap();
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        // One capturing run of the run's own archive tool, in `Data`, building the run's own
+        // archive; the rest of the argv is pinned in `tools::archive`.
+        let calls = process.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].exe, fixture.run.archive().unwrap().exe);
+        assert_eq!(calls[0].kind, ProcessCallKind::RunCapturing);
+        assert_eq!(calls[0].cwd, fixture.run.config().fo4edit_data_dir());
+        assert!(
+            calls[0]
+                .args
+                .iter()
+                .any(|arg| arg.to_string_lossy().ends_with("MyMod - Main.ba2")),
+            "args: {:?}",
+            calls[0].args
+        );
+        // Archive2 has no MO2 wait around a pack.
+        assert_eq!(fixture.wait.delays(), Vec::<u64>::new());
+        assert_eq!(
+            fixture.files.read_lossy(&plugin_archive(&fixture)).unwrap(),
+            PACKED_ARCHIVE
+        );
+        assert!(
+            !fixture
+                .files
+                .is_dir(&fixture.run.config().precombined_dir())
+        );
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(
+            session.contains("Creating Archive MyMod - Main.ba2 of meshes\\precombined:\n"),
+            "session log: {session}"
+        );
+    }
+
+    /// Batch parity on a resume at 3: loose meshes are packed even over an archive an earlier
+    /// attempt built, which the new one replaces.
+    #[test]
+    fn step_three_repacks_over_an_existing_archive() {
+        let fixture = step_three_fixture(true);
+        fixture.files.add_file(loose_precombined_mesh(&fixture));
+        fixture
+            .files
+            .add_file_with_contents(plugin_archive(&fixture), "old archive");
+        let process = successful_archive2_pack(&fixture);
+
+        let (result, warnings) = fixture.run_step_three_collecting_warnings(&process);
+
+        result.unwrap();
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        assert_eq!(process.calls().len(), 1);
+        assert_eq!(
+            fixture.files.read_lossy(&plugin_archive(&fixture)).unwrap(),
+            PACKED_ARCHIVE
+        );
+        assert!(
+            !fixture
+                .files
+                .is_dir(&fixture.run.config().precombined_dir())
+        );
+    }
+
+    /// No loose meshes, but an archive that already holds them (Step 3 ran on an earlier
+    /// attempt): nothing to do, so the tool never runs and nothing is warned about. The skip is
+    /// a console line, not a Build Warning, so the session log is untouched.
+    #[test]
+    fn step_three_completes_with_nothing_to_do_when_the_archive_already_holds_the_precombines() {
+        let fixture = step_three_fixture(true);
+        fixture
+            .files
+            .add_file_with_contents(plugin_archive(&fixture), "old archive");
+        let session_before = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        let process = successful_archive2_pack(&fixture);
+
+        let (result, warnings) = fixture.run_step_three_collecting_warnings(&process);
+
+        result.unwrap();
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
+        assert_eq!(fixture.wait.delays(), Vec::<u64>::new());
+        assert_eq!(
+            fixture.files.read_lossy(&plugin_archive(&fixture)).unwrap(),
+            "old archive"
+        );
+        assert_eq!(
+            fixture.files.read_lossy(fixture.run.log_path()).unwrap(),
+            session_before
+        );
+    }
+
+    /// Neither loose meshes nor an archive: a divergence from the batch's silent skip (289),
+    /// because Step 8 would then have no precombines to add previs to. Only a `.nif` counts as
+    /// a mesh, so a stray file under `meshes\precombined` does not satisfy the check.
+    #[test]
+    fn step_three_stops_when_there_are_neither_loose_precombines_nor_an_archive() {
+        let fixture = step_three_fixture(true);
+        fixture
+            .files
+            .add_file(fixture.run.config().precombined_dir().join("notes.txt"));
+        let process = successful_archive2_pack(&fixture);
+
+        let (result, warnings) = fixture.run_step_three_collecting_warnings(&process);
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, Error::NoPrecombinesToArchive { name } if name == "MyMod - Main.ba2"),
+            "error: {err:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "No Precombined meshes found to archive, and MyMod - Main.ba2 does not exist"
+        );
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
+        assert!(!fixture.files.is_file(&plugin_archive(&fixture)));
+    }
+
+    /// Regression pin for the `:Archive` fall-through divergence (docs/episodes.md § *Archive*):
+    /// the batch enters `:Archive` by `Call`, so a non-interactive run carried on past its
+    /// fatals. A failed pack and a pack that built nothing both stop Step 3 whether or not the
+    /// run is interactive, and leave the loose meshes where they were.
+    #[test]
+    fn a_failed_archive_pack_stops_step_three_whether_or_not_it_is_interactive() {
+        for non_interactive in [true, false] {
+            for exit_code in [1, 0] {
+                let fixture = step_three_fixture(non_interactive);
+                assert_eq!(fixture.run.config().non_interactive, non_interactive);
+                fixture.files.add_file(loose_precombined_mesh(&fixture));
+                // A pack that exits `exit_code` and writes nothing at all.
+                let process = RecordingProcessRunner::new().returning_exit_code(exit_code);
+
+                let (result, warnings) = fixture.run_step_three_collecting_warnings(&process);
+
+                let err = result.unwrap_err();
+                let case = format!("non-interactive: {non_interactive}, exit: {exit_code}");
+                if exit_code == 0 {
+                    assert!(
+                        matches!(err, Error::NoPluginArchiveCreated),
+                        "{case}, error: {err:?}"
+                    );
+                } else {
+                    assert!(
+                        matches!(err, Error::Archive2Failed { code: Some(1) }),
+                        "{case}, error: {err:?}"
+                    );
+                }
+                assert!(warnings.is_empty(), "{case}, warnings: {warnings:?}");
+                assert_eq!(process.calls().len(), 1, "{case}");
+                assert!(
+                    fixture.files.is_file(&loose_precombined_mesh(&fixture)),
+                    "{case}"
+                );
+                assert!(!fixture.files.is_file(&plugin_archive(&fixture)), "{case}");
+            }
+        }
+    }
+
+    /// Step 3 needs the archive tool and nothing else: with only the Archive episode bound, it
+    /// packs and completes.
+    #[test]
+    fn step_three_runs_with_the_archive_tool_alone() {
+        let fixture = step_three_fixture(true);
+        fixture.files.add_file(loose_precombined_mesh(&fixture));
+        let process = successful_archive2_pack(&fixture);
+        let warnings = BuildWarnings::new(fixture.run.log_path().to_path_buf(), &fixture.files);
+        let archive = fixture.run.archive().unwrap().bind(ArchivePorts {
+            process: &process,
+            wait: &fixture.wait,
+            files: &fixture.files,
+            warnings: &warnings,
+        });
+        let ports = OperationPorts {
+            ck: None,
+            fo4edit: None,
+            archive: Some(&archive),
+            prompts: &fixture.prompts,
+            files: &fixture.files,
+            warnings: &warnings,
+        };
+
+        create_ba2_from_precombines::run(&fixture.run, &ports).unwrap();
+
+        assert_eq!(process.calls().len(), 1);
+        assert_eq!(
+            fixture.files.read_lossy(&plugin_archive(&fixture)).unwrap(),
+            PACKED_ARCHIVE
+        );
+    }
+
+    /// Step 3 reaches the archive tool through `ports.archive()?`: a run that prepared none
+    /// stops with the preparation error before the workspace is looked at.
+    #[test]
+    fn step_three_without_the_archive_tool_stops_before_anything_is_looked_at() {
+        let fixture = step_three_fixture(true);
+        let warnings = BuildWarnings::new(fixture.run.log_path().to_path_buf(), &fixture.files);
+        let ports = OperationPorts {
+            ck: None,
+            fo4edit: None,
+            archive: None,
+            prompts: &fixture.prompts,
+            files: &fixture.files,
+            warnings: &warnings,
+        };
+
+        // No meshes and no archive either: the preparation error must win over Step 3's own stop.
+        let error = create_ba2_from_precombines::run(&fixture.run, &ports).unwrap_err();
+
+        assert!(
+            matches!(error, Error::ArchiveNotPrepared),
+            "error: {error:?}"
+        );
     }
 
     /// A `.uvd` beneath `Data\vis`, for Step 7's first entry check.
