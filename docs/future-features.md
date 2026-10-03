@@ -50,7 +50,7 @@ Ordered slices recommended for parity work:
    Per-verb command lines for both tools and the Xbox-compression divergence are in
    [episodes.md](episodes.md) § *Archive*.
 5. **Steps 4–5 — PSG / CDX** (clean and xbox; filtered skips both) — `- Geometry.psg` presence check on step-4 entry, then `CompressPSG` and delete the intermediate `.psg` (clean only — xbox skips straight to step 5 and keeps the `.psg`), then `BuildCDX`. Mode gates are in [episodes.md](episodes.md) § *Per-step notes*.
-   Step 4 is implemented as the `compress_psg` Workflow Operation; Step 5 is not yet.
+   Step 4 is implemented as the `compress_psg` Workflow Operation and Step 5 as `build_cdx`.
 6. **Step 6 — Generate previs** — empty `Data\vis`, `GeneratePreVisData`, visibility task warning.
 7. **Step 7 — Merge previs** — `Batch_FO4MergePrevisandCleanRefr.pas`, success string check.
 8. **Step 8 — Add previs to archive** — `AddToArchive` with extract-repack path for Archive2.
@@ -92,8 +92,9 @@ Manual integration checklist (minimum):
 - [ ] Interactive: seed copy from `Data\xPrevisPatch.esp` (5s MO2 delay if file not visible immediately)
 - [ ] Interactive: existing plugin Y/N/C; **C** shows resume menu; **0** re-prompts plugin name
 - [ ] Interactive: resume step 1 with existing `meshes\precombined\*.nif` prompts to delete folder
-- [ ] Non-interactive: `generateprevisibines.exe MyMod.esp` runs Step 1 only; errors if `--resume-from` names a step with no registered operation (2, 3, 5–8 today)
-- [ ] Clean `--resume-from 4` runs Step 4 alone and the diagnostic names Step 4; Xbox keeps `- Geometry.psg` and skips `CompressPSG`; Filtered `--resume-from 4` plans from Step 6
+- [ ] Non-interactive: `generateprevisibines.exe MyMod.esp` runs Step 1 only; errors if `--resume-from` names a step with no registered operation (2, 3, 6–8 today)
+- [ ] Clean `--resume-from 4` runs Steps 4 and 5 and the diagnostic names both; Xbox keeps `- Geometry.psg` and skips `CompressPSG`; Filtered `--resume-from 4` plans from Step 6
+- [ ] `--resume-from 5` with no `- Geometry.psg` still runs `BuildCDX` and leaves `{plugin}.cdx`; Filtered `--resume-from 5` plans from Step 6
 - [ ] Clean/Xbox mode: CK qualifiers `clean all`; PSG `{plugin} - Geometry.psg` required after CK
 - [ ] Filtered: CK qualifiers `filtered all`; no PSG check
 - (The two items above are V2.99 behaviour. V2.98 grouped Xbox with Filtered here; Step 1 was

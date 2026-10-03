@@ -121,3 +121,21 @@ pub(crate) fn record_successful_compress_outputs(
     );
     space.add_file_with_contents(ck_log, QUIET_CK_LOG);
 }
+
+/// Record what a successful Creation Kit `BuildCDX` run leaves in a Workflow Run's space.
+///
+/// `Data\<base name>.cdx`, plus this run's log. Like the other helpers here, meant as an
+/// effects callback body, so the `.cdx` appears *because of* the spawn and a stale one seeded
+/// beforehand can be told apart from it.
+pub(crate) fn record_successful_cdx_outputs(
+    space: &InMemoryFileSpace,
+    config: &ProjectConfig,
+    ck_log: &Path,
+) {
+    space.add_file(
+        config
+            .fo4edit_data_dir()
+            .join(format!("{}.cdx", config.plugin.base_name)),
+    );
+    space.add_file_with_contents(ck_log, QUIET_CK_LOG);
+}
