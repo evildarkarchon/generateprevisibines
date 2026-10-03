@@ -43,6 +43,10 @@ pub(crate) enum BuildWarning {
     /// finished, but the script did not report a clean run. The inverse polarity of
     /// [`Self::MergePrecombinesHadErrors`], as the batch tests each log.
     MergePrevisHadErrors,
+    /// Step 8 found no `.uvd` under `Data\vis` (batch 333), so there was no previs to add to
+    /// the Plugin Archive. A warning rather than a stop because it is the normal state after a
+    /// Step 8 that succeeded, which a resume at 8 then finds.
+    NoVisibilityFilesToArchive,
     /// The Archive episode could not remove something the Plugin Archive no longer depends on:
     /// its work folder after a step, or the loose `meshes\precombined` or `vis` after a swap.
     ///
@@ -126,6 +130,7 @@ impl fmt::Display for BuildWarning {
             ),
             Self::MergePrecombinesHadErrors => f.write_str("Merge Precombines had errors"),
             Self::MergePrevisHadErrors => f.write_str("Merge Previs had errors"),
+            Self::NoVisibilityFilesToArchive => f.write_str("No Visibility files found to archive"),
             Self::VisibilityTaskIncomplete => {
                 f.write_str("GeneratePreVisData failed to build at least one Cluster uvd")
             }
@@ -246,6 +251,15 @@ mod tests {
         assert_eq!(
             BuildWarning::MergePrevisHadErrors.to_string(),
             "Merge Previs had errors"
+        );
+    }
+
+    /// Batch line 333, minus the `WARNING - ` prefix.
+    #[test]
+    fn the_no_visibility_files_warning_reads_as_the_batch_wording() {
+        assert_eq!(
+            BuildWarning::NoVisibilityFilesToArchive.to_string(),
+            "No Visibility files found to archive"
         );
     }
 

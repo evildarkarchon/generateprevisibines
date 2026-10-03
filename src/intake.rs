@@ -1624,6 +1624,7 @@ mod tests {
                 WorkflowStep::BuildCdx,
                 WorkflowStep::GeneratePrevis,
                 WorkflowStep::MergePrevis,
+                WorkflowStep::AddPrevisToArchive,
             ]
         );
         assert_eq!(prompts.call_count(), 0);

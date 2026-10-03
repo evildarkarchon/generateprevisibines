@@ -2,7 +2,7 @@
 //!
 //! The previs artifacts are read by Steps 1, 6, 7 and 8, so the rules for them live here
 //! rather than in any one step: Step 1 refuses to start over a non-empty `vis`, Step 6 clears
-//! and validates both, Step 7 requires them, and Step 8 will.
+//! and validates both, Step 7 requires them, and Step 8 looks for a `.uvd` before archiving.
 
 use std::path::PathBuf;
 
@@ -23,8 +23,8 @@ const PREVIS_PLUGIN: &str = "Previs.esp";
 /// line, following the same convention as the precombine handle-array marker.
 const VISIBILITY_TASK_MARKER: &str = "ERROR: visibility task did not complete.";
 
-/// Artifact space cleared and validated by the Generate Previs Operation, and required by the
-/// Merge Previs Operation.
+/// Artifact space cleared and validated by the Generate Previs Operation, required by the
+/// Merge Previs Operation, and checked for `.uvd` files by the Add Previs to Archive Operation.
 ///
 /// Every artifact path is derived here from the resolved project configuration; only raw
 /// filesystem access goes through the [`FileSpace`] seam.

@@ -66,8 +66,10 @@ Ordered slices recommended for parity work:
      are in [episodes.md](episodes.md) § *Archive*; the batch's `:ArchiveOnly` fallback is not ported.
    - The port does not delete the archive before the repack: both tools build the new archive in
      the work folder and swap it in only after it passes the exists check.
-   - The Archive episode (`ArchiveOps::add_previs`) is implemented; the Workflow Operation that
-     calls it is not registered yet.
+   - Implemented as the `add_previs_to_archive` Workflow Operation over the Archive episode
+     (`ArchiveOps::add_previs`). With no `.uvd` under `Data\vis` it warns and completes, checked
+     before the archive as in the batch (333); a missing archive stops the run instead of falling
+     back to `:ArchiveOnly`.
 9. **Finish / cleanup** — list output files, optional delete CombinedObjects.esp / Previs.esp, restore DLLs.
 
 Each slice should wire through the Workflow Operation seam and real tool adapters.
@@ -101,17 +103,18 @@ Manual integration checklist (minimum):
 - [ ] Interactive: seed copy from `Data\xPrevisPatch.esp` (5s MO2 delay if file not visible immediately)
 - [ ] Interactive: existing plugin Y/N/C; **C** shows resume menu; **0** re-prompts plugin name
 - [ ] Interactive: resume step 1 with existing `meshes\precombined\*.nif` prompts to delete folder
-- [ ] Non-interactive: `generateprevisibines.exe MyMod.esp` runs Steps 1 to 7 (Filtered: 1, 2, 3, 6 and 7); errors if `--resume-from` names a step with no registered operation (8 today)
-- [ ] `--resume-from 2` merges `CombinedObjects.esp` through FO4Edit; Module Selection is dismissed without a keypress, and FO4Edit closes on its own afterwards. The run goes on through Step 7, so it needs Creation Kit and the archive tool too
+- [ ] Non-interactive: `generateprevisibines.exe MyMod.esp` runs Steps 1 to 8 (Filtered: 1, 2, 3, 6, 7 and 8)
+- [ ] `--resume-from 2` merges `CombinedObjects.esp` through FO4Edit; Module Selection is dismissed without a keypress, and FO4Edit closes on its own afterwards. The run goes on through Step 8, so it needs Creation Kit and the archive tool too
 - [ ] Step 3 packs `meshes\precombined` into `{plugin} - Main.ba2` with each tool (Archive2, and `-bsarch`), and the loose meshes are gone afterwards; a `--resume-from 3` with no loose meshes but an existing archive completes Step 3 with nothing to do, and with neither stops with "No Precombined meshes found to archive, and {plugin} - Main.ba2 does not exist"
 - [ ] Step 2 with no `meshes\precombined\*.nif` stops with "No Precombined meshes found", and with no `Data\CombinedObjects.esp` stops before FO4Edit launches
 - [ ] A plugin file name longer than 60 characters is rejected before Step 1
-- [ ] Clean `--resume-from 4` runs Steps 4 to 7 and the diagnostic names all four; Xbox keeps `- Geometry.psg` and skips `CompressPSG`; Filtered `--resume-from 4` plans from Step 6
+- [ ] Clean `--resume-from 4` runs Steps 4 to 8; Xbox keeps `- Geometry.psg` and skips `CompressPSG`; Filtered `--resume-from 4` plans from Step 6
 - [ ] `--resume-from 5` with no `- Geometry.psg` still runs `BuildCDX` and leaves `{plugin}.cdx`; Filtered `--resume-from 5` plans from Step 6
 - [ ] Interactive `--resume-from 6` with `Data\vis\*.uvd` asks "Previs directory (Data\vis) needs to be empty. Clean it?"; **N** stops; a non-interactive resume at 6, or any other entry to Step 6, stops with "Previs directory (Data\vis) not empty"
 - [ ] Step 6 leaves a fresh `Previs.esp`; a CK log containing `ERROR: visibility task did not complete.` gives the "failed to build at least one Cluster uvd" warning
-- [ ] `--resume-from 7` on an install with no Creation Kit merges `Previs.esp` through FO4Edit; a merge log without `Completed: No Errors.` gives the "Merge Previs had errors" warning
+- [ ] `--resume-from 7` on an install with no Creation Kit merges `Previs.esp` through FO4Edit, then goes on to Step 8; a merge log without `Completed: No Errors.` gives the "Merge Previs had errors" warning
 - [ ] Step 7 with no `Data\vis\*.uvd` stops with "No Visibility files Generated", and with no `Data\Previs.esp` stops with "No Previs.esp Generated", both before FO4Edit launches
+- [ ] Step 8 rebuilds `{plugin} - Main.ba2` as its precombines plus `vis` with each tool (Archive2, and `-bsarch`), and the loose `vis` is gone afterwards; `--resume-from 8` runs on an install with only the archive tool. A resume at 8 with no `Data\vis\*.uvd` warns "No Visibility files found to archive" and completes, and with `.uvd` but no archive stops with "Plugin archive {plugin} - Main.ba2 not found in Data…" before the tool runs
 - [ ] Clean/Xbox mode: CK qualifiers `clean all`; PSG `{plugin} - Geometry.psg` required after CK
 - [ ] Filtered: CK qualifiers `filtered all`; no PSG check
 - (The two items above are V2.99 behaviour. V2.98 grouped Xbox with Filtered here; Step 1 was

@@ -15,6 +15,7 @@ use crate::tools::{ArchiveOps, CreationKitOps, Fo4EditOps};
 use crate::warning::BuildWarnings;
 use crate::workflow::WorkflowPlan;
 
+mod add_previs_to_archive;
 mod build_cdx;
 mod compress_psg;
 mod create_ba2_from_precombines;
@@ -44,6 +45,7 @@ register_production_operations!(
     build_cdx::DEFINITION,
     generate_previs::DEFINITION,
     merge_previs::DEFINITION,
+    add_previs_to_archive::DEFINITION,
 );
 
 type OperationExecution = fn(&WorkflowRun, &OperationPorts<'_>) -> Result<()>;
@@ -146,6 +148,22 @@ impl ProductionOperationSource {
         (operation.execute)(run, ports)
     }
 
+    /// This source with the operations for `unregistered` taken out, for tests of plans that
+    /// production, with every step registered, no longer produces.
+    ///
+    /// Leaks the filtered list, because a source holds `'static` definitions; a test-only
+    /// allocation per call is harmless.
+    #[cfg(test)]
+    fn without(self, unregistered: &[WorkflowStep]) -> Self {
+        let operations: Vec<_> = self
+            .operations
+            .iter()
+            .filter(|operation| !unregistered.contains(&operation.step))
+            .copied()
+            .collect();
+        Self::new(Vec::leak(operations))
+    }
+
     fn operation_for_step(
         self,
         step: WorkflowStep,
@@ -194,7 +212,38 @@ pub(crate) fn prepare_production_workflow(
     build_mode: BuildMode,
     resume_from: Option<WorkflowStep>,
 ) -> Result<ProductionWorkflowPreparation> {
-    let operations = production_operation_source();
+    prepare_workflow(production_operation_source(), build_mode, resume_from)
+}
+
+/// [`prepare_production_workflow`] under production's registration with `unregistered` taken
+/// out.
+///
+/// Every Workflow Step is registered in production, so a partial plan — a run that stops short,
+/// a resume at a step with no operation, a plan that needs no archive tool — can no longer arise
+/// there. This stands in for the partial registrations production had while the port was being
+/// built, so the handling of those plans stays under test.
+///
+/// Returns [`Error::StepNotImplemented`] as [`prepare_production_workflow`] does.
+#[cfg(test)]
+pub(crate) fn prepare_workflow_without(
+    unregistered: &[WorkflowStep],
+    build_mode: BuildMode,
+    resume_from: Option<WorkflowStep>,
+) -> Result<ProductionWorkflowPreparation> {
+    prepare_workflow(
+        production_operation_source().without(unregistered),
+        build_mode,
+        resume_from,
+    )
+}
+
+/// Resolve the Workflow Plan and its runnable-operation requirement union from one source, so
+/// planning and readiness cannot observe different operation availability.
+fn prepare_workflow(
+    operations: ProductionOperationSource,
+    build_mode: BuildMode,
+    resume_from: Option<WorkflowStep>,
+) -> Result<ProductionWorkflowPreparation> {
     let plan = operations.workflow_plan(build_mode, resume_from)?;
     let requirements = operations.toolchain_requirements_for_steps(plan.runnable_steps());
     Ok(ProductionWorkflowPreparation { plan, requirements })
@@ -230,8 +279,8 @@ pub(crate) fn execute_registered_workflow(
 /// instead of leaving their composition untested behind a one-implementation trait.
 ///
 /// Each episode is optional, because a Workflow Run prepares only the tools its runnable
-/// operations require: a resume at Step 7 needs FO4Edit and no Creation Kit, and a resume at
-/// Step 8 will need only the archive tool. An operation reaches its episode
+/// operations require: a resume at Step 7 needs FO4Edit and the archive tool but no Creation
+/// Kit, and a resume at Step 8 needs only the archive tool. An operation reaches its episode
 /// through [`Self::ck`], [`Self::fo4edit`] or [`Self::archive`], and an absent one is a
 /// preparation bug rather than a user state.
 #[derive(Debug)]
@@ -342,8 +391,8 @@ mod tests {
     use super::recording_adapters::{
         COMPLETED_COMBINED_OBJECTS_MERGE_LOG, COMPLETED_PREVIS_MERGE_LOG, FO4EDIT_MAIN_FORM,
         FO4EDIT_MODULE_SELECTION, ONE_POLL_MERGE_DELAYS, PACKED_ARCHIVE, QUIET_CK_LOG,
-        RecordingPrompts, archive2_pack_writing_archive, behaving_fo4edit_windows,
-        fo4edit_exiting_when, record_successful_cdx_outputs,
+        RecordingPrompts, archive2_extract_writing_precombines, archive2_pack_writing_archive,
+        behaving_fo4edit_windows, fo4edit_exiting_when, record_successful_cdx_outputs,
         record_successful_combined_objects_merge, record_successful_compress_outputs,
         record_successful_precombine_outputs, record_successful_previs_merge,
         record_successful_previs_outputs,
@@ -358,7 +407,9 @@ mod tests {
     use crate::tools::process::{
         ExitFlag, ProcessCallKind, ProcessRunner, RecordedProcessCall, RecordingProcessRunner,
     };
-    use crate::tools::wait::{MO2_DELAY_AFTER_CK_SECS, RecordingWait};
+    use crate::tools::wait::{
+        MO2_DELAY_AFTER_ARCHIVE2_EXTRACT_SECS, MO2_DELAY_AFTER_CK_SECS, RecordingWait,
+    };
     use crate::tools::{ArchivePorts, CkPorts, Fo4EditPaths, Fo4EditPorts};
     use crate::warning::BuildWarning;
     use crate::{
@@ -371,8 +422,8 @@ mod tests {
         unreachable!("filtering registered steps must not execute operations")
     }
 
-    /// The Clean steps production runs while Step 8 is the only unregistered one.
-    const CLEAN_RUNNABLE_STEPS: [WorkflowStep; 7] = [
+    /// The Clean steps production runs: every one, since Step 8 was registered.
+    const CLEAN_RUNNABLE_STEPS: [WorkflowStep; 8] = [
         WorkflowStep::GeneratePrecombines,
         WorkflowStep::MergePrecombineObjects,
         WorkflowStep::CreateBa2FromPrecombines,
@@ -380,26 +431,33 @@ mod tests {
         WorkflowStep::BuildCdx,
         WorkflowStep::GeneratePrevis,
         WorkflowStep::MergePrevis,
+        WorkflowStep::AddPrevisToArchive,
     ];
 
     #[test]
-    fn production_workflow_plan_filters_registered_operations() {
+    fn production_workflow_plan_runs_every_planned_step() {
         let plan = production_workflow_plan(BuildMode::Clean, None).unwrap();
 
         assert_eq!(plan.planned_steps().len(), 8);
         assert_eq!(plan.runnable_steps(), &CLEAN_RUNNABLE_STEPS);
-        assert_eq!(plan.skipped_unrunnable_count(), 1);
+        assert_eq!(plan.skipped_unrunnable_count(), 0);
     }
 
+    /// Production registers every step, so a registration without Step 8 stands in for the
+    /// unregistered resume point it no longer has.
     #[test]
-    fn production_workflow_plan_rejects_unregistered_resume_step() {
+    fn a_registration_rejects_a_resume_at_an_unregistered_step() {
         let cases = [
             (BuildMode::Clean, WorkflowStep::AddPrevisToArchive, 8),
             (BuildMode::Filtered, WorkflowStep::AddPrevisToArchive, 8),
         ];
 
         for (mode, resume, expected_step) in cases {
-            let error = production_workflow_plan(mode, Some(resume)).unwrap_err();
+            let Err(error) =
+                prepare_workflow_without(&[WorkflowStep::AddPrevisToArchive], mode, Some(resume))
+            else {
+                panic!("mode: {mode:?}, resume: {resume:?}: a plan was prepared");
+            };
 
             assert!(
                 matches!(error, Error::StepNotImplemented(step) if step == expected_step),
@@ -421,14 +479,29 @@ mod tests {
     }
 
     #[test]
-    fn production_source_filters_registered_steps_in_plan_order() {
+    fn production_source_registers_every_step_in_plan_order() {
         let source = production_operation_source();
         let plan = source.workflow_plan(BuildMode::Clean, None).unwrap();
 
-        assert!(source.contains(WorkflowStep::GeneratePrecombines));
-        assert!(source.contains(WorkflowStep::MergePrecombineObjects));
-        assert!(!source.contains(WorkflowStep::AddPrevisToArchive));
+        for step in WorkflowStep::steps_for_mode(BuildMode::Clean) {
+            assert!(source.contains(*step), "step: {step:?}");
+        }
         assert_eq!(plan.runnable_steps(), &CLEAN_RUNNABLE_STEPS);
+    }
+
+    /// Taking a step out of a registration leaves every other step registered, and stops the
+    /// runnable plan short of the one taken out.
+    #[test]
+    fn a_registration_without_a_step_stops_its_plan_before_that_step() {
+        let (plan, requirements) =
+            prepare_workflow_without(&[WorkflowStep::AddPrevisToArchive], BuildMode::Clean, None)
+                .unwrap()
+                .into_parts();
+
+        assert_eq!(plan.runnable_steps(), &CLEAN_RUNNABLE_STEPS[..7]);
+        assert_eq!(plan.skipped_unrunnable_count(), 1);
+        // Step 3 still needs the archive tool.
+        assert!(requirements.needs_archive());
     }
 
     #[test]
@@ -516,8 +589,10 @@ mod tests {
         assert!(requirements.needs_fo4edit());
         assert!(requirements.needs_archive());
 
-        let unregistered_requirements =
-            source.toolchain_requirements_for_steps(&[WorkflowStep::AddPrevisToArchive]);
+        // Production registers every step, so Step 8 is taken out to have one that is not.
+        let unregistered_requirements = source
+            .without(&[WorkflowStep::AddPrevisToArchive])
+            .toolchain_requirements_for_steps(&[WorkflowStep::AddPrevisToArchive]);
         assert!(!unregistered_requirements.needs_creation_kit());
         assert!(!unregistered_requirements.needs_fo4edit());
         assert!(!unregistered_requirements.needs_archive());
@@ -730,6 +805,15 @@ mod tests {
             self.run_collecting_warnings(create_ba2_from_precombines::run, process)
         }
 
+        /// Drive Step 8 over the real Archive episode; see
+        /// [`Self::run_step_three_collecting_warnings`].
+        fn run_step_eight_collecting_warnings(
+            &self,
+            process: &dyn ProcessRunner,
+        ) -> (Result<()>, Vec<BuildWarning>) {
+            self.run_collecting_warnings(add_previs_to_archive::run, process)
+        }
+
         /// Drive Step 7 over the real FO4Edit episode; see
         /// [`Self::run_step_two_collecting_warnings`].
         fn run_step_seven_collecting_warnings(
@@ -791,7 +875,7 @@ mod tests {
         operation_fixture(mode, non_interactive, Some(WorkflowStep::GeneratePrevis))
     }
 
-    /// Prepare a real Workflow Run resumed at Step 2, which runs through Step 7 and so prepares
+    /// Prepare a real Workflow Run resumed at Step 2, which runs through Step 8 and so prepares
     /// every tool, FO4Edit among them.
     fn step_two_fixture(non_interactive: bool) -> OperationFixture {
         operation_fixture(
@@ -801,7 +885,7 @@ mod tests {
         )
     }
 
-    /// Prepare a real Workflow Run resumed at Step 3, which runs through Step 7 and so prepares
+    /// Prepare a real Workflow Run resumed at Step 3, which runs through Step 8 and so prepares
     /// the archive tool beside Creation Kit and FO4Edit.
     fn step_three_fixture(non_interactive: bool) -> OperationFixture {
         operation_fixture(
@@ -811,8 +895,8 @@ mod tests {
         )
     }
 
-    /// Prepare a real Workflow Run resumed at Step 7, which needs FO4Edit and no Creation Kit
-    /// until Step 8 is registered.
+    /// Prepare a real Workflow Run resumed at Step 7, which needs FO4Edit and the archive tool
+    /// but no Creation Kit.
     fn step_seven_fixture(non_interactive: bool) -> OperationFixture {
         operation_fixture(
             BuildMode::Clean,
@@ -1186,6 +1270,7 @@ mod tests {
         assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
     }
 
+    /// Production registers every step, so Step 8 is taken out to have one to dispatch.
     #[test]
     fn unregistered_source_dispatch_fails_before_the_ports() {
         let fixture = step_one_fixture(BuildMode::Filtered, true);
@@ -1193,11 +1278,9 @@ mod tests {
 
         let err = fixture
             .with_ports(&process, |ports| {
-                production_operation_source().dispatch(
-                    WorkflowStep::AddPrevisToArchive,
-                    &fixture.run,
-                    ports,
-                )
+                production_operation_source()
+                    .without(&[WorkflowStep::AddPrevisToArchive])
+                    .dispatch(WorkflowStep::AddPrevisToArchive, &fixture.run, ports)
             })
             .unwrap_err();
 
@@ -1250,10 +1333,9 @@ mod tests {
         assert!(!requirements.needs_archive());
     }
 
-    /// A Clean resume at 4 runs Steps 4 to 7: Step 8 is the first planned step with no
-    /// registered operation.
+    /// A Clean resume at 4 runs Steps 4 to 8.
     #[test]
-    fn a_clean_resume_at_step_four_runs_steps_four_to_seven() {
+    fn a_clean_resume_at_step_four_runs_steps_four_to_eight() {
         let plan =
             production_workflow_plan(BuildMode::Clean, Some(WorkflowStep::CompressPsg)).unwrap();
 
@@ -1268,6 +1350,7 @@ mod tests {
                 WorkflowStep::BuildCdx,
                 WorkflowStep::GeneratePrevis,
                 WorkflowStep::MergePrevis,
+                WorkflowStep::AddPrevisToArchive,
             ]
         );
     }
@@ -1291,7 +1374,11 @@ mod tests {
 
         assert_eq!(
             plan.runnable_steps(),
-            &[WorkflowStep::GeneratePrevis, WorkflowStep::MergePrevis]
+            &[
+                WorkflowStep::GeneratePrevis,
+                WorkflowStep::MergePrevis,
+                WorkflowStep::AddPrevisToArchive,
+            ]
         );
     }
 
@@ -1489,10 +1576,9 @@ mod tests {
         assert!(!requirements.needs_archive());
     }
 
-    /// With Step 3 registered, a fresh clean build runs the contiguous prefix through Step 7:
-    /// Step 8 is the first planned step with no registered operation.
+    /// With every step registered, a fresh clean build runs Steps 1 to 8.
     #[test]
-    fn a_fresh_clean_build_runs_the_contiguous_registered_prefix_through_step_seven() {
+    fn a_fresh_clean_build_runs_every_step_through_step_eight() {
         for mode in [BuildMode::Clean, BuildMode::Xbox] {
             let plan = production_workflow_plan(mode, None).unwrap();
 
@@ -1505,8 +1591,8 @@ mod tests {
         }
     }
 
-    /// A Filtered build has no Steps 4 and 5 (`:CompPSG` forwards it to `:PreVis`, 296), so with
-    /// Step 3 registered a fresh one archives its precombines and goes straight on to previs.
+    /// A Filtered build has no Steps 4 and 5 (`:CompPSG` forwards it to `:PreVis`, 296), so a
+    /// fresh one archives its precombines, goes straight on to previs, and adds it to the archive.
     #[test]
     fn a_fresh_filtered_build_archives_its_precombines_before_previs() {
         let plan = production_workflow_plan(BuildMode::Filtered, None).unwrap();
@@ -1519,14 +1605,15 @@ mod tests {
                 WorkflowStep::CreateBa2FromPrecombines,
                 WorkflowStep::GeneratePrevis,
                 WorkflowStep::MergePrevis,
+                WorkflowStep::AddPrevisToArchive,
             ]
         );
     }
 
-    /// A resume at 3 plans Steps 3 to 7 in a Clean build, so it needs Creation Kit and FO4Edit
-    /// for the later steps as well as the archive tool for Step 3 itself.
+    /// A resume at 3 plans Steps 3 to 8 in a Clean build, so it needs Creation Kit and FO4Edit
+    /// for the later steps as well as the archive tool for Steps 3 and 8.
     #[test]
-    fn a_clean_resume_at_step_three_runs_steps_three_to_seven() {
+    fn a_clean_resume_at_step_three_runs_steps_three_to_eight() {
         let (plan, requirements) = prepare_production_workflow(
             BuildMode::Clean,
             Some(WorkflowStep::CreateBa2FromPrecombines),
@@ -1540,9 +1627,9 @@ mod tests {
         assert!(requirements.needs_fo4edit());
     }
 
-    /// A Clean or Xbox resume at 5 runs Steps 5 to 7: Step 8 is not registered yet.
+    /// A Clean or Xbox resume at 5 runs Steps 5 to 8.
     #[test]
-    fn a_clean_build_resumed_at_step_five_runs_steps_five_to_seven() {
+    fn a_clean_build_resumed_at_step_five_runs_steps_five_to_eight() {
         for mode in [BuildMode::Clean, BuildMode::Xbox] {
             let plan = production_workflow_plan(mode, Some(WorkflowStep::BuildCdx)).unwrap();
 
@@ -1552,6 +1639,7 @@ mod tests {
                     WorkflowStep::BuildCdx,
                     WorkflowStep::GeneratePrevis,
                     WorkflowStep::MergePrevis,
+                    WorkflowStep::AddPrevisToArchive,
                 ],
                 "mode: {mode:?}"
             );
@@ -1567,21 +1655,30 @@ mod tests {
 
         assert_eq!(
             plan.runnable_steps(),
-            &[WorkflowStep::GeneratePrevis, WorkflowStep::MergePrevis]
+            &[
+                WorkflowStep::GeneratePrevis,
+                WorkflowStep::MergePrevis,
+                WorkflowStep::AddPrevisToArchive,
+            ]
         );
     }
 
-    /// In every Build Mode a resume at 6 runs through into Step 7, and a resume at 7 runs Step 7
-    /// alone, which needs FO4Edit and nothing else: Step 8 is not registered yet.
+    /// In every Build Mode resumes at 6, 7 and 8 run through Step 8. A resume at 7 needs
+    /// FO4Edit and the archive tool but no Creation Kit, and a resume at 8 needs the archive
+    /// tool alone.
     #[test]
-    fn resumes_at_steps_six_and_seven_run_through_step_seven() {
+    fn resumes_at_steps_six_seven_and_eight_run_through_step_eight() {
         for mode in [BuildMode::Clean, BuildMode::Filtered, BuildMode::Xbox] {
             let (plan, _) = prepare_production_workflow(mode, Some(WorkflowStep::GeneratePrevis))
                 .unwrap()
                 .into_parts();
             assert_eq!(
                 plan.runnable_steps(),
-                &[WorkflowStep::GeneratePrevis, WorkflowStep::MergePrevis],
+                &[
+                    WorkflowStep::GeneratePrevis,
+                    WorkflowStep::MergePrevis,
+                    WorkflowStep::AddPrevisToArchive,
+                ],
                 "mode: {mode:?}"
             );
 
@@ -1591,12 +1688,25 @@ mod tests {
                     .into_parts();
             assert_eq!(
                 plan.runnable_steps(),
-                &[WorkflowStep::MergePrevis],
+                &[WorkflowStep::MergePrevis, WorkflowStep::AddPrevisToArchive],
                 "mode: {mode:?}"
             );
             assert!(requirements.needs_fo4edit(), "mode: {mode:?}");
             assert!(!requirements.needs_creation_kit(), "mode: {mode:?}");
-            assert!(!requirements.needs_archive(), "mode: {mode:?}");
+            assert!(requirements.needs_archive(), "mode: {mode:?}");
+
+            let (plan, requirements) =
+                prepare_production_workflow(mode, Some(WorkflowStep::AddPrevisToArchive))
+                    .unwrap()
+                    .into_parts();
+            assert_eq!(
+                plan.runnable_steps(),
+                &[WorkflowStep::AddPrevisToArchive],
+                "mode: {mode:?}"
+            );
+            assert!(requirements.needs_archive(), "mode: {mode:?}");
+            assert!(!requirements.needs_fo4edit(), "mode: {mode:?}");
+            assert!(!requirements.needs_creation_kit(), "mode: {mode:?}");
         }
     }
 
@@ -2198,7 +2308,7 @@ mod tests {
 
     /// A resume at 2 merges `CombinedObjects.esp` through the whole FO4Edit episode, and nothing
     /// is warned about. That Step 2 needs FO4Edit alone is pinned by its registration test, since
-    /// a resume at 2 now runs on through Step 7 and so prepares every tool.
+    /// a resume at 2 now runs on through Step 8 and so prepares every tool.
     #[test]
     fn step_two_merges_combined_objects_through_the_whole_fo4edit_episode() {
         let fixture = step_two_fixture(true);
@@ -2937,5 +3047,267 @@ mod tests {
             "error: {error:?}"
         );
         assert_eq!(fixture.wait.delays(), Vec::<u64>::new());
+    }
+
+    /// Prepare a real Workflow Run resumed at Step 8, which needs the archive tool alone.
+    fn step_eight_fixture(non_interactive: bool) -> OperationFixture {
+        operation_fixture(
+            BuildMode::Clean,
+            non_interactive,
+            Some(WorkflowStep::AddPrevisToArchive),
+        )
+    }
+
+    /// Seed what Steps 3 and 6 leave for Step 8: the Plugin Archive Step 3 packed, and a `.uvd`
+    /// under `Data\vis`.
+    ///
+    /// Seeded rather than recorded as an effect, because they are Step 8's *inputs*: a resume
+    /// at 8 finds them already on disk.
+    fn add_archive_and_previs(fixture: &OperationFixture) {
+        fixture
+            .files
+            .add_file_with_contents(plugin_archive(fixture), "old archive");
+        fixture.files.add_file(vis_uvd(fixture));
+    }
+
+    /// An archive tool whose extract writes the archive's precombines into `Data`, and whose
+    /// repack then writes the built archive where its `-c=` says.
+    fn successful_archive2_rebuild(fixture: &OperationFixture) -> RecordingProcessRunner<'_> {
+        RecordingProcessRunner::new()
+            .scripting_call(
+                0,
+                archive2_extract_writing_precombines(
+                    &fixture.files,
+                    fixture.run.config().fo4edit_data_dir(),
+                    false,
+                ),
+            )
+            .scripting_call(1, archive2_pack_writing_archive(&fixture.files))
+    }
+
+    #[test]
+    fn add_previs_to_archive_is_registered_and_requires_the_archive_tool_alone() {
+        let source = production_operation_source();
+        let requirements =
+            source.toolchain_requirements_for_steps(&[WorkflowStep::AddPrevisToArchive]);
+
+        assert!(source.contains(WorkflowStep::AddPrevisToArchive));
+        assert!(requirements.needs_archive());
+        assert!(!requirements.needs_creation_kit());
+        assert!(!requirements.needs_fo4edit());
+    }
+
+    /// A resume at 8 rebuilds the Plugin Archive with the new previs through the whole Archive
+    /// episode, with neither Creation Kit nor FO4Edit prepared, and nothing to warn about.
+    #[test]
+    fn step_eight_adds_previs_through_the_whole_archive_episode() {
+        let fixture = step_eight_fixture(true);
+        assert!(fixture.run.creation_kit().is_none());
+        assert!(fixture.run.fo4edit().is_none());
+        add_archive_and_previs(&fixture);
+        let process = successful_archive2_rebuild(&fixture);
+
+        let (result, warnings) = fixture.run_step_eight_collecting_warnings(&process);
+
+        result.unwrap();
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        // The extract, then the repack: two capturing runs of the run's own archive tool, in
+        // `Data`, each naming the run's own archive; the rest of the argv is pinned in
+        // `tools::archive`.
+        let calls = process.calls();
+        assert_eq!(calls.len(), 2);
+        for call in &calls {
+            assert_eq!(call.exe, fixture.run.archive().unwrap().exe);
+            assert_eq!(call.kind, ProcessCallKind::RunCapturing);
+            assert_eq!(call.cwd, fixture.run.config().fo4edit_data_dir());
+            assert!(
+                call.args
+                    .iter()
+                    .any(|arg| arg.to_string_lossy().ends_with("MyMod - Main.ba2")),
+                "args: {:?}",
+                call.args
+            );
+        }
+        // Archive2's required MO2 wait after the extract (docs/workarounds.md §2).
+        assert_eq!(
+            fixture.wait.delays(),
+            vec![MO2_DELAY_AFTER_ARCHIVE2_EXTRACT_SECS]
+        );
+        assert_eq!(
+            fixture.files.read_lossy(&plugin_archive(&fixture)).unwrap(),
+            PACKED_ARCHIVE
+        );
+        assert!(!fixture.files.is_dir(&fixture.run.config().vis_dir()));
+        assert!(
+            !fixture
+                .files
+                .is_dir(&fixture.run.config().precombined_dir())
+        );
+        let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+        assert!(
+            session.contains("Extracting Archive MyMod - Main.ba2:\n"),
+            "session log: {session}"
+        );
+        assert!(
+            session.contains("Creating Archive MyMod - Main.ba2 of meshes\\precombined,vis:\n"),
+            "session log: {session}"
+        );
+    }
+
+    /// No `.uvd` under `Data\vis` is the normal state after a Step 8 that succeeded, so a resume
+    /// at 8 warns and completes (batch 333) rather than failing a finished build. The check comes
+    /// before the archive's, as in the batch (333 precedes 424), so it holds even when the
+    /// archive is missing too.
+    #[test]
+    fn step_eight_warns_and_completes_when_there_are_no_visibility_files() {
+        for archive_exists in [true, false] {
+            let fixture = step_eight_fixture(true);
+            if archive_exists {
+                fixture
+                    .files
+                    .add_file_with_contents(plugin_archive(&fixture), "old archive");
+            }
+            // Only a `.uvd` counts, so a stray file under `vis` does not satisfy the check.
+            fixture
+                .files
+                .add_file(fixture.run.config().vis_dir().join("notes.txt"));
+            let process = successful_archive2_rebuild(&fixture);
+
+            let (result, warnings) = fixture.run_step_eight_collecting_warnings(&process);
+
+            let case = format!("archive exists: {archive_exists}");
+            result.unwrap();
+            assert_eq!(
+                warnings,
+                [BuildWarning::NoVisibilityFilesToArchive],
+                "{case}"
+            );
+            assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new(), "{case}");
+            assert_eq!(fixture.wait.delays(), Vec::<u64>::new(), "{case}");
+            assert_eq!(
+                fixture.files.is_file(&plugin_archive(&fixture)),
+                archive_exists,
+                "{case}"
+            );
+            let session = fixture.files.read_lossy(fixture.run.log_path()).unwrap();
+            assert!(
+                session.ends_with("WARNING - No Visibility files found to archive\n"),
+                "{case}, session log: {session}"
+            );
+        }
+    }
+
+    /// A missing Plugin Archive is a stop, not the batch's `:ArchiveOnly` fallback (424): a
+    /// `vis`-only archive drops the precombined meshes previs refers to, which is a broken build.
+    #[test]
+    fn step_eight_stops_when_the_plugin_archive_is_missing() {
+        let fixture = step_eight_fixture(true);
+        fixture.files.add_file(vis_uvd(&fixture));
+        let process = successful_archive2_rebuild(&fixture);
+
+        let (result, warnings) = fixture.run_step_eight_collecting_warnings(&process);
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, Error::PluginArchiveMissing { name } if name == "MyMod - Main.ba2"),
+            "error: {err:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "Plugin archive MyMod - Main.ba2 not found in Data. It holds the precombined meshes \
+             previs refers to, so restore it or rebuild from Step 1"
+        );
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
+        assert_eq!(fixture.wait.delays(), Vec::<u64>::new());
+        assert!(fixture.files.is_file(&vis_uvd(&fixture)));
+    }
+
+    /// Regression pin for the `:Archive` fall-through divergence (docs/episodes.md § *Archive*),
+    /// for Step 8: a failed extract stops the step whether or not the run is interactive, and
+    /// leaves the old archive and the new previs where they were.
+    #[test]
+    fn a_failed_extract_stops_step_eight_whether_or_not_it_is_interactive() {
+        for non_interactive in [true, false] {
+            let fixture = step_eight_fixture(non_interactive);
+            assert_eq!(fixture.run.config().non_interactive, non_interactive);
+            add_archive_and_previs(&fixture);
+            // An extract that exits 1 and writes nothing at all.
+            let process = RecordingProcessRunner::new().returning_exit_code(1);
+
+            let (result, warnings) = fixture.run_step_eight_collecting_warnings(&process);
+
+            let err = result.unwrap_err();
+            let case = format!("non-interactive: {non_interactive}");
+            assert!(
+                matches!(err, Error::Archive2ExtractFailed { code: Some(1) }),
+                "{case}, error: {err:?}"
+            );
+            assert!(warnings.is_empty(), "{case}, warnings: {warnings:?}");
+            assert_eq!(process.calls().len(), 1, "{case}");
+            assert_eq!(
+                fixture.files.read_lossy(&plugin_archive(&fixture)).unwrap(),
+                "old archive",
+                "{case}"
+            );
+            assert!(fixture.files.is_file(&vis_uvd(&fixture)), "{case}");
+        }
+    }
+
+    /// Step 8 needs the archive tool and nothing else: with only the Archive episode bound, it
+    /// rebuilds the archive and completes.
+    #[test]
+    fn step_eight_runs_with_the_archive_tool_alone() {
+        let fixture = step_eight_fixture(true);
+        add_archive_and_previs(&fixture);
+        let process = successful_archive2_rebuild(&fixture);
+        let warnings = BuildWarnings::new(fixture.run.log_path().to_path_buf(), &fixture.files);
+        let archive = fixture.run.archive().unwrap().bind(ArchivePorts {
+            process: &process,
+            wait: &fixture.wait,
+            files: &fixture.files,
+            warnings: &warnings,
+        });
+        let ports = OperationPorts {
+            ck: None,
+            fo4edit: None,
+            archive: Some(&archive),
+            prompts: &fixture.prompts,
+            files: &fixture.files,
+            warnings: &warnings,
+        };
+
+        add_previs_to_archive::run(&fixture.run, &ports).unwrap();
+
+        assert_eq!(process.calls().len(), 2);
+        assert_eq!(
+            fixture.files.read_lossy(&plugin_archive(&fixture)).unwrap(),
+            PACKED_ARCHIVE
+        );
+    }
+
+    /// Step 8 reaches the archive tool through `ports.archive()?`: a run that prepared none
+    /// stops with the preparation error before the workspace is looked at.
+    #[test]
+    fn step_eight_without_the_archive_tool_stops_before_anything_is_looked_at() {
+        let fixture = step_eight_fixture(true);
+        let warnings = BuildWarnings::new(fixture.run.log_path().to_path_buf(), &fixture.files);
+        let ports = OperationPorts {
+            ck: None,
+            fo4edit: None,
+            archive: None,
+            prompts: &fixture.prompts,
+            files: &fixture.files,
+            warnings: &warnings,
+        };
+
+        // No `.uvd` either: the preparation error must win over Step 8's own warning.
+        let error = add_previs_to_archive::run(&fixture.run, &ports).unwrap_err();
+
+        assert!(
+            matches!(error, Error::ArchiveNotPrepared),
+            "error: {error:?}"
+        );
+        assert_eq!(warnings.raised(), []);
     }
 }

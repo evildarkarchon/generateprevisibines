@@ -36,10 +36,9 @@ fn legacy_and_modern_arguments_share_the_production_dry_run_path() {
         ),
         "stdout: {stdout}"
     );
+    // Every step is registered, so production runs the whole plan and has no shortfall to note.
     assert!(
-        stdout.contains(
-            "Note: current production capability (Steps 1, 2, 3, 6 and 7) would execute 5 of 6 planned steps."
-        ),
+        !stdout.contains("Note: current production capability"),
         "stdout: {stdout}"
     );
     assert!(
@@ -84,9 +83,7 @@ fn an_xbox_dry_run_lists_all_eight_planned_steps() {
         "stdout: {stdout}"
     );
     assert!(
-        stdout.contains(
-            "Note: current production capability (Steps 1, 2, 3, 4, 5, 6 and 7) would execute 7 of 8 planned steps."
-        ),
+        !stdout.contains("Note: current production capability"),
         "stdout: {stdout}"
     );
 }
