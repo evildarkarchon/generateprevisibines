@@ -3,7 +3,7 @@
 ## Windows-Only APIs Needed
 
 - **Registry**: Read HKCR and HKLM for tool paths
-- **SendInput**: Keyboard automation for FO4Edit
+- **Window messages** (`PostMessage`): dismiss and close FO4Edit's windows by targeted message, never `SendInput`
 - **File Versioning**: Get .exe ProductVersion info
 - **Process Management**: Launch, wait, force-close external tools
 
@@ -12,7 +12,7 @@
 - `clap` - CLI argument parsing
 - `dialoguer` - Interactive prompts (Y/N confirmations)
 - `winreg` - Windows Registry access
-- `windows` or `winapi` - Win32 APIs (SendInput, version info)
+- `windows` or `winapi` - Win32 APIs (window messages, version info)
 - `walkdir` - Directory traversal for validation
 - `anyhow` or `thiserror` - Error handling
 - `log` + `env_logger` or `tracing` - Logging

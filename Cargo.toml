@@ -1,3 +1,9 @@
+# The root package stays the main crate. The helper crate holds the Win32 window calls, which are
+# all `unsafe fn`, so the main crate can keep `unsafe_code = "forbid"` (ADR-0003). Profiles live
+# here, at the workspace root, because Cargo ignores them in member manifests.
+[workspace]
+members = [".", "crates/win32-windows"]
+
 [package]
 description = "Rust port of GeneratePrevisibines.bat for Fallout 4 precombine/previs automation"
 edition = "2024"
@@ -24,6 +30,9 @@ tracing = "0.1"
 tracing-subscriber = {version = "0.3", features = ["env-filter"]}
 
 [target.'cfg(windows)'.dependencies]
+# The Win32 window calls behind `tools::desktop`'s production adapter. Windows-only: off Windows
+# the helper is an empty crate and the adapter reports no windows (ADR-0003).
+generateprevisibines-win32-windows = {path = "crates/win32-windows"}
 winreg = "0.52"
 
 [dev-dependencies]

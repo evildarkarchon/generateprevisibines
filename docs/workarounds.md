@@ -14,9 +14,9 @@ moved.
   process, then `AppActivate('Module Selection')` and `SendKeys('{ENTER}')`)
 - Must force-close window after completion (despite `-autoexit` flag on line 543):
   `CloseMainWindow()` at 553, then `TaskKill /IM` at 556 as a last-ditch kill
-- **Rust must replicate the dismiss and the close, but not by `SendInput` alone.** Under Wine
+- **Rust must replicate the dismiss and the close, but not by `SendInput`.** Under Wine
   the batch's PowerShell route is a silent no-op. `SendInput` is untargeted and subject to the
-  foreground lock. xEdit saves the merged plugin only when it closes, so a hard kill would lose
+  foreground lock, so the port posts its ENTER to the dialog instead. xEdit saves the merged plugin only when it closes, so a hard kill would lose
   the merge. The ported mechanism (a dismissal ladder aimed at this run's Module Selection
   window, plus close requests scoped to this run's PID, never a kill) is decided on #28 and
   listed in [episodes.md](episodes.md) § *FO4Edit*. The Win32 calls live in a helper crate:
