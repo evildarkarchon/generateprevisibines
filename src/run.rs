@@ -509,7 +509,7 @@ mod tests {
         // A fresh fixture has nothing to clear, so the resume prompt must never fire. This is
         // a dispatch fact about the run, not an artifact check: the simulated Creation Kit
         // established no prior meshes, so nothing here asserts what the test put in place.
-        assert_eq!(prompts.clear_prompt_count(), 0);
+        assert_eq!(prompts.asked(), []);
     }
 
     /// Execute a prepared run's Step 1 over recording ports, with `process` standing in for
@@ -677,7 +677,7 @@ mod tests {
         }
     }
 
-    /// A Clean resume at 4 runs Steps 4 and 5, so the diagnostic must say that rather than
+    /// A Clean resume at 4 runs Steps 4 to 6, so the diagnostic must say that rather than
     /// claim Step 1 is what runs.
     #[test]
     fn a_resumed_partial_run_names_the_steps_it_will_execute() {
@@ -693,16 +693,18 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            run.runnable_steps(),
-            &[WorkflowStep::CompressPsg, WorkflowStep::BuildCdx]
-        );
+        let runnable = vec![
+            WorkflowStep::CompressPsg,
+            WorkflowStep::BuildCdx,
+            WorkflowStep::GeneratePrevis,
+        ];
+        assert_eq!(run.runnable_steps(), runnable.as_slice());
         assert!(
             run.diagnostics()
                 .contains(&RunDiagnostic::LaterStepsNotImplemented {
-                    skipped: 3,
+                    skipped: 2,
                     planned: 5,
-                    runnable: vec![WorkflowStep::CompressPsg, WorkflowStep::BuildCdx],
+                    runnable,
                 }),
             "diagnostics: {:?}",
             run.diagnostics()

@@ -6,6 +6,8 @@ use crate::config::ProjectConfig;
 use crate::error::{Error, Result};
 use crate::files::FileSpace;
 
+use super::previs_workspace::PrevisWorkspace;
+
 /// The Creation Kit log text that means the precombine ran out of Reference Handles.
 ///
 /// Held in the batch's own shape — `Findstr /I /M /C:"OUT OF HANDLE ARRAY ENTRIES"`
@@ -123,10 +125,10 @@ impl<'a> PrecombineWorkspace<'a> {
             .join(format!("{} - Geometry.psg", self.config.plugin.base_name))
     }
 
+    /// Whether `Data\vis` holds any `.uvd`, by the Previs Workspace's definition of it, so
+    /// Step 1 and Step 6 can never disagree about whether previs exists.
     fn has_vis_uvd_files(&self) -> bool {
-        self.files
-            .find_first_file_with_extension(&self.config.vis_dir(), "uvd")
-            .is_some()
+        PrevisWorkspace::new(self.config, self.files).has_vis_uvd_files()
     }
 }
 

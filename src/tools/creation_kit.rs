@@ -227,13 +227,6 @@ impl<'a> CreationKitOps<'a> {
     /// The qualifiers are `clean all` for every build mode — the batch hardcodes them here,
     /// unlike the precombine run, which is why this method takes no [`BuildMode`]. That is the
     /// shipped behaviour and is deliberately preserved, not a divergence to fix.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "the Step 6 Workflow Operation that calls this is not ported yet"
-        )
-    )]
     pub(crate) fn generate_previs_data(&self, plugin_file: &str) -> Result<CkRun> {
         self.run(CkOperation::GeneratePreVisData, plugin_file, "clean all")
     }

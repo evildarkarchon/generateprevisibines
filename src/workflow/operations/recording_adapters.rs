@@ -11,31 +11,36 @@
 //! left behind — recorded into the space the operation reads back, so a test states an outcome
 //! instead of writing bytes into a temporary directory and hoping the workspace finds them.
 
-use std::cell::Cell;
+use std::cell::RefCell;
 use std::path::Path;
 
 use crate::config::ProjectConfig;
 use crate::error::Result;
 use crate::files::InMemoryFileSpace;
 
-use super::Prompts;
+use super::{Confirmation, Prompts};
 
 /// A quiet Creation Kit log: present, readable, and free of the handle-array marker.
 pub(crate) const QUIET_CK_LOG: &str = "Masterfile: Fallout4.esm\n";
 
-/// Test [`Prompts`] that count the confirmations they were asked and answer from a script.
+/// Test [`Prompts`] that record the confirmations they were asked and answer from a script.
+///
+/// The script is one answer per [`Confirmation`] variant, so a test that refuses one question
+/// still consents to every other — a refusal pins exactly the branch it names.
 #[derive(Debug)]
 pub(crate) struct RecordingPrompts {
-    clear_prompts: Cell<usize>,
-    clear_response: bool,
+    asked: RefCell<Vec<Confirmation>>,
+    clear_precombined_answer: bool,
+    clear_vis_answer: bool,
 }
 
 impl Default for RecordingPrompts {
     fn default() -> Self {
         Self {
-            clear_prompts: Cell::new(0),
+            asked: RefCell::new(Vec::new()),
             // Consent by default, so a refusal is something a test has to ask for by name.
-            clear_response: true,
+            clear_precombined_answer: true,
+            clear_vis_answer: true,
         }
     }
 }
@@ -47,24 +52,34 @@ impl RecordingPrompts {
         Self::default()
     }
 
-    /// Answer the clear-precombined prompt with a refusal instead of consent.
+    /// Answer [`Confirmation::ClearPrecombined`] with a refusal instead of consent.
     #[must_use]
     pub(crate) const fn refusing_clear_precombined(mut self) -> Self {
-        self.clear_response = false;
+        self.clear_precombined_answer = false;
         self
     }
 
-    /// How many times the clear-precombined prompt was shown.
+    /// Answer [`Confirmation::ClearVis`] with a refusal instead of consent.
     #[must_use]
-    pub(crate) fn clear_prompt_count(&self) -> usize {
-        self.clear_prompts.get()
+    pub(crate) const fn refusing_clear_vis(mut self) -> Self {
+        self.clear_vis_answer = false;
+        self
+    }
+
+    /// Every confirmation asked so far, in the order it was asked.
+    #[must_use]
+    pub(crate) fn asked(&self) -> Vec<Confirmation> {
+        self.asked.borrow().clone()
     }
 }
 
 impl Prompts for RecordingPrompts {
-    fn confirm_clear_precombined(&self, _precombined_dir: &Path) -> Result<bool> {
-        self.clear_prompts.set(self.clear_prompts.get() + 1);
-        Ok(self.clear_response)
+    fn confirm(&self, confirmation: &Confirmation) -> Result<bool> {
+        self.asked.borrow_mut().push(confirmation.clone());
+        Ok(match confirmation {
+            Confirmation::ClearPrecombined(_) => self.clear_precombined_answer,
+            Confirmation::ClearVis(_) => self.clear_vis_answer,
+        })
     }
 }
 
@@ -137,5 +152,22 @@ pub(crate) fn record_successful_cdx_outputs(
             .fo4edit_data_dir()
             .join(format!("{}.cdx", config.plugin.base_name)),
     );
+    space.add_file_with_contents(ck_log, QUIET_CK_LOG);
+}
+
+/// Record what a successful Creation Kit `GeneratePreVisData` run leaves in a Workflow Run's
+/// space.
+///
+/// `Data\Previs.esp`, one cluster's `.uvd` under `Data\vis`, and this run's quiet log. Like the
+/// other helpers here, meant as an effects callback body, so `Previs.esp` appears *because of*
+/// the spawn and a stale one seeded beforehand can be told apart from it. A test that needs a
+/// different log overwrites it after calling this.
+pub(crate) fn record_successful_previs_outputs(
+    space: &InMemoryFileSpace,
+    config: &ProjectConfig,
+    ck_log: &Path,
+) {
+    space.add_file(config.fo4edit_data_dir().join("Previs.esp"));
+    space.add_file(config.vis_dir().join("cluster.uvd"));
     space.add_file_with_contents(ck_log, QUIET_CK_LOG);
 }

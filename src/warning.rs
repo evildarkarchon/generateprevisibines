@@ -33,11 +33,17 @@ pub(crate) enum BuildWarning {
         operation: &'static str,
         code: Option<i32>,
     },
+    /// The Creation Kit log reports `ERROR: visibility task did not complete.` after Step 6
+    /// produced `Previs.esp` (batch 319–320): at least one cluster's `.uvd` is missing.
+    VisibilityTaskIncomplete,
 }
 
 impl fmt::Display for BuildWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::VisibilityTaskIncomplete => {
+                f.write_str("GeneratePreVisData failed to build at least one Cluster uvd")
+            }
             Self::CreationKitNonZeroExit { operation, code } => write!(
                 f,
                 "{operation} ended with error {} but seemed to finish so error ignored.",
@@ -128,6 +134,15 @@ mod tests {
         assert_eq!(
             non_zero_exit(None).to_string(),
             "GeneratePrecombined ended with error unknown but seemed to finish so error ignored."
+        );
+    }
+
+    /// Batch line 320, minus the `WARNING - ` prefix.
+    #[test]
+    fn the_visibility_task_warning_reads_as_the_batch_wording() {
+        assert_eq!(
+            BuildWarning::VisibilityTaskIncomplete.to_string(),
+            "GeneratePreVisData failed to build at least one Cluster uvd"
         );
     }
 
