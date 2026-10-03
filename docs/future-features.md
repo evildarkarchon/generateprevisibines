@@ -27,7 +27,7 @@ cites.
 | 8-step workflow | `:Precomb` … `:Fin`, `:GetStep` | `workflow` — correct step list per build mode, resume from step N |
 | CK execution | `:RunCK` | `tools/creation_kit` — DLL guard, wait, log append, MO2 delay |
 | FO4Edit scripts | `:RunScript` | `tools/fo4edit` — plugin list, `-D:Data` when `-FO4` set, keystroke automation |
-| Archives | `:Archive`, `:Extract`, `:AddToArchive` | `tools/archive` — Archive2 extract/repack; BSArch pack/append; Xbox compression (V2.99 no longer requests it — line 391 is `REM`'d; #29 decides) |
+| Archives | `:Archive`, `:Extract`, `:AddToArchive` | `tools/archive` — Archive2 extract/repack and BSArch unpack/repack, both through `<fo4>\ArchiveWork` ([ADR-0004](adr/0004-plugin-archive-is-the-only-cross-step-archive-state.md)); no Xbox compression (V2.99 `REM`s it at line 391; kept on #29) |
 | DLL restore | `:Done` | `tools/dll` — restore `*-PJMdisabled` on success and failure |
 | Logging | `%TEMP%` logs, unattended log | `logging` — session log + unattended log merge |
 | UX messages | Throughout | Match familiar batch error strings where practical ([behaviors.md](behaviors.md)) |
@@ -45,15 +45,19 @@ Ordered slices recommended for parity work:
    keystroke and the full delay/poll/kill sequence the `tools/fo4edit` adapter must reproduce are
    enumerated in [episodes.md](episodes.md) § *FO4Edit* (see also [workarounds.md](workarounds.md) §1–§2).
 4. **Step 3 — Archive precombines** — create `{plugin} - Main.ba2`, delete precombined folder when using Archive2.
-   Per-verb command lines for both tools, the Xbox-compression divergence and the BSArch staging-dir
-   behaviour are in [episodes.md](episodes.md) § *Archive*.
+   Both tools build into the run-owned `<fo4>\ArchiveWork` folder, check the archive, then swap it
+   into `Data` ([ADR-0004](adr/0004-plugin-archive-is-the-only-cross-step-archive-state.md)).
+   Per-verb command lines for both tools and the Xbox-compression divergence are in
+   [episodes.md](episodes.md) § *Archive*.
 5. **Steps 4–5 — PSG / CDX** (clean and xbox; filtered skips both) — `- Geometry.psg` presence check on step-4 entry, then `CompressPSG` and delete the intermediate `.psg` (clean only — xbox skips straight to step 5 and keeps the `.psg`), then `BuildCDX`. Mode gates are in [episodes.md](episodes.md) § *Per-step notes*.
 6. **Step 6 — Generate previs** — empty `Data\vis`, `GeneratePreVisData`, visibility task warning.
 7. **Step 7 — Merge previs** — `Batch_FO4MergePrevisandCleanRefr.pas`, success string check.
 8. **Step 8 — Add previs to archive** — `AddToArchive` with extract-repack path for Archive2.
    - Archive2 has no append verb: extract, wait 5s, delete the archive, re-pack (see [workarounds.md](workarounds.md) §4).
-   - `BSArch` has no append verb either — it repacks the staging dir it has been accumulating since
-     step 3. Both paths, with the `:ArchiveOnly` fallbacks, are in [episodes.md](episodes.md) § *Archive*.
+   - `BSArch` has no append verb either — it `unpack`s the archive into `<fo4>\ArchiveWork`, moves
+     `vis` in and repacks, so the Plugin Archive is the only state carried from Step 3
+     ([ADR-0004](adr/0004-plugin-archive-is-the-only-cross-step-archive-state.md)). Both paths
+     are in [episodes.md](episodes.md) § *Archive*; the batch's `:ArchiveOnly` fallback is not ported.
 9. **Finish / cleanup** — list output files, optional delete CombinedObjects.esp / Previs.esp, restore DLLs.
 
 Each slice should wire through the Workflow Operation seam and real tool adapters.
@@ -101,7 +105,7 @@ Manual integration checklist (minimum):
 - [ ] Clean mode full run produces `.esp`, `.csg`, `.cdx`, `- Main.ba2`
 - [ ] Filtered mode skips steps 4–5
 - [ ] Xbox mode skips `CompressPSG` but runs `BuildCDX`, and ships `- Geometry.psg` + `.cdx`
-- [ ] Xbox mode archives carry no Xbox compression flag (V2.99 `REM`s it at line 391; #29 decides whether to keep that)
+- [ ] Xbox mode archives carry no Xbox compression flag (V2.99 `REM`s it at line 391; the port keeps that, decided on #29)
 - [ ] Resume from step 6 after forced failure at step 5
 - [ ] BSArch path vs Archive2 path
 - [ ] `-FO4:` override sets xEdit data directory correctly

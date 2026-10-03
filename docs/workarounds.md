@@ -35,7 +35,7 @@ moved.
 - **Keep these delays; they're not arbitrary**
 - The port adds **5s before every BSArch pack** (Steps 3 and 8), which the batch's BSArch path
   never had. BSArch doesn't write to `Data` itself, but the files it packs are moved out of MO2's
-  virtual `Data` into a staging folder. If they haven't settled when BSArch reads that folder,
+  virtual `Data` into the `<fo4>\ArchiveWork` staging folder. If they haven't settled when BSArch reads that folder,
   the archive comes out incomplete (decided on #29).
 
 ## 3. DLL Renaming (batch lines 454-459, 362-367)

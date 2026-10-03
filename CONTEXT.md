@@ -58,7 +58,7 @@ _Avoid_: Step 1 checks, precombine helper, artifact scanner
 
 **Plugin Archive**:
 The plugin's `- Main.ba2`. It holds the precombined meshes once Create BA2 from Precombines has run, and the previs as well once Add Previs to Archive has run. It is the only state the archive steps carry between them; Add Previs to Archive rebuilds it from its own contents plus the previs rather than adding to it.
-_Avoid_: BA2 (as a synonym in prose), append (for the Add Previs rebuild), BSArchTemp contents
+_Avoid_: BA2 (as a synonym in prose), append (for the Add Previs rebuild), ArchiveWork contents
 
 **Previs Workspace**:
 The artifact space evaluated by the previs steps — the generated visibility files and the previs plugin — which the Generate Previs step clears and validates and the later previs merge and archive steps require. It is the workspace being prepared and validated, not the Creation Kit or FO4Edit command itself.
