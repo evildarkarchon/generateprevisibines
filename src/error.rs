@@ -159,6 +159,19 @@ pub enum Error {
     #[error("FO4Edit script {script} failed")]
     Fo4EditScriptFailed { script: &'static str },
 
+    // Raised before intake when another process holds `<fo4>\GeneratePrevisibines.lock`
+    // (ADR-0005): two runs against one installation would each read the other's live work as
+    // crash leftovers. A crashed run's lock is released by Windows, so a retry soon succeeds.
+    #[error(
+        "Another GeneratePrevisibines run is using {} (it holds {}). Wait for it to finish, then rerun.",
+        .fallout4_dir.display(),
+        .lock_path.display()
+    )]
+    InstallationInUse {
+        fallout4_dir: std::path::PathBuf,
+        lock_path: std::path::PathBuf,
+    },
+
     #[error("{0}")]
     Other(String),
 }

@@ -263,6 +263,9 @@ bBSPointerHandleExtremly = true
 - Check that FO4Edit is not already running
 - Verify FO4Edit.exe path is correct
 
+### "Another GeneratePrevisibines run is using …"
+Only one run at a time may work on a Fallout 4 installation. Either another run against the same installation is still going, in which case wait for it to finish, or one has just crashed and Windows has not released its lock yet, in which case retry in a moment. The `GeneratePrevisibines.lock` file in the Fallout 4 directory is left in place between runs on purpose; deleting it is not needed.
+
 ### "Directory is not empty"
 In interactive mode, you'll be prompted to clean directories. In non-interactive mode, clean them manually or run interactively.
 

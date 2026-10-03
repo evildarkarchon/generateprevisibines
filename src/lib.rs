@@ -7,6 +7,7 @@ pub mod cli;
 pub mod config;
 pub mod discovery;
 pub mod error;
+pub mod installation_lock;
 pub mod intake;
 pub mod interactive;
 pub mod run;
