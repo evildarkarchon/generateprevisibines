@@ -130,6 +130,8 @@ mod tests {
         );
     }
 
+    /// V2.99 Xbox is a clean build: every batch `filtered` test (219, 296, 305) is "Filtered vs.
+    /// every other mode", so Xbox plans Steps 4 and 5 exactly as Clean does.
     #[test]
     fn xbox_mode_preserves_its_canonical_membership_and_order() {
         let steps = WorkflowPlan::steps_for(BuildMode::Xbox, None);
@@ -140,6 +142,8 @@ mod tests {
                 WorkflowStep::GeneratePrecombines,
                 WorkflowStep::MergePrecombineObjects,
                 WorkflowStep::CreateBa2FromPrecombines,
+                WorkflowStep::CompressPsg,
+                WorkflowStep::BuildCdx,
                 WorkflowStep::GeneratePrevis,
                 WorkflowStep::MergePrevis,
                 WorkflowStep::AddPrevisToArchive,
