@@ -228,13 +228,18 @@ impl WorkflowRequestIntake {
             let plugin_path = data_dir.join(&request.plugin.file_name);
             let seed_path = data_dir.join("xPrevisPatch.esp");
 
-            // Archive rejection must precede target and seed observations so the actionable
-            // conflict keeps the batch's established failure precedence.
-            if self.ports.files.is_file(&archive_path) {
-                return Err(Error::PluginAlreadyHasArchive);
-            }
+            // Archive observation must precede target and seed observations so the actionable
+            // conflict keeps the batch's established failure precedence. Whether it is a
+            // conflict depends on where the run enters, which for an existing plugin is not
+            // known until the operator answers below.
+            let has_archive = self.ports.files.is_file(&archive_path);
 
             if !self.ports.files.is_file(&plugin_path) {
+                // Seeding a plugin that already has an archive is always a conflict (batch 190).
+                if has_archive {
+                    return Err(Error::PluginAlreadyHasArchive);
+                }
+
                 self.ports
                     .prompts
                     .report_missing_plugin(&request.plugin.file_name);
@@ -289,6 +294,12 @@ impl WorkflowRequestIntake {
                 ExistingPluginAction::Continue => {}
             }
 
+            // Only a run entering Step 1 conflicts with the archive (batch 257). A resume at a
+            // later step is how an operator recovers after Step 3 built it, so it must pass.
+            if has_archive && enters_generate_precombines(request.resume_from) {
+                return Err(Error::PluginAlreadyHasArchive);
+            }
+
             return Ok(Some(request));
         }
     }
@@ -303,7 +314,11 @@ impl WorkflowRequestIntake {
 
         // Preserve the batch's failure precedence: an archive is actionable even when the
         // target plugin is also absent, so the target is deliberately not observed first.
-        if files.is_file(&readiness.plugin_archive_path()) {
+        // Only a run entering Step 1 conflicts with it (batch 257); a `--resume-from` past
+        // Step 1 is recovering from a failure after Step 3 built the archive.
+        if enters_generate_precombines(request.resume_from)
+            && files.is_file(&readiness.plugin_archive_path())
+        {
             return Err(Error::PluginAlreadyHasArchive);
         }
 
@@ -326,6 +341,15 @@ impl WorkflowRequestIntake {
         crate::validation::validate_plugin(&request.plugin, request.build_mode)?;
         Ok(probe.plugin_readiness(&request.plugin, request.non_interactive))
     }
+}
+
+/// Whether a run resumed at `resume_from` enters at Step 1, Generate Precombines.
+///
+/// A fresh run (`None`) and an explicit resume at Step 1 both do. This decides whether an
+/// existing Plugin Archive conflicts with the run: the batch rejects one when entering Step 1
+/// (`:Precomb1`, 257) and never on a `:GetStep` jump to a later step.
+fn enters_generate_precombines(resume_from: Option<WorkflowStep>) -> bool {
+    resume_from.is_none_or(|step| step == WorkflowStep::GeneratePrecombines)
 }
 
 #[cfg(test)]
@@ -765,8 +789,12 @@ mod tests {
 
     /// Prompted candidates keep archive precedence inside Intake rather than delegating it to a
     /// policy-bearing prompt adapter.
+    ///
+    /// The target is observed, because an existing plugin may still resume past Step 1 with
+    /// its archive in place; a missing one is about to be seeded, which an archive always
+    /// conflicts with (batch 190), so the rejection still precedes any seed observation.
     #[test]
-    fn interactive_archive_is_rejected_before_target_or_seed_observation() {
+    fn interactive_archive_is_rejected_before_seed_observation() {
         let directory = tempfile::tempdir().unwrap();
         let fallout4_dir = directory.path().join("Fallout4");
         let data_dir = fallout4_dir.join("Data");
@@ -793,7 +821,11 @@ mod tests {
         let err = intake.resolve(&cli, directory.path(), &probe).unwrap_err();
 
         assert!(matches!(err, Error::PluginAlreadyHasArchive));
-        assert_eq!(files.observed_paths(), vec![archive_path]);
+        // No `xPrevisPatch.esp` lookup: the seed is never observed.
+        assert_eq!(
+            files.observed_paths(),
+            vec![archive_path, data_dir.join("MyMod.esp")]
+        );
         assert!(files.copied_paths().is_empty());
         assert!(wait.delays().is_empty());
         assert_eq!(
@@ -1523,5 +1555,114 @@ mod tests {
             ]
         );
         assert!(files.is_file(run.log_path()));
+    }
+
+    /// A resume past Step 1 keeps the Plugin Archive Step 3 built: the batch only rejects an
+    /// archive when seeding a missing plugin (190) or entering Step 1 (257), and a `:GetStep`
+    /// jump to a later step reaches neither.
+    #[test]
+    fn a_non_interactive_resume_past_step_one_keeps_the_existing_plugin_archive() {
+        let context =
+            ReadyIntakeContext::new(&["generateprevisibines", "--resume-from", "4", "MyMod"]);
+        let prompts = Rc::new(RecordingPrompts::default());
+        let files = Rc::new(InMemoryFileSpace::new());
+        files.add_file(context.data_dir.join("MyMod.esp"));
+        files.add_file(context.data_dir.join("MyMod - Main.ba2"));
+        let intake = WorkflowRequestIntake::new(Rc::clone(&prompts), Rc::clone(&files));
+
+        let outcome = intake
+            .resolve(&context.cli, context.directory.path(), &context.probe)
+            .unwrap();
+        let WorkflowIntakeOutcome::Ready(run) = outcome else {
+            panic!("a resume at Step 4 should prepare a Workflow Run despite the archive");
+        };
+
+        assert_eq!(run.config().resume_from, Some(WorkflowStep::CompressPsg));
+        assert_eq!(run.runnable_steps(), &[WorkflowStep::CompressPsg]);
+        assert_eq!(prompts.call_count(), 0);
+    }
+
+    /// An explicit resume at Step 1 still enters Step 1, so the archive is still rejected there.
+    #[test]
+    fn a_non_interactive_resume_at_step_one_still_rejects_an_existing_plugin_archive() {
+        let context =
+            ReadyIntakeContext::new(&["generateprevisibines", "--resume-from", "1", "MyMod"]);
+        let prompts = Rc::new(RecordingPrompts::default());
+        let files = Rc::new(InMemoryFileSpace::new());
+        files.add_file(context.data_dir.join("MyMod.esp"));
+        files.add_file(context.data_dir.join("MyMod - Main.ba2"));
+        let intake = WorkflowRequestIntake::new(Rc::clone(&prompts), Rc::clone(&files));
+
+        let err = intake
+            .resolve(&context.cli, context.directory.path(), &context.probe)
+            .unwrap_err();
+
+        assert!(matches!(err, Error::PluginAlreadyHasArchive));
+        assert!(!files.is_file(&files.temp_dir().join("MyMod.log")));
+    }
+
+    /// The menu's "Rerun from failed step" is the advertised recovery after a Step 4 failure,
+    /// and by then Step 3 has built the archive; Intake must not reject it before the operator
+    /// has said which step to rerun.
+    #[test]
+    fn an_interactive_resume_past_step_one_keeps_the_existing_plugin_archive() {
+        let context = ReadyIntakeContext::new(&["generateprevisibines"]);
+        let files = Rc::new(InMemoryFileSpace::new());
+        files.add_file(context.data_dir.join("MyMod.esp"));
+        files.add_file(context.data_dir.join("MyMod - Main.ba2"));
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
+                .with_ready_actions(vec![ExistingPluginAction::ChooseResumeStep])
+                .with_resume_steps(vec![Some(WorkflowStep::CompressPsg)]),
+        );
+        let intake = WorkflowRequestIntake::new(Rc::clone(&prompts), Rc::clone(&files));
+
+        let outcome = intake
+            .resolve(&context.cli, context.directory.path(), &context.probe)
+            .unwrap();
+        let WorkflowIntakeOutcome::Ready(run) = outcome else {
+            panic!("a resume at Step 4 should prepare a Workflow Run despite the archive");
+        };
+
+        assert_eq!(run.config().resume_from, Some(WorkflowStep::CompressPsg));
+        assert_eq!(
+            prompts.questions(),
+            vec![
+                RecordedQuestion::PluginName(BuildMode::Clean),
+                RecordedQuestion::ExistingPlugin("MyMod.esp".into()),
+                RecordedQuestion::ResumeStep(BuildMode::Clean),
+            ]
+        );
+    }
+
+    /// Using an existing plugin from the start enters Step 1, so the archive is rejected — once
+    /// the operator has answered, and still before any Workflow Run is prepared.
+    #[test]
+    fn an_interactive_fresh_run_still_rejects_an_existing_plugin_archive() {
+        let context = ReadyIntakeContext::new(&["generateprevisibines"]);
+        let files = Rc::new(InMemoryFileSpace::new());
+        files.add_file(context.data_dir.join("MyMod.esp"));
+        files.add_file(context.data_dir.join("MyMod - Main.ba2"));
+        let prompts = Rc::new(
+            RecordingPrompts::default()
+                .with_plugin_names(vec![Some(PluginIdentity::parse("MyMod"))])
+                .with_ready_actions(vec![ExistingPluginAction::Continue]),
+        );
+        let intake = WorkflowRequestIntake::new(Rc::clone(&prompts), Rc::clone(&files));
+
+        let err = intake
+            .resolve(&context.cli, context.directory.path(), &context.probe)
+            .unwrap_err();
+
+        assert!(matches!(err, Error::PluginAlreadyHasArchive));
+        assert_eq!(
+            prompts.questions(),
+            vec![
+                RecordedQuestion::PluginName(BuildMode::Clean),
+                RecordedQuestion::ExistingPlugin("MyMod.esp".into()),
+            ]
+        );
+        assert!(!files.is_file(&files.temp_dir().join("MyMod.log")));
     }
 }
