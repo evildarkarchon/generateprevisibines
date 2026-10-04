@@ -234,6 +234,15 @@ pub enum Error {
     #[error("No Precombined meshes found to archive, and {name} does not exist")]
     NoPrecombinesToArchive { name: String },
 
+    // A divergence decided on #29 (design item 8): with no archive the batch packs `vis` alone
+    // through `:ArchiveOnly` (424), which drops the precombined meshes previs refers to. The
+    // port does not port that fallback and stops before any tool runs.
+    #[error(
+        "Plugin archive {name} not found in Data. It holds the precombined meshes previs refers \
+         to, so restore it or rebuild from Step 1"
+    )]
+    PluginArchiveMissing { name: String },
+
     // A divergence: the batch rebuilds from `vis` alone when the extract yields no precombines
     // (441 → 445), which silently drops them. The old archive is untouched when this is raised.
     #[error("{name} holds no precombined meshes, so previs cannot be added to it")]
@@ -457,6 +466,19 @@ mod tests {
             }
             .to_string(),
             "No Precombined meshes found to archive, and MyMod - Main.ba2 does not exist"
+        );
+    }
+
+    /// Step 8 with no Plugin Archive names it and says why previs cannot go on without it.
+    #[test]
+    fn a_missing_plugin_archive_at_step_eight_names_it() {
+        assert_eq!(
+            Error::PluginArchiveMissing {
+                name: "MyMod - Main.ba2".to_string()
+            }
+            .to_string(),
+            "Plugin archive MyMod - Main.ba2 not found in Data. It holds the precombined meshes \
+             previs refers to, so restore it or rebuild from Step 1"
         );
     }
 

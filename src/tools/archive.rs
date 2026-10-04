@@ -134,13 +134,6 @@ impl ArchiveOps<'_> {
     /// the extract or unpack yields no precombined mesh. Otherwise returns the errors
     /// [`Self::archive_precombines`] does, plus [`Error::Archive2ExtractFailed`] and
     /// [`Error::BsarchUnpackFailed`].
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "Step 8, Add Previs to Archive, which calls this, is not registered yet"
-        )
-    )]
     pub(crate) fn add_previs(&self, archive_name: &str) -> Result<()> {
         let work = WorkFolder::choose(&self.paths.fallout4_dir, self.ports.files);
         let result = work

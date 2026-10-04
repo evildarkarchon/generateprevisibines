@@ -188,8 +188,9 @@ impl WorkflowRun {
         } else {
             None
         };
-        // And for the archive tool: a run whose runnable steps include no archive step never
-        // resolves it, and a resume at Step 8 needs nothing else.
+        // And for the archive tool, which a resume at Step 8 needs and nothing else. Every
+        // production plan now ends at Step 8, so it is always resolved there; the condition
+        // stays because readiness follows the plan's requirements, not a list of steps.
         let archive = if requirements.needs_archive() {
             Some(toolchain.archive_paths(log_path.clone())?)
         } else {
@@ -227,11 +228,11 @@ impl WorkflowRun {
         let warnings = BuildWarnings::new(self.log_path.clone(), &files);
 
         // Bind each episode whose paths were prepared, and leave the others absent rather than
-        // failing up front: a resume at Step 7 needs FO4Edit and no Creation Kit, and a resume
-        // at Step 8 will need only the archive tool. An operation that reaches an
-        // absent episode stops through `ports.ck()?`, `ports.fo4edit()?` or `ports.archive()?`,
-        // and `execute_with_ports` reports that stop like any other, since the session log
-        // exists by now.
+        // failing up front: a resume at Step 7 needs FO4Edit and the archive tool but no
+        // Creation Kit, and a resume at Step 8 needs only the archive tool. An operation that
+        // reaches an absent episode stops through `ports.ck()?`, `ports.fo4edit()?` or
+        // `ports.archive()?`, and `execute_with_ports` reports that stop like any other, since
+        // the session log exists by now.
         let ck = self.creation_kit().map(|creation_kit| {
             creation_kit.bind(CkPorts {
                 process: &process,
@@ -408,12 +409,15 @@ mod tests {
         ExitFlag, ProcessCallKind, RecordedProcessCall, RecordingProcessRunner, ScriptedCall,
     };
     use crate::tools::wait::{
-        FO4EDIT_CLOSE_DELAYS_SECS, FO4EDIT_STARTUP_DELAY_SECS, MO2_DELAY_AFTER_CK_SECS,
+        FO4EDIT_CLOSE_DELAYS_SECS, FO4EDIT_STARTUP_DELAY_SECS,
+        MO2_DELAY_AFTER_ARCHIVE2_EXTRACT_SECS, MO2_DELAY_AFTER_CK_SECS,
         MO2_DELAY_BEFORE_FO4EDIT_SECS, RecordingWait,
     };
     use crate::warning::{BuildWarning, LeftoverItems};
+    use crate::workflow::operations::prepare_workflow_without;
     use crate::workflow::operations::recording_adapters::{
-        FaultyFileSpace, ONE_POLL_MERGE_DELAYS, RecordingPrompts, archive2_pack_writing_archive,
+        FaultyFileSpace, ONE_POLL_MERGE_DELAYS, PACKED_ARCHIVE, RecordingPrompts,
+        archive2_extract_writing_precombines, archive2_pack_writing_archive,
         behaving_fo4edit_windows, fo4edit_exiting_when, record_successful_cdx_outputs,
         record_successful_combined_objects_merge, record_successful_compress_outputs,
         record_successful_precombine_outputs, record_successful_previs_merge,
@@ -436,7 +440,8 @@ mod tests {
     }
 
     /// Build a real filesystem fixture with the production toolchain for a fresh run ready:
-    /// Creation Kit for Steps 1 and 4 to 6, FO4Edit for Steps 2 and 7, and Archive2 for Step 3.
+    /// Creation Kit for Steps 1 and 4 to 6, FO4Edit for Steps 2 and 7, and Archive2 for Steps 3
+    /// and 8.
     fn ready_workflow_fixture() -> ReadyWorkflowFixture {
         let directory = tempdir().unwrap();
         let fallout4_directory = directory.path().join("Fallout4");
@@ -495,8 +500,8 @@ mod tests {
         assert_eq!(config.data_dir, PathBuf::from(r"D:\Games\Fallout4\Data"));
     }
 
-    /// The steps a fresh Clean run executes while Step 8 is the only unregistered one.
-    const FRESH_RUN_STEPS: [WorkflowStep; 7] = [
+    /// The steps a fresh Clean run executes: every one, since Step 8 was registered.
+    const FRESH_RUN_STEPS: [WorkflowStep; 8] = [
         WorkflowStep::GeneratePrecombines,
         WorkflowStep::MergePrecombineObjects,
         WorkflowStep::CreateBa2FromPrecombines,
@@ -504,10 +509,18 @@ mod tests {
         WorkflowStep::BuildCdx,
         WorkflowStep::GeneratePrevis,
         WorkflowStep::MergePrevis,
+        WorkflowStep::AddPrevisToArchive,
     ];
 
+    /// Whether `run` was prepared with the diagnostic saying it stops short of its plan.
+    fn stops_short(run: &WorkflowRun) -> bool {
+        run.diagnostics()
+            .iter()
+            .any(|diagnostic| matches!(diagnostic, RunDiagnostic::LaterStepsNotImplemented { .. }))
+    }
+
     #[test]
-    fn prepare_creates_a_run_of_the_registered_prefix() {
+    fn prepare_creates_a_run_of_every_planned_step() {
         let fixture = ready_workflow_fixture();
 
         let run = WorkflowRun::prepare(
@@ -520,15 +533,8 @@ mod tests {
 
         assert_eq!(run.runnable_steps(), &FRESH_RUN_STEPS);
         assert_eq!(run.plan().runnable_steps(), &FRESH_RUN_STEPS);
-        assert!(run.planned_steps().len() > run.runnable_steps().len());
-        assert!(
-            run.diagnostics()
-                .contains(&RunDiagnostic::LaterStepsNotImplemented {
-                    skipped: 1,
-                    planned: 8,
-                    runnable: FRESH_RUN_STEPS.to_vec(),
-                })
-        );
+        assert_eq!(run.planned_steps(), run.runnable_steps());
+        assert!(!stops_short(&run), "diagnostics: {:?}", run.diagnostics());
         assert_eq!(
             run.creation_kit().unwrap().ck_log_path,
             fixture.fallout4_directory.join("CK.log")
@@ -636,9 +642,9 @@ mod tests {
     /// A process runner under which every runnable step of `run` completes, and whose FO4Edit
     /// spawns exit once `fo4edit_exit` is set.
     ///
-    /// One scripted call per runnable step, in plan order, because each step makes exactly one
-    /// tool call when it succeeds; each leaves behind what its step then checks for. Nothing is
-    /// runner-wide, so an unscripted call leaves nothing.
+    /// The calls each step makes when it succeeds, scripted in plan order: one for every step
+    /// but Step 8, whose Archive2 rebuild extracts and then repacks. Each leaves behind what its
+    /// step then checks for. Nothing is runner-wide, so an unscripted call leaves nothing.
     ///
     /// Step 2's merge log is written when the desktop's Module Selection is dismissed (see
     /// [`execute_through`]). Step 7's is written at its spawn instead, because the recording
@@ -651,44 +657,63 @@ mod tests {
         fo4edit_exit: &ExitFlag,
     ) -> RecordingProcessRunner<'a> {
         let config = run.config().clone();
-        let ck_log = run.creation_kit().unwrap().ck_log_path.clone();
+        // Read only when a Creation Kit step is runnable, because a resume past Step 6 prepares
+        // no Creation Kit.
+        let ck_log = run
+            .creation_kit()
+            .map(|creation_kit| creation_kit.ck_log_path.clone());
         let ck_call = |record: fn(&InMemoryFileSpace, &ProjectConfig, &Path)| {
             let config = config.clone();
-            let ck_log = ck_log.clone();
+            let ck_log = ck_log
+                .clone()
+                .expect("a Creation Kit step is runnable only when Creation Kit was prepared");
             ScriptedCall::new().with_effect(files, move |space, _exe, _args| {
                 record(space, &config, &ck_log);
             })
         };
 
-        run.runnable_steps().iter().enumerate().fold(
-            fo4edit_exiting_when(fo4edit_exit),
-            |process, (index, step)| {
-                let call = match step {
-                    WorkflowStep::GeneratePrecombines => {
-                        ck_call(record_successful_precombine_outputs)
-                    }
-                    // Its log comes from the desktop, so the spawn itself leaves nothing.
-                    WorkflowStep::MergePrecombineObjects => return process,
-                    WorkflowStep::CreateBa2FromPrecombines => archive2_pack_writing_archive(files),
-                    WorkflowStep::CompressPsg => ck_call(record_successful_compress_outputs),
-                    WorkflowStep::BuildCdx => ck_call(record_successful_cdx_outputs),
-                    WorkflowStep::GeneratePrevis => ck_call(record_successful_previs_outputs),
-                    WorkflowStep::MergePrevis => {
+        let mut process = fo4edit_exiting_when(fo4edit_exit);
+        let mut index = 0;
+        for step in run.runnable_steps() {
+            let calls = match step {
+                WorkflowStep::GeneratePrecombines => {
+                    vec![ck_call(record_successful_precombine_outputs)]
+                }
+                // Its log comes from the desktop, so the spawn itself leaves nothing.
+                WorkflowStep::MergePrecombineObjects => vec![ScriptedCall::new()],
+                WorkflowStep::CreateBa2FromPrecombines => {
+                    vec![archive2_pack_writing_archive(files)]
+                }
+                WorkflowStep::CompressPsg => vec![ck_call(record_successful_compress_outputs)],
+                WorkflowStep::BuildCdx => vec![ck_call(record_successful_cdx_outputs)],
+                WorkflowStep::GeneratePrevis => vec![ck_call(record_successful_previs_outputs)],
+                WorkflowStep::MergePrevis => {
+                    vec![
                         ScriptedCall::new().with_effect(files, |space, _exe, _args| {
                             record_successful_previs_merge(space);
-                        })
-                    }
-                    WorkflowStep::AddPrevisToArchive => {
-                        unreachable!("Step 8 is not registered, so it is never runnable")
-                    }
-                };
-                process.scripting_call(index, call)
-            },
-        )
+                        }),
+                    ]
+                }
+                WorkflowStep::AddPrevisToArchive => vec![
+                    archive2_extract_writing_precombines(
+                        files,
+                        run.config().fo4edit_data_dir(),
+                        false,
+                    ),
+                    archive2_pack_writing_archive(files),
+                ],
+            };
+            for call in calls {
+                process = process.scripting_call(index, call);
+                index += 1;
+            }
+        }
+        process
     }
 
-    /// A full Clean run dispatches Steps 1 to 7 in plan order, each through its whole episode:
-    /// Creation Kit, FO4Edit, the archive tool, Creation Kit three times, then FO4Edit again.
+    /// A full Clean run dispatches Steps 1 to 8 in plan order, each through its whole episode:
+    /// Creation Kit, FO4Edit, the archive tool, Creation Kit three times, FO4Edit again, then
+    /// the archive tool's extract and repack.
     ///
     /// Artifact assertions belong to the Workflow Operation, Precombine Workspace and Archive
     /// episode tests. The subject
@@ -696,7 +721,7 @@ mod tests {
     /// moments earlier — through the same accessors the assertions used — would only report
     /// confidence this test has not earned.
     #[test]
-    fn a_full_clean_run_dispatches_steps_one_to_seven_in_order() {
+    fn a_full_clean_run_dispatches_steps_one_to_eight_in_order() {
         let fixture = ready_workflow_fixture();
         let run = prepared_run(&fixture);
         let exit = ExitFlag::new();
@@ -721,11 +746,13 @@ mod tests {
             vec![
                 (ck.clone(), ProcessCallKind::Run),
                 (fo4edit.clone(), ProcessCallKind::Spawn),
-                (archive, ProcessCallKind::RunCapturing),
+                (archive.clone(), ProcessCallKind::RunCapturing),
                 (ck.clone(), ProcessCallKind::Run),
                 (ck.clone(), ProcessCallKind::Run),
                 (ck, ProcessCallKind::Run),
                 (fo4edit, ProcessCallKind::Spawn),
+                (archive.clone(), ProcessCallKind::RunCapturing),
+                (archive, ProcessCallKind::RunCapturing),
             ]
         );
         for call in &calls {
@@ -751,6 +778,8 @@ mod tests {
         // Step 7's log is there by its first poll, so it has no poll wait.
         expected_delays.extend([MO2_DELAY_BEFORE_FO4EDIT_SECS, FO4EDIT_STARTUP_DELAY_SECS]);
         expected_delays.extend(FO4EDIT_CLOSE_DELAYS_SECS);
+        // Step 8 with Archive2 waits once, after its extract.
+        expected_delays.push(MO2_DELAY_AFTER_ARCHIVE2_EXTRACT_SECS);
         assert_eq!(execution.delays, expected_delays);
         // A fresh fixture has nothing to clear, so neither resume prompt may fire. This is a
         // dispatch fact about the run, not an artifact check: the simulated tools established
@@ -760,9 +789,9 @@ mod tests {
     }
 
     /// `--resume-from 3` prepares the archive tool and dispatches Step 3 through it first, then
-    /// runs on through Step 7.
+    /// runs on through Step 8.
     ///
-    /// Creation Kit and FO4Edit are prepared too, because Steps 4 to 7 are registered and a
+    /// Creation Kit and FO4Edit are prepared too, because Steps 4 to 8 are registered and a
     /// resume plans every step after the one it names. That Step 3 itself runs with the archive
     /// tool alone is pinned at the operation, with the other episodes absent.
     #[test]
@@ -798,17 +827,36 @@ mod tests {
         assert_eq!(archive.exe, archive2_exe(&fixture.fallout4_directory));
         assert_eq!(archive.session_log, run.log_path());
         let calls = process.calls();
-        assert_eq!(calls.len(), 5);
+        assert_eq!(calls.len(), 7);
         assert_eq!(calls[0].exe, archive.exe);
         assert_eq!(calls[0].kind, ProcessCallKind::RunCapturing);
         assert_eq!(execution.warnings, []);
     }
 
-    /// A Clean run resumed at `resume_from` over an install with FO4Edit and no Creation Kit at
-    /// all, prepared and checked to have resolved FO4Edit alone.
+    /// [`WorkflowRun::prepare`] under production's registration with `unregistered` taken out;
+    /// see [`prepare_workflow_without`].
     ///
-    /// Only a resume at Step 7 plans FO4Edit alone now: since Step 3 was registered, a resume
-    /// at Step 2 runs on through Step 7 and needs every tool.
+    /// For the plans production no longer makes now every step is registered: a run that stops
+    /// short of its plan, a resume at a step with no operation, and a plan with no archive step.
+    fn prepare_without(
+        unregistered: &[WorkflowStep],
+        request: &WorkflowRequest,
+        exe_dir: &Path,
+        probe: &WorkflowToolchainProbe,
+        files: &dyn FileSpace,
+    ) -> Result<WorkflowRun> {
+        let config = request.to_project_config(probe)?;
+        let preparation =
+            prepare_workflow_without(unregistered, config.build_mode, config.resume_from)?;
+        WorkflowRun::prepare_with_registration(config, exe_dir, probe, preparation, files)
+    }
+
+    /// A Clean run resumed at Step 7 over an install with FO4Edit and no Creation Kit at all,
+    /// prepared and checked to have resolved FO4Edit alone.
+    ///
+    /// No production plan resolves FO4Edit alone any more: since Step 8 was registered, every
+    /// resume runs on through it and needs the archive tool. So this run is prepared under a
+    /// registration without Step 8, standing in for a plan with no archive step.
     struct Fo4EditOnlyRun {
         /// The real directory the toolchain probe validated; kept alive for the run's lifetime.
         _directory: TempDir,
@@ -821,8 +869,8 @@ mod tests {
     }
 
     /// Prepare [`Fo4EditOnlyRun`] for a resume at `resume_from`, asserting the run plans
-    /// `resume_from` alone and prepared FO4Edit, logging into its own session log, and no
-    /// Creation Kit.
+    /// `resume_from` alone and prepared FO4Edit, logging into its own session log, and neither
+    /// Creation Kit nor the archive tool.
     ///
     /// The install has no Creation Kit, so a run that still resolved it could not even be
     /// prepared, and one that bound it unconditionally could not get as far as the merge.
@@ -846,10 +894,18 @@ mod tests {
         );
         let files = InMemoryFileSpace::new();
 
-        let run = WorkflowRun::prepare(&request, directory.path(), &probe, &files).unwrap();
+        let run = prepare_without(
+            &[WorkflowStep::AddPrevisToArchive],
+            &request,
+            directory.path(),
+            &probe,
+            &files,
+        )
+        .unwrap();
 
         assert_eq!(run.runnable_steps(), &[resume_from]);
         assert!(run.creation_kit().is_none());
+        assert!(run.archive().is_none());
         let paths = run.fo4edit().unwrap();
         assert_eq!(paths.exe, fo4edit);
         assert_eq!(paths.data_dir_override, None);
@@ -893,14 +949,141 @@ mod tests {
         fixture.files.add_file(fixture.data.join("Previs.esp"));
     }
 
-    /// `--resume-from 7` prepares and executes with FO4Edit alone: Step 8 is not registered
-    /// yet, so Step 7 is the whole runnable plan.
-    #[test]
-    fn a_resume_at_step_seven_prepares_and_executes_with_fo4edit_alone() {
-        let fixture = prepare_fo4edit_only_run(WorkflowStep::MergePrevis);
-        add_previs_outputs(&fixture);
+    /// A Clean run resumed at `resume_from` over an install with Archive2 and no Creation Kit
+    /// at all, and with FO4Edit only when asked for.
+    struct NoCreationKitRun {
+        /// The real directory the toolchain probe validated; kept alive for the run's lifetime.
+        _directory: TempDir,
+        /// `Fallout4\Data`, where the later steps' inputs are seeded.
+        data: PathBuf,
+        /// Where discovery found Archive2.
+        archive2: PathBuf,
+        files: InMemoryFileSpace,
+        run: WorkflowRun,
+    }
 
-        assert_executes_one_fo4edit_merge(&fixture, "Batch_FO4MergePrevisandCleanRefr.pas");
+    /// Prepare [`NoCreationKitRun`] for a resume at `resume_from`, with FO4Edit installed when
+    /// `with_fo4edit` is set, and assert it prepared no Creation Kit.
+    ///
+    /// The install has no Creation Kit, so a run that still resolved it could not even be
+    /// prepared.
+    fn prepare_no_creation_kit_run(
+        resume_from: WorkflowStep,
+        with_fo4edit: bool,
+    ) -> NoCreationKitRun {
+        let directory = tempdir().unwrap();
+        let fallout4_directory = directory.path().join("Fallout4");
+        fs::create_dir_all(&fallout4_directory).unwrap();
+        let archive2 = archive2_exe(&fallout4_directory);
+        let probe = WorkflowToolchainProbe::from_tool_paths(ToolPaths {
+            fallout4_dir: Some(fallout4_directory.clone()),
+            fo4edit: with_fo4edit.then(|| write_fo4edit_install(&directory.path().join("FO4Edit"))),
+            archive2: Some(archive2.clone()),
+            ..ToolPaths::default()
+        })
+        .unwrap();
+        let request = WorkflowRequest::new(
+            BuildMode::Clean,
+            ArchiveTool::Archive2,
+            PluginIdentity::parse("MyMod"),
+            true,
+            Some(resume_from),
+        );
+        let files = InMemoryFileSpace::new();
+
+        let run = WorkflowRun::prepare(&request, directory.path(), &probe, &files).unwrap();
+
+        assert!(run.creation_kit().is_none());
+        NoCreationKitRun {
+            _directory: directory,
+            data: fallout4_directory.join("Data"),
+            archive2,
+            files,
+            run,
+        }
+    }
+
+    /// Seed what Steps 3 and 6 leave behind for Steps 7 and 8: the Plugin Archive, a `.uvd`
+    /// and `Previs.esp`.
+    fn add_archive_and_previs_outputs(fixture: &NoCreationKitRun) {
+        fixture
+            .files
+            .add_file_with_contents(fixture.data.join(ARCHIVE_NAME), "old archive");
+        fixture
+            .files
+            .add_file(fixture.data.join("vis").join("cell").join("cluster.uvd"));
+        fixture.files.add_file(fixture.data.join("Previs.esp"));
+    }
+
+    /// `--resume-from 7` prepares FO4Edit and the archive tool but no Creation Kit, merges
+    /// `Previs.esp`, then adds the previs to the archive.
+    #[test]
+    fn a_resume_at_step_seven_prepares_and_executes_without_creation_kit() {
+        let fixture = prepare_no_creation_kit_run(WorkflowStep::MergePrevis, true);
+        add_archive_and_previs_outputs(&fixture);
+        let exit = ExitFlag::new();
+        let process = completing_process(&fixture.run, &fixture.files, &exit);
+
+        let execution = execute_over_recording_ports(&fixture.run, &fixture.files, &process, &exit);
+
+        execution.result.unwrap();
+        assert_eq!(
+            fixture.run.runnable_steps(),
+            &[WorkflowStep::MergePrevis, WorkflowStep::AddPrevisToArchive]
+        );
+        let fo4edit = fixture.run.fo4edit().unwrap().exe.clone();
+        assert_eq!(
+            process
+                .calls()
+                .iter()
+                .map(|call| (call.exe.clone(), call.kind))
+                .collect::<Vec<_>>(),
+            vec![
+                (fo4edit, ProcessCallKind::Spawn),
+                (fixture.archive2.clone(), ProcessCallKind::RunCapturing),
+                (fixture.archive2.clone(), ProcessCallKind::RunCapturing),
+            ]
+        );
+        assert_eq!(execution.warnings, []);
+    }
+
+    /// `--resume-from 8` prepares and executes with the archive tool alone: the install has
+    /// neither Creation Kit nor FO4Edit, and Step 8 rebuilds the archive with the new previs.
+    #[test]
+    fn a_resume_at_step_eight_prepares_and_executes_with_the_archive_tool_alone() {
+        let fixture = prepare_no_creation_kit_run(WorkflowStep::AddPrevisToArchive, false);
+        add_archive_and_previs_outputs(&fixture);
+        let exit = ExitFlag::new();
+        let process = completing_process(&fixture.run, &fixture.files, &exit);
+
+        let execution = execute_over_recording_ports(&fixture.run, &fixture.files, &process, &exit);
+
+        execution.result.unwrap();
+        assert_eq!(
+            fixture.run.runnable_steps(),
+            &[WorkflowStep::AddPrevisToArchive]
+        );
+        assert!(fixture.run.fo4edit().is_none());
+        let archive = fixture.run.archive().unwrap();
+        assert_eq!(archive.tool, ArchiveTool::Archive2);
+        assert_eq!(archive.exe, fixture.archive2);
+        assert_eq!(archive.session_log, fixture.run.log_path());
+        // The extract, then the repack.
+        let calls = process.calls();
+        assert_eq!(calls.len(), 2);
+        for call in &calls {
+            assert_eq!(call.exe, fixture.archive2);
+            assert_eq!(call.kind, ProcessCallKind::RunCapturing);
+        }
+        assert_eq!(execution.delays, [MO2_DELAY_AFTER_ARCHIVE2_EXTRACT_SECS]);
+        assert_eq!(execution.warnings, []);
+        assert_eq!(
+            fixture
+                .files
+                .read_lossy(&fixture.data.join(ARCHIVE_NAME))
+                .unwrap(),
+            PACKED_ARCHIVE
+        );
     }
 
     /// Prepare the fixture's Clean Step 1 request into a ready Workflow Run.
@@ -1014,6 +1197,39 @@ mod tests {
         ));
     }
 
+    /// Every Build Mode runs its whole plan in production, so none is prepared with the
+    /// diagnostic saying it stops short.
+    #[test]
+    fn prepare_runs_the_whole_plan_in_every_build_mode() {
+        for build_mode in [BuildMode::Clean, BuildMode::Filtered, BuildMode::Xbox] {
+            let fixture = ready_workflow_fixture();
+            let mut request = fixture.request.clone();
+            request.build_mode = build_mode;
+
+            let run = WorkflowRun::prepare(
+                &request,
+                fixture.directory.path(),
+                &fixture.probe,
+                &fixture.files,
+            )
+            .unwrap();
+
+            assert_eq!(
+                run.runnable_steps(),
+                run.planned_steps(),
+                "build mode: {build_mode:?}"
+            );
+            assert!(
+                !stops_short(&run),
+                "build mode: {build_mode:?}, diagnostics: {:?}",
+                run.diagnostics()
+            );
+        }
+    }
+
+    /// A run that stops short of its plan says by how much, in each Build Mode. Production
+    /// runs every planned step, so Step 8 is taken out of the registration to have a run that
+    /// stops short.
     #[test]
     fn prepare_preserves_filtered_and_xbox_partial_diagnostic_counts() {
         // Filtered has no Steps 4 and 5; Xbox plans every step, as Clean does.
@@ -1026,7 +1242,7 @@ mod tests {
         ];
         let cases = [
             (BuildMode::Filtered, 1, 6, filtered_runnable),
-            (BuildMode::Xbox, 1, 8, FRESH_RUN_STEPS.to_vec()),
+            (BuildMode::Xbox, 1, 8, FRESH_RUN_STEPS[..7].to_vec()),
         ];
 
         for (build_mode, skipped, planned, runnable) in cases {
@@ -1034,7 +1250,8 @@ mod tests {
             let mut request = fixture.request.clone();
             request.build_mode = build_mode;
 
-            let run = WorkflowRun::prepare(
+            let run = prepare_without(
+                &[WorkflowStep::AddPrevisToArchive],
                 &request,
                 fixture.directory.path(),
                 &fixture.probe,
@@ -1055,15 +1272,16 @@ mod tests {
         }
     }
 
-    /// A Clean resume at 4 runs Steps 4 to 7, so the diagnostic must say that rather than
-    /// claim Step 1 is what runs.
+    /// A Clean resume at 4 under a registration without Step 8 runs Steps 4 to 7, so the
+    /// diagnostic must say that rather than claim Step 1 is what runs.
     #[test]
     fn a_resumed_partial_run_names_the_steps_it_will_execute() {
         let fixture = ready_workflow_fixture();
         let mut request = fixture.request.clone();
         request.resume_from = Some(WorkflowStep::CompressPsg);
 
-        let run = WorkflowRun::prepare(
+        let run = prepare_without(
+            &[WorkflowStep::AddPrevisToArchive],
             &request,
             fixture.directory.path(),
             &fixture.probe,
@@ -1090,6 +1308,8 @@ mod tests {
         );
     }
 
+    /// A resume at a step with no operation is refused before any tool is looked for. Every
+    /// step is registered in production, so Step 8 is taken out to have one that is not.
     #[test]
     fn prepare_rejects_unavailable_explicit_resume_before_toolchain_readiness() {
         let fixture = ready_workflow_fixture();
@@ -1101,9 +1321,14 @@ mod tests {
         })
         .unwrap();
 
-        let error =
-            WorkflowRun::prepare(&request, fixture.directory.path(), &probe, &fixture.files)
-                .unwrap_err();
+        let error = prepare_without(
+            &[WorkflowStep::AddPrevisToArchive],
+            &request,
+            fixture.directory.path(),
+            &probe,
+            &fixture.files,
+        )
+        .unwrap_err();
 
         assert!(matches!(error, Error::StepNotImplemented(8)));
     }
@@ -1166,7 +1391,7 @@ mod tests {
         /// A fresh Clean run, whose Step 1 stops before any archive step is reached.
         ///
         /// That the restore also runs when no archive tool was prepared at all is pinned by
-        /// [`the_restore_runs_on_a_resume_at_step_seven`].
+        /// [`the_restore_runs_on_a_plan_with_no_archive_step`].
         fn new() -> Self {
             let fixture = ready_workflow_fixture();
             let run = prepared_run(&fixture);
@@ -1659,10 +1884,10 @@ mod tests {
     }
 
     /// The restore runs whatever the resume point, and even when no archive tool was prepared:
-    /// a resume at Step 7, which plans no archive step and prepares FO4Edit alone, clears a
-    /// leftover before its merge.
+    /// a resume at Step 7 under a registration without Step 8, which plans no archive step and
+    /// prepares FO4Edit alone, clears a leftover before its merge.
     #[test]
-    fn the_restore_runs_on_a_resume_at_step_seven() {
+    fn the_restore_runs_on_a_plan_with_no_archive_step() {
         let fixture = prepare_fo4edit_only_run(WorkflowStep::MergePrevis);
         assert!(fixture.run.archive().is_none());
         let leftover = fixture
