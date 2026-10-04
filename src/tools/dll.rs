@@ -219,6 +219,7 @@ mod tests {
         assert!(!files.exists(&disabled));
     }
 
+    /// A directory at the original path means no adoption: the orphan stays where it is.
     // `SystemFileSpace`, because the case needs a directory and `InMemoryFileSpace` has none.
     #[test]
     fn a_directory_at_the_original_path_blocks_adoption() {

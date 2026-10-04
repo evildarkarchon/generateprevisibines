@@ -351,7 +351,7 @@ fn qualifier_args(qualifiers: &str) -> impl Iterator<Item = &str> {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::path::Path;
     use std::process::ExitStatus;
 
@@ -1006,7 +1006,7 @@ mod tests {
     fn an_orphaned_dll_stays_disabled_during_the_run_and_is_restored_after() {
         let files = InMemoryFileSpace::new();
         files.add_file_with_contents(disabled_enb_dll(), "enb");
-        let present_at_spawn = std::cell::Cell::new(None);
+        let present_at_spawn = Cell::new(None);
         let wait = RecordingWait::new();
         let clock = scripted_clock();
         let process = RecordingProcessRunner::new().with_effects(&files, |space| {
