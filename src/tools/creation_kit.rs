@@ -351,7 +351,7 @@ fn qualifier_args(qualifiers: &str) -> impl Iterator<Item = &str> {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::path::Path;
     use std::process::ExitStatus;
 
@@ -998,6 +998,29 @@ mod tests {
         assert_eq!(files.read_lossy(&enb_dll()).unwrap(), "enb");
         // A tool that never started has nothing for MO2 to sync.
         assert_eq!(wait.delays(), Vec::<u64>::new());
+    }
+
+    /// A DLL orphaned by a crashed earlier run stays disabled while Creation Kit runs, and the
+    /// episode's restore puts it back afterwards.
+    #[test]
+    fn an_orphaned_dll_stays_disabled_during_the_run_and_is_restored_after() {
+        let files = InMemoryFileSpace::new();
+        files.add_file_with_contents(disabled_enb_dll(), "enb");
+        let present_at_spawn = Cell::new(None);
+        let wait = RecordingWait::new();
+        let clock = scripted_clock();
+        let process = RecordingProcessRunner::new().with_effects(&files, |space| {
+            present_at_spawn.set(Some(space.exists(&enb_dll())));
+            space.add_file_with_contents(ck_log(), QUIET_CK_LOG);
+        });
+
+        ops(&process, &wait, &clock, &files)
+            .generate_precombined("MyMod.esp", BuildMode::Clean)
+            .unwrap();
+
+        assert_eq!(present_at_spawn.get(), Some(false));
+        assert_eq!(files.read_lossy(&enb_dll()).unwrap(), "enb");
+        assert!(!files.exists(&disabled_enb_dll()));
     }
 
     /// A Creation Kit that never launches still leaves its record in the session log.

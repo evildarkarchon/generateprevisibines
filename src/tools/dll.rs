@@ -40,11 +40,24 @@ impl<'a> DllGuard<'a> {
     /// way for the duration of the run — see `docs/workarounds.md` §3. This is a required
     /// workaround, not an optimization to remove.
     ///
-    /// Renames every DLL in [`DLL_NAMES`] that exists under `fallout4_dir` to
-    /// `<name>-PJMdisabled`, recording each move for restore on drop. Returns
-    /// [`crate::error::Error::Io`] when clearing the target path or the rename itself fails;
-    /// the partial renames made so far are rolled back by the guard's own `Drop`, since the
-    /// half-built guard is dropped as the error propagates.
+    /// Each name in [`DLL_NAMES`] under `fallout4_dir` is handled in one of three ways, and
+    /// every pair recorded is restored on drop:
+    ///
+    /// - **The original is a file:** it is renamed to `<name>-PJMdisabled`, replacing any
+    ///   leftover already there.
+    /// - **Otherwise, `<name>-PJMdisabled` is a file and nothing exists at the original path:**
+    ///   the orphan is **adopted**. It is recorded as one of the guard's own renames without
+    ///   being moved, so this Creation Kit run's restore recovers it, and one console info
+    ///   line says so. An unpaired `*-PJMdisabled` can be treated as a leftover of a run that
+    ///   has ended only because the installation lock allows one run per installation
+    ///   (`docs/adr/0005-one-workflow-run-per-installation.md`); without it, this guard could
+    ///   adopt, and restore, DLLs that a live run had just disabled.
+    /// - **Otherwise:** the name is skipped.
+    ///
+    /// Returns [`crate::error::Error::Io`] when clearing the target path or a rename fails;
+    /// the pairs recorded so far, adopted ones included, are rolled back by the guard's own
+    /// `Drop`, since the half-built guard is dropped as the error propagates. Adoption itself
+    /// performs no file operation, so it adds no error path.
     pub(crate) fn disable(files: &'a dyn FileSpace, fallout4_dir: &Path) -> Result<Self> {
         let mut guard = Self {
             files,
@@ -53,23 +66,35 @@ impl<'a> DllGuard<'a> {
 
         for name in DLL_NAMES {
             let original = fallout4_dir.join(name);
-            if !files.is_file(&original) {
-                continue;
-            }
-
             let disabled_name = format!("{name}{DISABLED_SUFFIX}");
             let disabled = fallout4_dir.join(disabled_name);
 
-            // `exists`, not `is_file` — see the distinction on [`FileSpace::exists`]. Here the
-            // outcome would survive the swap (the failure would just move from `remove_file`
-            // to `rename`), but there is no reason to accept a different failure mechanism
-            // when the question being asked is "is anything on this path?".
-            if files.exists(&disabled) {
-                files.remove_file(&disabled)?;
-            }
+            if files.is_file(&original) {
+                // `exists`, not `is_file` — see the distinction on [`FileSpace::exists`]. Here
+                // the outcome would survive the swap (the failure would just move from
+                // `remove_file` to `rename`), but there is no reason to accept a different
+                // failure mechanism when the question being asked is "is anything on this path?".
+                if files.exists(&disabled) {
+                    files.remove_file(&disabled)?;
+                }
 
-            files.rename(&original, &disabled)?;
-            guard.pairs.push((disabled, original));
+                files.rename(&original, &disabled)?;
+                guard.pairs.push((disabled, original));
+            } else if files.is_file(&disabled) && !files.exists(&original) {
+                // `exists`, not `is_file`, on the original: it is the question `Drop` asks
+                // before restoring. A directory there would make `Drop` skip the pair with a
+                // warning, so adopting it would only buy a misleading restore warning.
+                tracing::info!(
+                    "{} was left disabled by an earlier run; it will be restored after this \
+                     Creation Kit run",
+                    disabled.display()
+                );
+                // Recorded alongside the real renames, so if a later rename in this loop fails,
+                // the half-built guard's `Drop` restores the orphan too. That is the recovery
+                // the user wants anyway: Creation Kit is not launched, so nothing needs the DLL
+                // kept out of the way.
+                guard.pairs.push((disabled, original));
+            }
         }
 
         Ok(guard)
@@ -148,6 +173,69 @@ mod tests {
         assert_eq!(files.read_lossy(&dll).unwrap(), "x");
     }
 
+    /// An orphan left by a crashed run is adopted: recorded, not renamed, and restored on drop.
+    #[test]
+    fn adopts_an_orphaned_disabled_dll_and_restores_it_on_drop() {
+        let files = InMemoryFileSpace::new();
+        let fo4 = Path::new("Fallout 4");
+        let dll = fo4.join("d3d11.dll");
+        let disabled = fo4.join("d3d11.dll-PJMdisabled");
+        files.add_file_with_contents(disabled.clone(), "orphan");
+
+        {
+            let guard = DllGuard::disable(&files, fo4).unwrap();
+            assert_eq!(guard.rename_pairs(), [(disabled.clone(), dll.clone())]);
+            // Adoption moves nothing: while the guard lives, the DLL stays out of CK's way.
+            assert!(!files.exists(&dll));
+            assert_eq!(files.read_lossy(&disabled).unwrap(), "orphan");
+        }
+
+        assert_eq!(files.read_lossy(&dll).unwrap(), "orphan");
+        assert!(!files.exists(&disabled));
+    }
+
+    /// A leftover beside its original is replaced, as before adoption existed.
+    #[test]
+    fn a_leftover_beside_its_original_is_replaced() {
+        let files = InMemoryFileSpace::new();
+        let fo4 = Path::new("Fallout 4");
+        let dll = fo4.join("d3d11.dll");
+        let disabled = fo4.join("d3d11.dll-PJMdisabled");
+        files.add_file_with_contents(dll.clone(), "current");
+        files.add_file_with_contents(disabled.clone(), "leftover");
+
+        {
+            let guard = DllGuard::disable(&files, fo4).unwrap();
+            assert_eq!(guard.rename_pairs(), [(disabled.clone(), dll.clone())]);
+            assert!(!files.exists(&dll));
+            // The leftover's bytes are gone; the disabled path now holds the current DLL.
+            assert_eq!(files.read_lossy(&disabled).unwrap(), "current");
+        }
+
+        assert_eq!(files.read_lossy(&dll).unwrap(), "current");
+        assert!(!files.exists(&disabled));
+    }
+
+    /// A directory at the original path means no adoption: the orphan stays where it is.
+    // `SystemFileSpace`, because the case needs a directory and `InMemoryFileSpace` has none.
+    #[test]
+    fn a_directory_at_the_original_path_blocks_adoption() {
+        let dir = tempdir().unwrap();
+        let fo4 = dir.path();
+        let original = fo4.join("d3d11.dll");
+        let disabled = fo4.join("d3d11.dll-PJMdisabled");
+        fs::create_dir(&original).unwrap();
+        fs::write(&disabled, b"orphan").unwrap();
+
+        {
+            let guard = DllGuard::disable(&SystemFileSpace, fo4).unwrap();
+            assert_eq!(guard.rename_pairs(), []);
+        }
+
+        assert!(original.is_dir());
+        assert_eq!(fs::read(&disabled).unwrap(), b"orphan");
+    }
+
     // Stays on `SystemFileSpace`: the failure is forced by putting a *directory* where the
     // rename target goes, and `InMemoryFileSpace` is a flat map with no directory concept by
     // design. File-versus-directory discrimination is verified where it actually lives.
@@ -171,5 +259,24 @@ mod tests {
         assert!(failing.is_file());
         assert!(!fo4.join("d3d11.dll-PJMdisabled").exists());
         assert!(!fo4.join("d3d10.dll-PJMdisabled").exists());
+    }
+
+    /// A half-built guard rolls back adopted orphans too, because CK is never launched.
+    #[test]
+    fn restores_adopted_orphans_when_disable_fails() {
+        let dir = tempdir().unwrap();
+        let fo4 = dir.path();
+        let adopted = fo4.join("d3d11.dll");
+        let failing = fo4.join("d3d9.dll");
+        fs::write(fo4.join("d3d11.dll-PJMdisabled"), b"orphan").unwrap();
+        fs::write(&failing, b"third").unwrap();
+        fs::create_dir(fo4.join("d3d9.dll-PJMdisabled")).unwrap();
+
+        let err = DllGuard::disable(&SystemFileSpace, fo4).unwrap_err();
+
+        assert!(matches!(err, crate::error::Error::Io(_)));
+        assert_eq!(fs::read(&adopted).unwrap(), b"orphan");
+        assert!(!fo4.join("d3d11.dll-PJMdisabled").exists());
+        assert!(failing.is_file());
     }
 }

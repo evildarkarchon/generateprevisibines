@@ -52,6 +52,10 @@ moved.
 - Must restore after CK exits. Restoration is **not** inside `:RunCK`; it happens once at
   `:Done` (362-367), which every exit path reaching `:Done` shares — see
   [episodes.md](episodes.md) § *Creation Kit* for the paths it does not cover
+- The port restores after each CK run instead (`DllGuard`), and **adopts** orphans a crashed
+  run left behind: a `*-PJMdisabled` with nothing at its original path is recorded as one of
+  the guard's own renames, so the next CK run restores it (decided on #30; see
+  [episodes.md](episodes.md) § *Creation Kit*)
 - **Preserve this exactly**
 
 ## 4. Archive2 Extract-Repack (batch lines 413-419, 437-444)
