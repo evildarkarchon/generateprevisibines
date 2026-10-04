@@ -69,35 +69,32 @@ impl<'a> DllGuard<'a> {
             let disabled_name = format!("{name}{DISABLED_SUFFIX}");
             let disabled = fallout4_dir.join(disabled_name);
 
-            if !files.is_file(&original) {
+            if files.is_file(&original) {
+                // `exists`, not `is_file` — see the distinction on [`FileSpace::exists`]. Here
+                // the outcome would survive the swap (the failure would just move from
+                // `remove_file` to `rename`), but there is no reason to accept a different
+                // failure mechanism when the question being asked is "is anything on this path?".
+                if files.exists(&disabled) {
+                    files.remove_file(&disabled)?;
+                }
+
+                files.rename(&original, &disabled)?;
+                guard.pairs.push((disabled, original));
+            } else if files.is_file(&disabled) && !files.exists(&original) {
                 // `exists`, not `is_file`, on the original: it is the question `Drop` asks
                 // before restoring. A directory there would make `Drop` skip the pair with a
                 // warning, so adopting it would only buy a misleading restore warning.
-                if files.is_file(&disabled) && !files.exists(&original) {
-                    tracing::info!(
-                        "{} was left disabled by an earlier run; it will be restored after this \
-                         Creation Kit run",
-                        disabled.display()
-                    );
-                    // Recorded alongside the real renames, so if a later rename in this loop
-                    // fails, the half-built guard's `Drop` restores the orphan too. That is the
-                    // recovery the user wants anyway: Creation Kit is not launched, so nothing
-                    // needs the DLL kept out of the way.
-                    guard.pairs.push((disabled, original));
-                }
-                continue;
+                tracing::info!(
+                    "{} was left disabled by an earlier run; it will be restored after this \
+                     Creation Kit run",
+                    disabled.display()
+                );
+                // Recorded alongside the real renames, so if a later rename in this loop fails,
+                // the half-built guard's `Drop` restores the orphan too. That is the recovery
+                // the user wants anyway: Creation Kit is not launched, so nothing needs the DLL
+                // kept out of the way.
+                guard.pairs.push((disabled, original));
             }
-
-            // `exists`, not `is_file` — see the distinction on [`FileSpace::exists`]. Here the
-            // outcome would survive the swap (the failure would just move from `remove_file`
-            // to `rename`), but there is no reason to accept a different failure mechanism
-            // when the question being asked is "is anything on this path?".
-            if files.exists(&disabled) {
-                files.remove_file(&disabled)?;
-            }
-
-            files.rename(&original, &disabled)?;
-            guard.pairs.push((disabled, original));
         }
 
         Ok(guard)
