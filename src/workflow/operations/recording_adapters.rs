@@ -79,8 +79,18 @@ pub(crate) const FO4EDIT_MODULE_SELECTION: WindowHandle =
 #[derive(Debug)]
 pub(crate) struct RecordingPrompts {
     asked: RefCell<Vec<Confirmation>>,
-    clear_precombined_answer: bool,
-    clear_vis_answer: bool,
+    clear_precombined_answer: ScriptedAnswer,
+    clear_vis_answer: ScriptedAnswer,
+    remove_working_files_answer: ScriptedAnswer,
+}
+
+/// How a [`RecordingPrompts`] answers one kind of question.
+#[derive(Debug, Clone, Copy)]
+enum ScriptedAnswer {
+    Consent,
+    Refuse,
+    /// Fail with [`crate::error::Error::Prompt`], as a console that cannot be read would.
+    Fail,
 }
 
 impl Default for RecordingPrompts {
@@ -88,8 +98,9 @@ impl Default for RecordingPrompts {
         Self {
             asked: RefCell::new(Vec::new()),
             // Consent by default, so a refusal is something a test has to ask for by name.
-            clear_precombined_answer: true,
-            clear_vis_answer: true,
+            clear_precombined_answer: ScriptedAnswer::Consent,
+            clear_vis_answer: ScriptedAnswer::Consent,
+            remove_working_files_answer: ScriptedAnswer::Consent,
         }
     }
 }
@@ -104,14 +115,29 @@ impl RecordingPrompts {
     /// Answer [`Confirmation::ClearPrecombined`] with a refusal instead of consent.
     #[must_use]
     pub(crate) const fn refusing_clear_precombined(mut self) -> Self {
-        self.clear_precombined_answer = false;
+        self.clear_precombined_answer = ScriptedAnswer::Refuse;
         self
     }
 
     /// Answer [`Confirmation::ClearVis`] with a refusal instead of consent.
     #[must_use]
     pub(crate) const fn refusing_clear_vis(mut self) -> Self {
-        self.clear_vis_answer = false;
+        self.clear_vis_answer = ScriptedAnswer::Refuse;
+        self
+    }
+
+    /// Answer [`Confirmation::RemoveWorkingFiles`] with a refusal instead of consent.
+    #[must_use]
+    pub(crate) const fn refusing_remove_working_files(mut self) -> Self {
+        self.remove_working_files_answer = ScriptedAnswer::Refuse;
+        self
+    }
+
+    /// Fail [`Confirmation::RemoveWorkingFiles`] with [`crate::error::Error::Prompt`], as a run
+    /// with no console to read from would. The question is still recorded as asked.
+    #[must_use]
+    pub(crate) const fn failing_remove_working_files(mut self) -> Self {
+        self.remove_working_files_answer = ScriptedAnswer::Fail;
         self
     }
 
@@ -125,10 +151,22 @@ impl RecordingPrompts {
 impl Prompts for RecordingPrompts {
     fn confirm(&self, confirmation: &Confirmation) -> Result<bool> {
         self.asked.borrow_mut().push(confirmation.clone());
-        Ok(match confirmation {
+        let answer = match confirmation {
             Confirmation::ClearPrecombined(_) => self.clear_precombined_answer,
             Confirmation::ClearVis(_) => self.clear_vis_answer,
-        })
+            Confirmation::RemoveWorkingFiles => self.remove_working_files_answer,
+        };
+        match answer {
+            ScriptedAnswer::Consent => Ok(true),
+            ScriptedAnswer::Refuse => Ok(false),
+            ScriptedAnswer::Fail => {
+                let no_console = std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    "no console to read from",
+                );
+                Err(dialoguer::Error::from(no_console).into())
+            }
+        }
     }
 }
 

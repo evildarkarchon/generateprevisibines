@@ -80,6 +80,16 @@ impl WorkflowPlan {
     pub fn skipped_unrunnable_count(&self) -> usize {
         self.planned_steps.len() - self.runnable_steps.len()
     }
+
+    /// Whether every planned step has a registered Workflow Operation, so a run that completes
+    /// has built every Patch File and earns Finish.
+    ///
+    /// False on a partial rollout, which stops short of its plan: announcing that run complete,
+    /// or deleting its Working Files, would claim a build that never happened.
+    #[must_use]
+    pub fn runs_every_planned_step(&self) -> bool {
+        self.skipped_unrunnable_count() == 0
+    }
 }
 
 /// Name a list of Workflow Steps for the console: `Step 4`, `Steps 4 and 5`, `Steps 1, 2 and 3`.
@@ -162,6 +172,25 @@ mod tests {
                 WorkflowStep::AddPrevisToArchive,
             ]
         );
+    }
+
+    #[test]
+    fn a_plan_with_every_step_registered_runs_every_planned_step() {
+        for build_mode in [BuildMode::Clean, BuildMode::Filtered, BuildMode::Xbox] {
+            let plan = WorkflowPlan::resolve(build_mode, None, |_| true).unwrap();
+
+            assert!(plan.runs_every_planned_step(), "build mode: {build_mode:?}");
+        }
+    }
+
+    #[test]
+    fn a_plan_with_an_unregistered_step_does_not_run_every_planned_step() {
+        let plan = WorkflowPlan::resolve(BuildMode::Clean, None, |step| {
+            step != WorkflowStep::AddPrevisToArchive
+        })
+        .unwrap();
+
+        assert!(!plan.runs_every_planned_step());
     }
 
     #[test]

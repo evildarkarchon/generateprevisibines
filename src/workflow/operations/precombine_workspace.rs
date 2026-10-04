@@ -134,7 +134,8 @@ impl<'a> PrecombineWorkspace<'a> {
         Ok(())
     }
 
-    fn combined_objects_path(&self) -> PathBuf {
+    /// `Data\CombinedObjects.esp`, which Step 1 writes, Step 2 merges and Finish removes.
+    pub(super) fn combined_objects_path(&self) -> PathBuf {
         self.config.fo4edit_data_dir().join("CombinedObjects.esp")
     }
 

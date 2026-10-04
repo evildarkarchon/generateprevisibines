@@ -64,7 +64,7 @@ pub(super) fn run(run: &WorkflowRun, ports: &OperationPorts<'_>) -> Result<()> {
 /// `<base name>.cdx`, the index `BuildCDX` writes into `Data`.
 ///
 /// A bare name, because that is what the batch's missing-output line prints (`%~2`, 471).
-fn cdx_name(config: &ProjectConfig) -> String {
+pub(super) fn cdx_name(config: &ProjectConfig) -> String {
     format!("{}.cdx", config.plugin.base_name)
 }
 
