@@ -70,6 +70,12 @@ pub(crate) enum BuildWarning {
     /// As [`Self::ArchiveWorkSetAside`], but the rename failed too, so the folder at `path` was
     /// left where it is. It is never removed.
     ArchiveWorkNotRestored { path: PathBuf, items: LeftoverItems },
+    /// Finish could not delete the Working File at `path` (`CombinedObjects.esp` or
+    /// `Previs.esp`, batch 357–358).
+    ///
+    /// A divergence: the batch's `DEL` failure means nothing to its exit code. A warning rather
+    /// than a stop because every Patch File is already built when Finish runs.
+    WorkingFileNotRemoved { path: PathBuf },
 }
 
 /// What a leftover archive work folder still holds when the run-start restore gives up on it.
@@ -101,7 +107,7 @@ impl fmt::Display for LeftoverItems {
 impl fmt::Display for BuildWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ArchiveCleanupFailed { path } => {
+            Self::ArchiveCleanupFailed { path } | Self::WorkingFileNotRemoved { path } => {
                 write!(f, "Could not remove {}. Remove it by hand.", path.display())
             }
             Self::ArchiveWorkFolderNotCleared { path } => write!(
@@ -172,7 +178,7 @@ impl<'a> BuildWarnings<'a> {
     ///
     /// Kept *first*, before anything that can fail, so a warning is never lost to a failed
     /// append: the caller sees the `Io` error, but anything reading [`Self::raised`] afterwards
-    /// (tests, and later Finish) still sees every warning that was raised.
+    /// (the tests) still sees every warning that was raised.
     ///
     /// Returns [`crate::error::Error::Io`] when the session log cannot be extended, matching
     /// every other session-log append a Creation Kit episode makes.
@@ -184,12 +190,13 @@ impl<'a> BuildWarnings<'a> {
     }
 
     /// Every warning raised so far, in the order it was raised.
-    // Read only by tests until the Finish epilogue lands, which reports on the run's warnings.
+    // Read only by tests: each warning is reported as it is raised, and Finish raises its own
+    // rather than summarising the run's, so no production code reads them back.
     #[cfg_attr(
         not(test),
         allow(
             dead_code,
-            reason = "the Finish epilogue that reads the raised warnings is not ported yet"
+            reason = "warnings are reported as they are raised; only tests read them back"
         )
     )]
     #[must_use]
@@ -277,6 +284,17 @@ mod tests {
                 "Could not remove leftover archive work folder {}. Remove it by hand.",
                 path.display()
             )
+        );
+    }
+
+    /// The same shape as `ArchiveCleanupFailed`: the Working File named, and what to do.
+    #[test]
+    fn the_working_file_warning_names_the_file_to_remove_by_hand() {
+        let path = PathBuf::from(r"C:\Fallout4\Data\CombinedObjects.esp");
+
+        assert_eq!(
+            BuildWarning::WorkingFileNotRemoved { path }.to_string(),
+            r"Could not remove C:\Fallout4\Data\CombinedObjects.esp. Remove it by hand."
         );
     }
 

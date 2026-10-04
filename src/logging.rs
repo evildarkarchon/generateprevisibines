@@ -295,6 +295,16 @@ pub(crate) fn build_failed_line(plugin_base_name: &str) -> String {
     format!("Build of Patch {plugin_base_name} failed.")
 }
 
+/// The line Finish opens with on the console and appends to the session log (batch `:Fin`,
+/// 338–339).
+///
+/// `plugin_base_name` is the batch's `%PluginName_%`, as for [`build_failed_line`]. The batch's
+/// trailing space before `>>` is dropped.
+#[must_use]
+pub(crate) fn build_complete_line(plugin_base_name: &str) -> String {
+    format!("Build of Patch {plugin_base_name} Complete.")
+}
+
 /// The last line of every Workflow Run that got as far as executing (batch line 368).
 ///
 /// Console-only, as in the batch: the session log has no use for its own path.

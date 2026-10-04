@@ -19,12 +19,15 @@ mod add_previs_to_archive;
 mod build_cdx;
 mod compress_psg;
 mod create_ba2_from_precombines;
+mod finish;
 mod generate_precombines;
 mod generate_previs;
 mod merge_combined_objects;
 mod merge_previs;
 mod precombine_workspace;
 mod previs_workspace;
+
+pub(crate) use finish::finish;
 
 /// The shared recording adapters, crate-visible so the Workflow Run tests reach them too.
 #[cfg(test)]
@@ -341,13 +344,18 @@ impl<'a> OperationPorts<'a> {
 ///
 /// Each variant names *what* is being confirmed and carries the artifact it is about; the
 /// console wording and default for each live in [`crate::interactive`], so an operation states
-/// the decision it needs and never phrases the question. Finish adds `RemoveWorkingFiles`.
+/// the decision it needs and never phrases the question. Finish asks one too,
+/// `RemoveWorkingFiles`, through the same ports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Confirmation {
     /// Clear existing precombined meshes before Step 1 regenerates them (`:RePrecomb`).
     ClearPrecombined(PathBuf),
     /// Clear a non-empty `Data\vis` before Step 6 regenerates previs (`:RePreVis`, batch 246).
     ClearVis(PathBuf),
+    /// Delete the Working Files, `CombinedObjects.esp` and `Previs.esp`, at Finish (batch 355).
+    ///
+    /// Carries no path, because the batch's question names none.
+    RemoveWorkingFiles,
 }
 
 /// The operator confirmations a Workflow Operation asks for.
@@ -377,6 +385,7 @@ impl Prompts for InteractivePrompts {
             }
             // The batch's question names `Data\vis` itself (246), so the path is not shown.
             Confirmation::ClearVis(_) => interactive::confirm_clear_vis(),
+            Confirmation::RemoveWorkingFiles => interactive::confirm_remove_working_files(),
         }
     }
 }
@@ -390,12 +399,12 @@ mod tests {
 
     use super::recording_adapters::{
         COMPLETED_COMBINED_OBJECTS_MERGE_LOG, COMPLETED_PREVIS_MERGE_LOG, FO4EDIT_MAIN_FORM,
-        FO4EDIT_MODULE_SELECTION, ONE_POLL_MERGE_DELAYS, PACKED_ARCHIVE, QUIET_CK_LOG,
-        RecordingPrompts, archive2_extract_writing_precombines, archive2_pack_writing_archive,
-        behaving_fo4edit_windows, fo4edit_exiting_when, record_successful_cdx_outputs,
-        record_successful_combined_objects_merge, record_successful_compress_outputs,
-        record_successful_precombine_outputs, record_successful_previs_merge,
-        record_successful_previs_outputs,
+        FO4EDIT_MODULE_SELECTION, FaultyFileSpace, ONE_POLL_MERGE_DELAYS, PACKED_ARCHIVE,
+        QUIET_CK_LOG, RecordingPrompts, archive2_extract_writing_precombines,
+        archive2_pack_writing_archive, behaving_fo4edit_windows, fo4edit_exiting_when,
+        record_successful_cdx_outputs, record_successful_combined_objects_merge,
+        record_successful_compress_outputs, record_successful_precombine_outputs,
+        record_successful_previs_merge, record_successful_previs_outputs,
     };
     use super::*;
     use crate::config::{ArchiveTool, BuildMode, PluginIdentity};
@@ -3309,5 +3318,202 @@ mod tests {
             "error: {error:?}"
         );
         assert_eq!(warnings.raised(), []);
+    }
+
+    // Finish. Driven with every tool episode absent, because Finish launches nothing: a Finish
+    // that reached for one would have no episode to reach.
+
+    /// `Data\CombinedObjects.esp`, spelled out rather than asked of the Precombine Workspace.
+    fn combined_objects(fixture: &OperationFixture) -> PathBuf {
+        fixture
+            .run
+            .config()
+            .fallout4_dir
+            .join("Data")
+            .join("CombinedObjects.esp")
+    }
+
+    /// A completed Clean run's fixture, interactive or not, with both Working Files in `Data`.
+    fn finish_fixture(non_interactive: bool) -> OperationFixture {
+        let fixture = step_one_fixture(BuildMode::Clean, non_interactive);
+        fixture.files.add_file(combined_objects(&fixture));
+        fixture.files.add_file(previs_plugin(&fixture));
+        fixture
+    }
+
+    /// Run Finish over `fixture`'s run with `files` as its space, and return every Build Warning
+    /// it raised.
+    ///
+    /// `files` is the fixture's own space, or a [`FaultyFileSpace`] over it when a test needs a
+    /// delete refused.
+    fn finish_through(fixture: &OperationFixture, files: &dyn FileSpace) -> Vec<BuildWarning> {
+        let warnings = BuildWarnings::new(fixture.run.log_path().to_path_buf(), files);
+        let ports = OperationPorts {
+            ck: None,
+            fo4edit: None,
+            archive: None,
+            prompts: &fixture.prompts,
+            files,
+            warnings: &warnings,
+        };
+
+        finish::finish(&fixture.run, &ports);
+
+        warnings.raised()
+    }
+
+    /// The session log of `fixture`'s run as it reads now.
+    fn session_log(fixture: &OperationFixture) -> String {
+        fixture.files.read_lossy(fixture.run.log_path()).unwrap()
+    }
+
+    /// Finish puts exactly the Complete line in the session log. The manifest is console-only,
+    /// and it is not checked on disk: none of the Patch Files exist here, and nothing is raised.
+    #[test]
+    fn finish_appends_only_the_complete_line_to_the_session_log() {
+        let fixture = step_one_fixture(BuildMode::Clean, true);
+        let before = session_log(&fixture);
+
+        let warnings = finish_through(&fixture, &fixture.files);
+
+        assert_eq!(
+            session_log(&fixture),
+            format!("{before}Build of Patch MyMod Complete.\n")
+        );
+        assert_eq!(warnings, []);
+    }
+
+    /// A non-interactive run asks nothing and deletes both Working Files (batch 354).
+    #[test]
+    fn a_non_interactive_finish_removes_the_working_files_without_asking() {
+        let fixture = finish_fixture(true);
+
+        let warnings = finish_through(&fixture, &fixture.files);
+
+        assert_eq!(fixture.prompts.asked(), []);
+        assert!(!fixture.files.exists(&combined_objects(&fixture)));
+        assert!(!fixture.files.exists(&previs_plugin(&fixture)));
+        assert_eq!(warnings, []);
+    }
+
+    #[test]
+    fn an_interactive_finish_asks_once_and_removes_the_working_files_on_yes() {
+        let fixture = finish_fixture(false);
+
+        let warnings = finish_through(&fixture, &fixture.files);
+
+        assert_eq!(fixture.prompts.asked(), [Confirmation::RemoveWorkingFiles]);
+        assert!(!fixture.files.exists(&combined_objects(&fixture)));
+        assert!(!fixture.files.exists(&previs_plugin(&fixture)));
+        assert_eq!(warnings, []);
+    }
+
+    /// N keeps both files and adds nothing past the Complete line (batch `goto Done`, 356).
+    #[test]
+    fn an_interactive_finish_keeps_the_working_files_on_no() {
+        let mut fixture = finish_fixture(false);
+        fixture.prompts = RecordingPrompts::new().refusing_remove_working_files();
+        let before = session_log(&fixture);
+
+        let warnings = finish_through(&fixture, &fixture.files);
+
+        assert!(fixture.files.exists(&combined_objects(&fixture)));
+        assert!(fixture.files.exists(&previs_plugin(&fixture)));
+        assert_eq!(warnings, []);
+        assert_eq!(
+            session_log(&fixture),
+            format!("{before}Build of Patch MyMod Complete.\n")
+        );
+    }
+
+    /// A question that cannot be asked keeps the files, because deleting without an answer
+    /// would be worse than leaving them. Finish still returns, so the run still completes.
+    #[test]
+    fn a_prompt_error_keeps_the_working_files() {
+        let mut fixture = finish_fixture(false);
+        fixture.prompts = RecordingPrompts::new().failing_remove_working_files();
+
+        let warnings = finish_through(&fixture, &fixture.files);
+
+        assert_eq!(fixture.prompts.asked(), [Confirmation::RemoveWorkingFiles]);
+        assert!(fixture.files.exists(&combined_objects(&fixture)));
+        assert!(fixture.files.exists(&previs_plugin(&fixture)));
+        assert_eq!(warnings, []);
+    }
+
+    /// A Working File that is already gone, as after a resume that never created it, is
+    /// skipped without a warning (batch `If Exist`, 357–358).
+    #[test]
+    fn a_missing_working_file_is_skipped_silently() {
+        let fixture = step_one_fixture(BuildMode::Clean, true);
+        fixture.files.add_file(previs_plugin(&fixture));
+
+        let warnings = finish_through(&fixture, &fixture.files);
+
+        assert!(!fixture.files.exists(&previs_plugin(&fixture)));
+        assert_eq!(warnings, []);
+    }
+
+    /// A delete that fails is a Build Warning naming the file, and the next file is still
+    /// handled.
+    #[test]
+    fn a_working_file_that_cannot_be_removed_is_a_warning_and_the_next_is_still_removed() {
+        let fixture = finish_fixture(true);
+        let locked =
+            FaultyFileSpace::over(&fixture.files).refusing_file_removal(combined_objects(&fixture));
+
+        let warnings = finish_through(&fixture, &locked);
+
+        assert_eq!(
+            warnings,
+            [BuildWarning::WorkingFileNotRemoved {
+                path: combined_objects(&fixture)
+            }]
+        );
+        let session = session_log(&fixture);
+        assert!(
+            session.contains(&format!(
+                "WARNING - Could not remove {}. Remove it by hand.\n",
+                combined_objects(&fixture).display()
+            )),
+            "session log: {session}"
+        );
+        assert!(fixture.files.exists(&combined_objects(&fixture)));
+        assert!(!fixture.files.exists(&previs_plugin(&fixture)));
+    }
+
+    /// A Complete line that cannot be appended is only a console warning: Finish still removes
+    /// both Working Files and returns.
+    #[test]
+    fn a_failed_complete_line_append_still_removes_the_working_files() {
+        let fixture = finish_fixture(true);
+        fixture.files.refuse_appends_to(fixture.run.log_path());
+
+        let warnings = finish_through(&fixture, &fixture.files);
+
+        assert!(!fixture.files.exists(&combined_objects(&fixture)));
+        assert!(!fixture.files.exists(&previs_plugin(&fixture)));
+        assert_eq!(warnings, []);
+    }
+
+    /// An unwritable session log costs Finish only console warnings: a failed delete is still
+    /// kept as a Build Warning, the next Working File is still removed, and Finish returns.
+    #[test]
+    fn a_failed_session_log_append_never_stops_finish() {
+        let fixture = finish_fixture(true);
+        fixture.files.refuse_appends_to(fixture.run.log_path());
+        let locked =
+            FaultyFileSpace::over(&fixture.files).refusing_file_removal(combined_objects(&fixture));
+
+        let warnings = finish_through(&fixture, &locked);
+
+        // The collector keeps the warning before its own append fails.
+        assert_eq!(
+            warnings,
+            [BuildWarning::WorkingFileNotRemoved {
+                path: combined_objects(&fixture)
+            }]
+        );
+        assert!(!fixture.files.exists(&previs_plugin(&fixture)));
     }
 }

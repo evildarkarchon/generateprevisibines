@@ -448,7 +448,15 @@ path (`:RePrecomb`, `:RePreVis`).
   `:Done`, including `:Failed` (375–377 → `:Done`, 362–367) — but not on the `:PauseAndExit`
   paths; see the `:RunCK` note above for why that is nearly always harmless.
   **Port, decided on #30:** Finish is a run epilogue, not a Workflow Operation, and runs only
-  when every planned step completed. It keeps the batch's lines, manifest and prompt verbatim
+  when every planned step completed. It keeps the batch's words, manifest order and prompt
   (manifest by Build Mode, unchecked; only "Build of Patch X Complete." reaches the session
-  log; no MO2 wait before the deletes; a missing Working File is skipped). One divergence: a
-  Working File that cannot be deleted is a Build Warning and the run still exits 0.
+  log; no MO2 wait before the deletes; a missing Working File is skipped), with these
+  divergences:
+  - A Working File that cannot be deleted is a Build Warning and the run still exits 0.
+  - **Finish never stops a run** (decided on #48). Every Patch File is already built when it
+    starts, so a failed session-log append is only a console warning, and a prompt that cannot
+    be read keeps the Working Files. A completed run always exits 0.
+  - Both manifest rules are the startup banner's 76 `=`, not the batch's 74 (342) and 75 (353).
+    Cosmetic, decided on #48.
+  - The Complete line's trailing space (the batch's `echo … Complete. >>`, 338) is dropped, as
+    the FO4Edit spec dropped `echo`'s trailing spaces.

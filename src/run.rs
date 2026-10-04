@@ -23,7 +23,7 @@ use crate::warning::BuildWarnings;
 use crate::workflow::WorkflowPlan;
 use crate::workflow::operations::{
     InteractivePrompts, OperationPorts, ProductionWorkflowPreparation, execute_registered_workflow,
-    prepare_production_workflow,
+    finish, prepare_production_workflow,
 };
 
 /// User intent before tool paths, CKPE configuration, logs, or runnable steps are resolved.
@@ -274,10 +274,12 @@ impl WorkflowRun {
     /// prepared Workflow Plan and registered Workflow Operations continue to own sequencing
     /// and domain behavior.
     ///
-    /// Owns how the run ends, on the console and in the session log. A completed run prints
-    /// `Build step(s) complete.` then `See Log at …` as its last line; a stopped one is reported
-    /// by [`Self::report_stop`]. Both happen here rather than in `main` so that Finish, once
-    /// ported, can run ahead of `See Log at` (batch 368 follows `:Fin`).
+    /// Owns how the run ends, on the console and in the session log. A completed run that ran
+    /// every planned step runs Finish, then prints `See Log at …` as its last line; a partial
+    /// rollout, which stops short of its plan, prints only `See Log at …`. A stopped run is
+    /// reported by [`Self::report_stop`] and never reaches Finish. All of it happens here
+    /// rather than in `main` so that Finish runs ahead of `See Log at` (batch 368 follows
+    /// `:Fin`).
     ///
     /// Before the first dispatch, every leftover archive work folder is restored and cleared;
     /// see [`restore_archive_work_folders`].
@@ -303,7 +305,12 @@ impl WorkflowRun {
             return Err(self.report_stop(error, ports.files));
         }
 
-        println!("Build step(s) complete.");
+        // Only when every planned step ran: a partial rollout skipped steps it could not run, so
+        // announcing it complete or deleting its Working Files would claim a build that never
+        // happened. Finish returns nothing, so whatever it reports, a completed run exits 0.
+        if self.plan.runs_every_planned_step() {
+            finish(self, ports);
+        }
         println!("{}", logging::see_log_line(&self.log_path));
         Ok(())
     }
@@ -1158,6 +1165,99 @@ mod tests {
         let session = fixture.files.read_lossy(run.log_path()).unwrap();
         assert!(!session.contains("ERROR - "), "session log: {session}");
         assert!(!session.contains("failed."), "session log: {session}");
+    }
+
+    /// The Working Files a run leaves in `Data`, spelled out by hand.
+    fn working_files(fixture: &ReadyWorkflowFixture) -> [PathBuf; 2] {
+        let data = fixture.fallout4_directory.join("Data");
+        [data.join("CombinedObjects.esp"), data.join("Previs.esp")]
+    }
+
+    /// A run that completes every planned step ends with Finish: the Complete line is the last
+    /// line of its session log, and a non-interactive run has removed the Working Files that
+    /// Steps 1 and 6 wrote.
+    #[test]
+    fn a_completed_run_ends_with_finish() {
+        let fixture = ready_workflow_fixture();
+        let run = prepared_run(&fixture);
+        let exit = ExitFlag::new();
+        let process = completing_process(&run, &fixture.files, &exit);
+
+        let execution = execute_over_recording_ports(&run, &fixture.files, &process, &exit);
+
+        execution.result.unwrap();
+        let session = fixture.files.read_lossy(run.log_path()).unwrap();
+        assert!(
+            session.ends_with("\nBuild of Patch MyMod Complete.\n"),
+            "session log: {session}"
+        );
+        for working_file in working_files(&fixture) {
+            assert!(!fixture.files.exists(&working_file), "{working_file:?}");
+        }
+        assert_eq!(execution.warnings, []);
+    }
+
+    /// A partial-rollout run completes its runnable steps but never reaches Finish: it is not
+    /// announced complete, asks nothing, and keeps the Working Files it wrote.
+    #[test]
+    fn a_partial_rollout_run_never_reaches_finish() {
+        let fixture = ready_workflow_fixture();
+        let mut request = fixture.request.clone();
+        // Interactive, so a Finish that ran would have asked to remove the Working Files.
+        request.non_interactive = false;
+        let run = prepare_without(
+            &[WorkflowStep::AddPrevisToArchive],
+            &request,
+            fixture.directory.path(),
+            &fixture.probe,
+            &fixture.files,
+        )
+        .unwrap();
+        assert!(!run.plan().runs_every_planned_step());
+        let exit = ExitFlag::new();
+        let process = completing_process(&run, &fixture.files, &exit);
+
+        let execution = execute_over_recording_ports(&run, &fixture.files, &process, &exit);
+
+        execution.result.unwrap();
+        let session = fixture.files.read_lossy(run.log_path()).unwrap();
+        assert!(!session.contains("Complete."), "session log: {session}");
+        assert_eq!(execution.prompts_asked, []);
+        for working_file in working_files(&fixture) {
+            assert!(fixture.files.exists(&working_file), "{working_file:?}");
+        }
+    }
+
+    /// A run that stops never reaches Finish, even with a Working File already written: a
+    /// failed build is not announced complete, and its Working Files are not deleted.
+    #[test]
+    fn a_stopped_run_never_reaches_finish() {
+        let fixture = ready_workflow_fixture();
+        let mut request = fixture.request.clone();
+        request.non_interactive = false;
+        let run = WorkflowRun::prepare(
+            &request,
+            fixture.directory.path(),
+            &fixture.probe,
+            &fixture.files,
+        )
+        .unwrap();
+        // Creation Kit writes `CombinedObjects.esp` and nothing else, so Step 1 stops on a
+        // later postcondition with the Working File in place.
+        let [combined_objects, _] = working_files(&fixture);
+        let written = combined_objects.clone();
+        let process = RecordingProcessRunner::new().with_effects(&fixture.files, move |space| {
+            space.add_file(&written);
+        });
+
+        let execution =
+            execute_over_recording_ports(&run, &fixture.files, &process, &ExitFlag::new());
+
+        assert!(execution.result.is_err());
+        let session = fixture.files.read_lossy(run.log_path()).unwrap();
+        assert!(!session.contains("Complete."), "session log: {session}");
+        assert_eq!(execution.prompts_asked, []);
+        assert!(fixture.files.exists(&combined_objects));
     }
 
     #[test]

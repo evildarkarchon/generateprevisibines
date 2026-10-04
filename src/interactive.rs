@@ -266,6 +266,17 @@ pub fn confirm_clear_vis() -> Result<bool> {
         .interact()?)
 }
 
+/// Interactive Y/N confirmation for deleting the Working Files at Finish (batch 355).
+///
+/// Defaults to yes, as the batch's `[Y]` does. dialoguer renders its own `[Y/n]` hint, which
+/// stands in for the batch's `[Y]?`, so the prompt text stops at the question.
+pub fn confirm_remove_working_files() -> Result<bool> {
+    Ok(Confirm::new()
+        .with_prompt("Remove working files")
+        .default(true)
+        .interact()?)
+}
+
 /// Orchestrate plugin existence, seed copy, archive guard, and resume prompts.
 pub fn ensure_plugin_ready(readiness: &PluginReadiness) -> Result<ExistingPluginAction> {
     let plugin_path = readiness.plugin_path();
