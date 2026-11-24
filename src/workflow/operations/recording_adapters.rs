@@ -79,7 +79,7 @@ pub(crate) const FO4EDIT_MODULE_SELECTION: WindowHandle =
 #[derive(Debug)]
 pub(crate) struct RecordingPrompts {
     asked: RefCell<Vec<Confirmation>>,
-    clear_precombined_answer: ScriptedAnswer,
+    clear_existing_outputs_answer: ScriptedAnswer,
     clear_vis_answer: ScriptedAnswer,
     remove_working_files_answer: ScriptedAnswer,
 }
@@ -98,7 +98,7 @@ impl Default for RecordingPrompts {
         Self {
             asked: RefCell::new(Vec::new()),
             // Consent by default, so a refusal is something a test has to ask for by name.
-            clear_precombined_answer: ScriptedAnswer::Consent,
+            clear_existing_outputs_answer: ScriptedAnswer::Consent,
             clear_vis_answer: ScriptedAnswer::Consent,
             remove_working_files_answer: ScriptedAnswer::Consent,
         }
@@ -112,10 +112,10 @@ impl RecordingPrompts {
         Self::default()
     }
 
-    /// Answer [`Confirmation::ClearPrecombined`] with a refusal instead of consent.
+    /// Answer [`Confirmation::ClearExistingOutputs`] with a refusal instead of consent.
     #[must_use]
-    pub(crate) const fn refusing_clear_precombined(mut self) -> Self {
-        self.clear_precombined_answer = ScriptedAnswer::Refuse;
+    pub(crate) const fn refusing_clear_existing_outputs(mut self) -> Self {
+        self.clear_existing_outputs_answer = ScriptedAnswer::Refuse;
         self
     }
 
@@ -152,7 +152,7 @@ impl Prompts for RecordingPrompts {
     fn confirm(&self, confirmation: &Confirmation) -> Result<bool> {
         self.asked.borrow_mut().push(confirmation.clone());
         let answer = match confirmation {
-            Confirmation::ClearPrecombined(_) => self.clear_precombined_answer,
+            Confirmation::ClearExistingOutputs(_) => self.clear_existing_outputs_answer,
             Confirmation::ClearVis(_) => self.clear_vis_answer,
             Confirmation::RemoveWorkingFiles => self.remove_working_files_answer,
         };

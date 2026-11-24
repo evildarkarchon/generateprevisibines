@@ -82,6 +82,7 @@ code { background: var(--code-bg); padding: 0.08em 0.32em; border-radius: 3px; o
 .sev-high { color: var(--high); background: var(--high-soft); }
 .sev-medium { color: var(--med); background: var(--med-soft); }
 .sev-low { color: var(--low); background: var(--low-soft); }
+.sev-withdrawn { color: var(--muted); background: var(--code-bg); }
 .conf { font-size: 0.74rem; color: var(--muted); border: 1px solid var(--rule); padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
 
 /* start-here list */
@@ -166,20 +167,18 @@ td:first-child { font-weight: 600; white-space: nowrap; }
     <div class="figure"><b>466 / 466</b><span>tests passing (462 unit, 4 process)</span></div>
     <div class="figure"><b>8,500</b><span>production lines of 23,700; about 64% is tests</span></div>
     <div class="figure"><b>4 hints</b><span>from clippy <code>pedantic</code>; <code>cargo fmt</code> clean</span></div>
-    <div class="figure"><b>43</b><span>findings: 4 high, 17 medium, 22 low</span></div>
+    <div class="figure"><b>42</b><span>findings: 4 high, 16 medium, 22 low; 1 withdrawn</span></div>
   </div>
 </section>
 
 <section class="stack-lg" id="start">
   <div class="stack">
     <h2>Start here</h2>
-    <p class="prose muted">Six changes, in priority order. The first five are small, and each removes a way for a run to lose work or mislead whoever is reading the output.</p>
+    <p class="prose muted">Five changes, in priority order. The first four are small, and each removes a way for a run to lose work or mislead whoever is reading the output.</p>
   </div>
   <ol class="first">
     <li><div><strong>Parse <code>;</code> comments in CKPE config values.</strong> <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B1">B1</a>
       <div class="why">On the <code>.ini</code> CKPE variant the Creation Kit log is never found, so the handle-array stop and the visibility-task warning are silently skipped.</div></div></li>
-    <li><div><strong>Stop offering to delete precombined meshes on a fresh run, and remove the Yes default.</strong> <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B2">B2</a>
-      <div class="why">The batch hard-stops here. The port asks, and a stray Enter deletes hours of Creation Kit output.</div></div></li>
     <li><div><strong>Decide how DLLs get restored when <code>Drop</code> does not run.</strong> <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B3">B3</a>
       <div class="why">The latest commit set <code>panic = "abort"</code>. Combined with no Ctrl-C handling, ENB and ReShade DLLs can stay disabled after a stopped run. The code and docs still promise otherwise.</div></div></li>
     <li><div><strong>Append to the session log on a resume instead of truncating it.</strong> <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B4">B4</a>
@@ -200,7 +199,7 @@ td:first-child { font-weight: 600; white-space: nowrap; }
     <div class="stage"><span class="n">Start</span><span class="label">Arguments, discovery, intake</span><span class="tool">CLI</span>
       <span class="ids"><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B5">B5</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B6">B6</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B7">B7</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B8">B8</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B10">B10</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B22">B22</a></span></div>
     <div class="stage"><span class="n">1</span><span class="label">Generate Precombines</span><span class="tool">Creation Kit</span>
-      <span class="ids"><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B1">B1</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B2">B2</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B3">B3</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B12">B12</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B17">B17</a></span></div>
+      <span class="ids"><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B1">B1</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B3">B3</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B12">B12</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B17">B17</a></span></div>
     <div class="stage"><span class="n">2</span><span class="label">Merge CombinedObjects.esp</span><span class="tool">xEdit</span>
       <span class="ids"><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B6">B6</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B11">B11</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B15">B15</a></span></div>
     <div class="stage"><span class="n">3</span><span class="label">Create BA2 from Precombines</span><span class="tool">Archive2 / BSArch</span>
@@ -229,14 +228,14 @@ td:first-child { font-weight: 600; white-space: nowrap; }
       <button type="button" id="f-high" data-filter="high" aria-pressed="false">High</button>
       <button type="button" id="f-medium" data-filter="medium" aria-pressed="false">Medium</button>
       <button type="button" id="f-low" data-filter="low" aria-pressed="false">Low</button>
-      <span class="count" id="count" aria-live="polite">Showing 43 of 43</span>
+      <span class="count" id="count" aria-live="polite">Showing 42 of 42</span>
     </div>
   </div>
 
   <!-- ============ BEHAVIOUR ============ -->
   <div class="group" id="g-bugs">
     <header>
-      <span class="eyebrow">B · 22 findings</span>
+      <span class="eyebrow">B · 21 findings, 1 withdrawn</span>
       <h3>Behaviour and batch parity</h3>
     </header>
 
@@ -259,16 +258,17 @@ for /F "tokens=2 delims==#;" %%a in ('Findstr /I /C:"%CKPELogSetting_%=" ...</pr
       </div>
     </article>
 
-    <article class="finding" id="B2" data-sev="medium">
+    <article class="finding" id="B2" data-sev="withdrawn">
       <div class="id">B2</div>
       <div class="body">
-        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">verified</span></div>
+        <div class="tags"><span class="sev sev-withdrawn">Withdrawn</span><span class="conf">intentional deviation</span></div>
         <h3>Step 1 offers to delete precombined meshes on a fresh run, defaulting to Yes</h3>
         <div class="loc">src/workflow/operations/generate_precombines.rs:54–60 · src/interactive.rs:249–257 · batch 252–255 vs 237–242</div>
         <div class="codewrap"><pre>let resume_step1 = config.resume_from
     .is_none_or(|s| s == WorkflowStep::GeneratePrecombines);
 if !resume_step1 { return Ok(()); }   <span class="c">// never taken: Step 1 only runs for None or Some(Step 1)</span></pre></div>
         <dl>
+          <dt>Status</dt><dd>Withdrawn. The project owner confirmed that this deviation from the batch is intentional: Step 1 asks on a fresh interactive run as well as on a resume, and the prompt defaults to Yes. It is now recorded in <code>docs/episodes.md</code> (<em>User prompts</em>) and in the doc comments on <code>maybe_clear_precombined_on_resume</code> and <code>confirm_clear_precombined</code>, so the <code>resume_from: None</code> test pins intended behaviour. Follow-up: Step 1 now finds precombined meshes, the plugin archive and <code>Datais</code> together, lists them, and asks one question to clear all of them. Nothing is deleted until the operator agrees to the whole set, and a non-interactive run stops without deleting anything. The text below is the original finding, kept for reference.</dd>
           <dt>Impact</dt><dd>The batch's <code>:Precomb</code> stops with "Precombine directory … not empty" on a fresh run; only the resume-menu path <code>:RePrecomb</code> asks. The port asks in both cases, with <code>.default(true)</code> where the batch's <code>CHOICE /C:YN</code> has no default. After a Step 2 failure, relaunching and pressing Enter deletes the meshes. The delete also runs before the non-destructive archive and <code>Data\vis</code> checks, so it can be followed at once by a stop. <code>docs/episodes.md:386</code> says the prompt exists only on the resume path, and a test pins the current behaviour with <code>resume_from: None</code>.</dd>
           <dt>Fix</dt><dd>Ask only when <code>resume_from == Some(GeneratePrecombines)</code>, as Step 6 already does; otherwise return <code>PrecombinedMeshesExist</code>. Move the archive and vis checks ahead of the prompt. Drop the default.</dd>
         </dl>
@@ -640,7 +640,7 @@ BSArch.exe pack &lt;source1+source2+...&gt; &lt;archive&gt; [parameters]
         <div class="tags"><span class="sev sev-low">Low</span><span class="conf">reviewed</span></div>
         <h3>Operation tests cover one mode, one archiver and one entry route</h3>
         <div class="loc">src/workflow/operations.rs (tests, about 3,100 lines)</div>
-        <p>No operation or run test uses <code>resume_from = Some(GeneratePrecombines)</code>, which is how <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B2">B2</a> got pinned the wrong way. The fixtures hardcode <code>ArchiveTool::Archive2</code>, and only Clean is executed end to end; Filtered and Xbox are covered at plan level only. All 98 operation tests sit in one module while the eight step files hold none. Split them per step with a shared fixture module.</p>
+        <p>No operation or run test uses <code>resume_from = Some(GeneratePrecombines)</code>, so the resume entry to Step 1 is never exercised. The fixtures hardcode <code>ArchiveTool::Archive2</code>, and only Clean is executed end to end; Filtered and Xbox are covered at plan level only. All 98 operation tests sit in one module while the eight step files hold none. Split them per step with a shared fixture module.</p>
       </div>
     </article>
 
@@ -779,8 +779,8 @@ BSArch.exe pack &lt;source1+source2+...&gt; &lt;archive&gt; [parameters]
     <table>
       <thead><tr><th>Batch</th><th>What</th><th>Findings</th></tr></thead>
       <tbody>
-        <tr><td>1 · Quick fixes</td><td>CKPE comment parsing, doubled error prefix, remove the Yes default, "scaffold" strings in <code>--help</code>, drop <code>anyhow</code>, commit <code>Cargo.lock</code>, apply the clippy hints.</td><td class="ids">B1 B9 B2 P2 P6 P5 P7</td></tr>
-        <tr><td>2 · Behaviour decisions</td><td>DLL restore sweep and <code>panic</code> strategy; session-log lifetime on resume; Step 1 fresh-run stop; plugin-name rules; absolute <code>--FO4</code> and the trailing-backslash form; validate the install before locking; whether BSArch Step 8 should pack archive plus folder instead of unpacking.</td><td class="ids">B3 B4 B2 B7 B6 B5 B8 D8</td></tr>
+        <tr><td>1 · Quick fixes</td><td>CKPE comment parsing, doubled error prefix, "scaffold" strings in <code>--help</code>, drop <code>anyhow</code>, commit <code>Cargo.lock</code>, apply the clippy hints.</td><td class="ids">B1 B9 P2 P6 P5 P7</td></tr>
+        <tr><td>2 · Behaviour decisions</td><td>DLL restore sweep and <code>panic</code> strategy; session-log lifetime on resume; plugin-name rules; absolute <code>--FO4</code> and the trailing-backslash form; validate the install before locking; whether BSArch Step 8 should pack archive plus folder instead of unpacking.</td><td class="ids">B3 B4 B7 B6 B5 B8 D8</td></tr>
         <tr><td>3 · Documentation</td><td>Correct <code>AGENTS.md</code> first, since agents act on it. Then the README, <code>future-features.md</code>, <code>technical.md</code> and the two doc statements about panics. Correct the BSArch statements in ADR-0004, the episodes reference and the backlog. Retire <code>.scratch/</code>.</td><td class="ids">P1 P8 P2 P3 P4 P7 B22</td></tr>
         <tr><td>4 · Remove scaffolding</td><td>Exhaustive <code>match</code> for step dispatch; delete the partial-rollout variants and tests; narrow <code>lib.rs</code> visibility and delete what the compiler then flags; tidy <code>--dry-run</code>.</td><td class="ids">D1 D3 D4 D5 D6</td></tr>
         <tr><td>5 · Safety net</td><td>CI on Windows with <code>cargo audit</code>; helper-crate window tests; on-disk archive round trips; CKPE and plugin-name fixtures; a Step 1 resume test; warning recap in Finish.</td><td class="ids">P5 T1 T2 T3 T4 T5 D2</td></tr>
@@ -797,6 +797,7 @@ BSArch.exe pack &lt;source1+source2+...&gt; &lt;archive&gt; [parameters]
     <p>Commands run: <code>cargo test --workspace</code>, <code>cargo clippy --all-targets --workspace</code>, <code>cargo fmt --check</code>, <code>cargo audit</code>, <code>cargo tree -d</code>, and the binary with <code>--help</code>, <code>--version</code> and several <code>--dry-run</code> forms.</p>
     <p>Limits. No Fallout 4, Creation Kit, FO4Edit or MO2 run was performed, so the audit says nothing about whether a real build completes. Findings marked <span class="conf">reviewed</span> rest on one reader. The four required workarounds (FO4Edit window automation, MO2 delays, DLL renaming, Archive2 extract-repack) and the decisions recorded in the ADRs were treated as fixed and are not findings. Line numbers refer to commit <span class="mono">0178a3b</span>.</p>
     <p>Revision. The first version of this report treated ADR-0004, the glossary and <code>episodes.md</code> as the authority on BSArch and marked <code>AGENTS.md</code> and the README as wrong for saying it can append. The project owner corrected that. The usage text of the BSArch v1.1 installed beside xEdit on this machine confirms it: <code>pack</code> accepts an existing archive as a source. <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#P1">P1</a> was narrowed, and <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#P8">P8</a> and <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#D8">D8</a> were added. No BSArch pack was actually run.</p>
+    <p>Second revision. The project owner confirmed that <a href="#B2">B2</a> is an intentional deviation from the batch. It is withdrawn and kept in place for reference; the counts, the start list, the workflow map and the order of work no longer include it.</p>
   </div>
 </section>
 
@@ -806,18 +807,20 @@ BSArch.exe pack &lt;source1+source2+...&gt; &lt;archive&gt; [parameters]
 (function () {
   var buttons = document.querySelectorAll('.filters button');
   var findings = document.querySelectorAll('.finding');
+  // Withdrawn findings stay on the page for the record but are not part of the tally.
+  var active = document.querySelectorAll('.finding:not([data-sev="withdrawn"])');
   var count = document.getElementById('count');
   function apply(filter) {
     var shown = 0;
     findings.forEach(function (f) {
       var show = filter === 'all' || f.getAttribute('data-sev') === filter;
       f.hidden = !show;
-      if (show) shown++;
+      if (show && f.getAttribute('data-sev') !== 'withdrawn') shown++;
     });
     buttons.forEach(function (b) {
       b.setAttribute('aria-pressed', b.getAttribute('data-filter') === filter ? 'true' : 'false');
     });
-    count.textContent = 'Showing ' + shown + ' of ' + findings.length;
+    count.textContent = 'Showing ' + shown + ' of ' + active.length;
   }
   buttons.forEach(function (b) {
     b.addEventListener('click', function () { apply(b.getAttribute('data-filter')); });

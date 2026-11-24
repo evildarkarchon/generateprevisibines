@@ -348,8 +348,13 @@ impl<'a> OperationPorts<'a> {
 /// `RemoveWorkingFiles`, through the same ports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Confirmation {
-    /// Clear existing precombined meshes before Step 1 regenerates them (`:RePrecomb`).
-    ClearPrecombined(PathBuf),
+    /// Clear earlier build output before Step 1 regenerates it. Carries every conflicting
+    /// path found, in the batch's check order: the precombined mesh directory, the plugin
+    /// archive, and `Data\vis`.
+    ///
+    /// One question for the whole set is a deliberate deviation. The batch's `:RePrecomb`
+    /// clears only the meshes, and only on a resume (237–242).
+    ClearExistingOutputs(Vec<PathBuf>),
     /// Clear a non-empty `Data\vis` before Step 6 regenerates previs (`:RePreVis`, batch 246).
     ClearVis(PathBuf),
     /// Delete the Working Files, `CombinedObjects.esp` and `Previs.esp`, at Finish (batch 355).
@@ -380,8 +385,8 @@ pub(crate) struct InteractivePrompts;
 impl Prompts for InteractivePrompts {
     fn confirm(&self, confirmation: &Confirmation) -> Result<bool> {
         match confirmation {
-            Confirmation::ClearPrecombined(precombined_dir) => {
-                interactive::confirm_clear_precombined(precombined_dir)
+            Confirmation::ClearExistingOutputs(paths) => {
+                interactive::confirm_clear_existing_outputs(paths)
             }
             // The batch's question names `Data\vis` itself (246), so the path is not shown.
             Confirmation::ClearVis(_) => interactive::confirm_clear_vis(),
@@ -1205,6 +1210,21 @@ mod tests {
         assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
     }
 
+    /// Seed every earlier output Step 1 can find: a mesh, the plugin archive and a previs
+    /// file. Returns them so a test can check each one survived or was cleared.
+    fn add_every_existing_output(fixture: &OperationFixture) -> [PathBuf; 3] {
+        let config = fixture.run.config();
+        let outputs = [
+            config.precombined_dir().join("old").join("mesh.nif"),
+            config.plugin_archive_path(),
+            config.vis_dir().join("cell.uvd"),
+        ];
+        for output in &outputs {
+            fixture.files.add_file(output);
+        }
+        outputs
+    }
+
     #[test]
     fn step_one_prompt_clears_precombined_meshes_when_interactive() {
         let fixture = step_one_fixture(BuildMode::Filtered, false);
@@ -1221,42 +1241,120 @@ mod tests {
 
         assert_eq!(
             fixture.prompts.asked(),
-            vec![Confirmation::ClearPrecombined(
+            vec![Confirmation::ClearExistingOutputs(vec![
                 fixture.run.config().precombined_dir()
-            )]
+            ])]
         );
         assert!(!fixture.files.is_file(&existing_mesh));
         assert_eq!(process.calls().len(), 1);
     }
 
+    /// One question lists every conflict, in the batch's check order, and a Yes clears them
+    /// all before Creation Kit runs.
     #[test]
-    fn step_one_stops_when_the_clear_precombined_prompt_is_refused() {
+    fn step_one_offers_one_prompt_for_meshes_archive_and_vis_and_clears_them_all() {
+        let fixture = step_one_fixture(BuildMode::Filtered, false);
+        let [mesh, archive, uvd] = add_every_existing_output(&fixture);
+        let process = successful_spawn(&fixture);
+
+        fixture.run_step_one(&process).unwrap();
+
+        let config = fixture.run.config();
+        assert_eq!(
+            fixture.prompts.asked(),
+            vec![Confirmation::ClearExistingOutputs(vec![
+                config.precombined_dir(),
+                config.plugin_archive_path(),
+                config.vis_dir(),
+            ])]
+        );
+        assert!(!fixture.files.is_file(&archive));
+        assert!(!fixture.files.is_file(&uvd));
+        // The old mesh is gone; Creation Kit's own output is what is left.
+        assert!(!fixture.files.is_file(&mesh));
+        assert_eq!(process.calls().len(), 1);
+    }
+
+    /// An archive or previs on its own is offered for clearing too, not stopped as before.
+    #[test]
+    fn step_one_offers_to_clear_an_archive_or_previs_on_its_own() {
+        type Output = fn(&OperationFixture) -> (PathBuf, PathBuf);
+        let cases: [Output; 2] = [
+            |fixture| {
+                let archive = fixture.run.config().plugin_archive_path();
+                (archive.clone(), archive)
+            },
+            |fixture| {
+                let vis = fixture.run.config().vis_dir();
+                (vis.join("cell.uvd"), vis)
+            },
+        ];
+
+        for case in cases {
+            let fixture = step_one_fixture(BuildMode::Filtered, false);
+            let (file, shown) = case(&fixture);
+            fixture.files.add_file(&file);
+            let process = successful_spawn(&fixture);
+
+            fixture.run_step_one(&process).unwrap();
+
+            assert_eq!(
+                fixture.prompts.asked(),
+                vec![Confirmation::ClearExistingOutputs(vec![shown])]
+            );
+            assert!(!fixture.files.is_file(&file));
+            assert_eq!(process.calls().len(), 1);
+        }
+    }
+
+    #[test]
+    fn step_one_stops_and_deletes_nothing_when_the_clear_prompt_is_refused() {
         let fixture = OperationFixture {
-            prompts: RecordingPrompts::new().refusing_clear_precombined(),
+            prompts: RecordingPrompts::new().refusing_clear_existing_outputs(),
             ..step_one_fixture(BuildMode::Filtered, false)
         };
-        let existing_mesh = fixture
-            .run
-            .config()
-            .precombined_dir()
-            .join("old")
-            .join("mesh.nif");
-        fixture.files.add_file(&existing_mesh);
+        let outputs = add_every_existing_output(&fixture);
         let process = successful_spawn(&fixture);
 
         let err = fixture.run_step_one(&process).unwrap_err();
 
         assert!(matches!(err, Error::Other(message) if message
-                == "precombined meshes not cleared - choose another resume step"));
-        assert_eq!(
-            fixture.prompts.asked(),
-            vec![Confirmation::ClearPrecombined(
-                fixture.run.config().precombined_dir()
-            )]
-        );
+                == "existing build output not cleared - choose another resume step"));
+        assert_eq!(fixture.prompts.asked().len(), 1);
         assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
-        // A refusal leaves the meshes alone; the run stops rather than clearing anyway.
-        assert!(fixture.files.is_file(&existing_mesh));
+        // A refusal is for the whole set: nothing is cleared, not even part of it.
+        for output in &outputs {
+            assert!(
+                fixture.files.is_file(output),
+                "deleted: {}",
+                output.display()
+            );
+        }
+    }
+
+    /// A run that cannot ask stops on the first conflict in the batch's order (253, 257,
+    /// 258) and deletes none of them.
+    #[test]
+    fn a_non_interactive_step_one_stops_on_meshes_first_and_deletes_nothing() {
+        let fixture = step_one_fixture(BuildMode::Filtered, true);
+        let outputs = add_every_existing_output(&fixture);
+        let process = successful_spawn(&fixture);
+
+        let err = fixture.run_step_one(&process).unwrap_err();
+
+        assert!(
+            matches!(err, Error::PrecombinedMeshesExist),
+            "error: {err:?}"
+        );
+        assert_eq!(fixture.prompts.asked(), []);
+        assert_eq!(process.calls(), Vec::<RecordedProcessCall>::new());
+        for output in &outputs {
+            assert!(
+                fixture.files.is_file(output),
+                "deleted: {}",
+                output.display()
+            );
+        }
     }
 
     #[test]

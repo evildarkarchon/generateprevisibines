@@ -24,7 +24,7 @@ pub(super) fn run(run: &WorkflowRun, ports: &OperationPorts<'_>) -> Result<()> {
     let ck = ports.ck()?;
     let config = run.config();
     let workspace = PrecombineWorkspace::new(config, ports.files);
-    maybe_clear_precombined_on_resume(run, ports, &workspace)?;
+    clear_existing_outputs(run, ports, &workspace)?;
 
     workspace.prepare_for_generate()?;
 
@@ -45,39 +45,39 @@ pub(super) fn run(run: &WorkflowRun, ports: &OperationPorts<'_>) -> Result<()> {
     Ok(())
 }
 
-fn maybe_clear_precombined_on_resume(
+/// Find earlier build output that conflicts with Step 1, and offer to clear all of it at once.
+///
+/// Every conflict (precombined meshes, the plugin archive, `Datais`) is found before
+/// anything is asked or deleted. A non-interactive run stops on the first one in the batch's
+/// check order and deletes nothing. An interactive run gets one Yes/No for the whole set:
+/// **Y** deletes all of it, and **N** stops without deleting anything.
+///
+/// Deliberate deviation from the batch. Its fresh-run `:Precomb` stops on each of these
+/// (253–260), and its resume-only `:RePrecomb` (237–242) offers to clear only the meshes,
+/// deleting them before it has looked at the archive or `Datais`. Intake lets an existing
+/// archive through to here only on an interactive run, so the prompt is what decides it.
+fn clear_existing_outputs(
     run: &WorkflowRun,
     ports: &OperationPorts<'_>,
     workspace: &PrecombineWorkspace<'_>,
 ) -> Result<()> {
-    let config = run.config();
-    let resume_step1 = config
-        .resume_from
-        .is_none_or(|s| s == WorkflowStep::GeneratePrecombines);
-
-    if !resume_step1 {
+    let existing = workspace.find_existing_outputs();
+    let Some(stop) = existing.stop_error() else {
         return Ok(());
+    };
+
+    if run.config().non_interactive {
+        return Err(stop);
     }
 
-    if !workspace.has_precombined_meshes() {
-        return Ok(());
-    }
-
-    if config.non_interactive {
-        return Err(Error::PrecombinedMeshesExist);
-    }
-
-    let precombined = workspace.precombined_dir();
     if !ports
         .prompts
-        .confirm(&Confirmation::ClearPrecombined(precombined))?
+        .confirm(&Confirmation::ClearExistingOutputs(existing.paths()))?
     {
         return Err(Error::Other(
-            "precombined meshes not cleared - choose another resume step".into(),
+            "existing build output not cleared - choose another resume step".into(),
         ));
     }
 
-    workspace.clear_precombined_meshes()?;
-
-    Ok(())
+    workspace.clear_existing_outputs(&existing)
 }
