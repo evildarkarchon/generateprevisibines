@@ -387,11 +387,32 @@ The two "clean it?" prompts are the only places the workflow deletes `Data\meshe
 (241) or `Data\vis` (248) on the user's behalf at intake, and they exist only on the resume
 path (`:RePrecomb`, `:RePreVis`).
 
+**Port deviation (intentional).** On *every* interactive Step 1 entry, fresh or resumed,
+the port first looks for all three kinds of earlier build output Step 1 conflicts with:
+precombined meshes (253), the plugin archive `<plugin> - Main.ba2` (257) and previs in
+`Data\vis` (258). If it finds any, it lists them and asks one question, "Delete all of these
+before regenerating?", which defaults to **Y**. **Y** deletes everything listed. **N** stops
+with nothing deleted. The batch differs in three ways:
+
+- Its fresh-run `:Precomb` stops on each of the three (253–260) and offers to clear none.
+- Its resume-only `:RePrecomb` clears only the meshes, and deletes them *before* it reaches
+  the archive and `vis` checks at `:Precomb1`, so a run that was going to stop could still
+  cost the meshes.
+- Its `CHOICE /C:YN` has no default.
+
+Intake hands an existing archive through to Step 1 on an interactive run instead of
+stopping as at 257. Seeding a new plugin over an existing archive still stops at intake
+(190). A non-interactive run still stops on the first conflict in the batch's order and
+deletes nothing. Do not "restore parity" here. The Step 6 `Data\vis` prompt still follows
+the batch: resume entry only, no default.
+
 ## Per-step notes not captured above
 
 - **Intake**: resume menu lists steps 4–5 in every mode except filtered (219–222); an
   unrecognised choice loops back to `:CheckPluginExists` (235).
-- **Step 1 preamble**: precombined dir non-empty → `:Done` (253–255, non-resume entry only);
+- **Step 1 preamble** (the port asks about all three instead when interactive, see the
+  deviation note under the prompt table): precombined dir non-empty → `:Done` (253–255,
+  non-resume entry only);
   archive already exists → back to `:GetPlugin` (257), i.e. re-prompt interactively and
   `PauseAndExit` otherwise; `Data\vis` non-empty → `:Done` (258–260). None of these three is
   a `:failed`. Then `RD` of `<fo4>\BSarchTemp` (262) — *only reached via step-1 entry* —

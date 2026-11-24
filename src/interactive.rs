@@ -1,6 +1,6 @@
 //! Interactive plugin flow (`:GetPlugin`, `:TryCopySeed`, `:CheckPluginExists`, `:GetStep`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use dialoguer::{Confirm, Input};
 
@@ -245,13 +245,19 @@ fn read_resume_step(
     }
 }
 
-/// Interactive Y/N confirmation for clearing existing precombined meshes (`:RePrecomb`).
-pub fn confirm_clear_precombined(precombined_dir: &Path) -> Result<bool> {
+/// Interactive Y/N confirmation for clearing earlier build output before Step 1. `paths`
+/// lists every conflicting item found: precombined meshes, the plugin archive, `Data\vis`.
+///
+/// Prints the list, then asks once for the whole set. Unlike [`confirm_clear_vis`], this
+/// defaults to Yes, and it is asked on a fresh Step 1 entry as well as on a resume. Both
+/// differ from the batch's `:RePrecomb` on purpose; see `docs/episodes.md` (*User prompts*).
+pub fn confirm_clear_existing_outputs(paths: &[PathBuf]) -> Result<bool> {
+    println!("Existing build output found:");
+    for path in paths {
+        println!("  {}", path.display());
+    }
     Ok(Confirm::new()
-        .with_prompt(format!(
-            "Precombined meshes exist in {}. Delete them before regenerating?",
-            precombined_dir.display()
-        ))
+        .with_prompt("Delete all of these before regenerating?")
         .default(true)
         .interact()?)
 }

@@ -39,12 +39,6 @@ impl<'a> PrecombineWorkspace<'a> {
         Self { config, files }
     }
 
-    /// Return the precombined mesh directory used for prompt and cleanup decisions.
-    #[must_use]
-    pub(super) fn precombined_dir(&self) -> PathBuf {
-        self.config.precombined_dir()
-    }
-
     /// Whether any `.nif` exists under `meshes/precombined` recursively.
     #[must_use]
     pub(super) fn has_precombined_meshes(&self) -> bool {
@@ -59,20 +53,48 @@ impl<'a> PrecombineWorkspace<'a> {
         self.files.remove_dir_all(&self.config.precombined_dir())
     }
 
-    /// Run artifact preconditions and cleanup before launching Creation Kit.
+    /// Observe every earlier build output that would conflict with a fresh Step 1, deleting
+    /// nothing: precombined meshes, the plugin archive, and previs in `Data\vis`.
+    ///
+    /// All three are found before anything is offered or deleted. The operator then answers
+    /// once for the whole set, and a run that cannot proceed never loses part of it first.
+    #[must_use]
+    pub(super) fn find_existing_outputs(&self) -> ExistingOutputs {
+        let archive = self.config.plugin_archive_path();
+        let vis = PrevisWorkspace::new(self.config, self.files);
+        ExistingOutputs {
+            precombined: self
+                .has_precombined_meshes()
+                .then(|| self.config.precombined_dir()),
+            archive: self.files.is_file(&archive).then_some(archive),
+            vis: vis.has_vis_uvd_files().then(|| vis.vis_dir()),
+        }
+    }
+
+    /// Delete everything `existing` names: the precombined mesh tree, the plugin archive,
+    /// and the whole `Data\vis` tree, in that order.
+    ///
+    /// Only call this after the operator has consented to the whole set. A failed delete
+    /// stops at once, and anything already deleted stays deleted.
+    pub(super) fn clear_existing_outputs(&self, existing: &ExistingOutputs) -> Result<()> {
+        if existing.precombined.is_some() {
+            self.clear_precombined_meshes()?;
+        }
+        if let Some(archive) = &existing.archive {
+            self.files.remove_file(archive)?;
+        }
+        if existing.vis.is_some() {
+            PrevisWorkspace::new(self.config, self.files).clear_vis()?;
+        }
+        Ok(())
+    }
+
+    /// Remove stale `CombinedObjects.esp` and `- Geometry.psg` before launching Creation Kit
+    /// (batch 263–264).
+    ///
+    /// Run this only once [`Self::find_existing_outputs`] reports nothing, or after that set
+    /// has been cleared, so a run that stops on a conflict leaves these files alone.
     pub(super) fn prepare_for_generate(&self) -> Result<()> {
-        if self.files.is_file(&self.config.plugin_archive_path()) {
-            return Err(Error::PluginAlreadyHasArchive);
-        }
-
-        if self.has_precombined_meshes() {
-            return Err(Error::PrecombinedMeshesExist);
-        }
-
-        if self.has_vis_uvd_files() {
-            return Err(Error::VisUvdFilesExist);
-        }
-
         let combined = self.combined_objects_path();
         if self.files.is_file(&combined) {
             self.files.remove_file(&combined)?;
@@ -144,11 +166,48 @@ impl<'a> PrecombineWorkspace<'a> {
             .fo4edit_data_dir()
             .join(format!("{} - Geometry.psg", self.config.plugin.base_name))
     }
+}
 
-    /// Whether `Data\vis` holds any `.uvd`, by the Previs Workspace's definition of it, so
-    /// Step 1 and Step 6 can never disagree about whether previs exists.
-    fn has_vis_uvd_files(&self) -> bool {
-        PrevisWorkspace::new(self.config, self.files).has_vis_uvd_files()
+/// Earlier build output that conflicts with a fresh Step 1, as found by
+/// [`PrecombineWorkspace::find_existing_outputs`]. Each field holds the path to show and
+/// clear, or `None` when that output is absent.
+///
+/// `Data\vis` is detected through the Previs Workspace's own definition, so Step 1 and Step 6
+/// can never disagree about whether previs exists.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct ExistingOutputs {
+    precombined: Option<PathBuf>,
+    archive: Option<PathBuf>,
+    vis: Option<PathBuf>,
+}
+
+impl ExistingOutputs {
+    /// The paths found, in the order the batch checks them (253, 257, 258), for the operator
+    /// to review before consenting.
+    #[must_use]
+    pub(super) fn paths(&self) -> Vec<PathBuf> {
+        [&self.precombined, &self.archive, &self.vis]
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect()
+    }
+
+    /// The stop for a run that cannot ask, using the first conflict in the batch's check
+    /// order: precombined meshes (253), then the archive (257), then `Data\vis` (258).
+    ///
+    /// Returns `None` when nothing conflicts.
+    #[must_use]
+    pub(super) fn stop_error(&self) -> Option<Error> {
+        if self.precombined.is_some() {
+            Some(Error::PrecombinedMeshesExist)
+        } else if self.archive.is_some() {
+            Some(Error::PluginAlreadyHasArchive)
+        } else if self.vis.is_some() {
+            Some(Error::VisUvdFilesExist)
+        } else {
+            None
+        }
     }
 }
 
@@ -219,8 +278,12 @@ mod tests {
         PathBuf::from("Data").join("MyMod - Main.ba2")
     }
 
+    fn vis_dir() -> PathBuf {
+        PathBuf::from("Data").join("vis")
+    }
+
     fn vis_uvd() -> PathBuf {
-        PathBuf::from("Data").join("vis").join("cell.uvd")
+        vis_dir().join("cell.uvd")
     }
 
     /// A Creation Kit log carrying the handle-array marker, for the ordering cases below.
@@ -248,9 +311,14 @@ mod tests {
     fn precombined_dir_is_the_meshes_precombined_layout_under_the_data_dir() {
         let config = project_config(BuildMode::Filtered);
         let space = InMemoryFileSpace::new();
+        space.add_file(precombined_mesh());
         let workspace = PrecombineWorkspace::new(&config, &space);
 
-        assert_eq!(workspace.precombined_dir(), precombined_dir());
+        // Observed through what Step 1 shows the operator and clears.
+        assert_eq!(
+            workspace.find_existing_outputs().paths(),
+            vec![precombined_dir()]
+        );
     }
 
     #[test]
@@ -285,58 +353,100 @@ mod tests {
     }
 
     #[test]
-    fn prepare_accepts_a_workspace_with_no_prior_artifacts() {
+    fn a_workspace_with_no_prior_artifacts_has_no_existing_outputs() {
         let config = project_config(BuildMode::Clean);
         let space = InMemoryFileSpace::new();
         let workspace = PrecombineWorkspace::new(&config, &space);
 
+        let existing = workspace.find_existing_outputs();
+
+        assert_eq!(existing.paths(), Vec::<PathBuf>::new());
+        assert!(existing.stop_error().is_none());
         workspace.prepare_for_generate().unwrap();
     }
 
     #[test]
-    fn prepare_rejects_an_existing_plugin_archive_before_any_other_check() {
+    fn finds_every_existing_output_in_batch_order_and_touches_nothing() {
         let config = project_config(BuildMode::Clean);
         let space = InMemoryFileSpace::new();
+        space.add_file(vis_uvd());
         space.add_file(plugin_archive());
         space.add_file(precombined_mesh());
-        space.add_file(vis_uvd());
         space.add_file(combined_objects());
         let workspace = PrecombineWorkspace::new(&config, &space);
 
-        let err = workspace.prepare_for_generate().unwrap_err();
+        let existing = workspace.find_existing_outputs();
 
-        assert!(matches!(err, Error::PluginAlreadyHasArchive));
-        // The archive check wins, so the stale-artifact cleanup never ran.
+        assert_eq!(
+            existing.paths(),
+            vec![precombined_dir(), plugin_archive(), vis_dir()]
+        );
+        assert!(space.is_file(&precombined_mesh()));
+        assert!(space.is_file(&plugin_archive()));
+        assert!(space.is_file(&vis_uvd()));
         assert!(space.is_file(&combined_objects()));
     }
 
+    /// A run that cannot ask stops on the first conflict in the batch's own check order:
+    /// meshes (253), then the archive (257), then `Data\vis` (258).
     #[test]
-    fn prepare_rejects_existing_precombined_meshes_before_vis_uvd_files() {
+    fn the_stop_error_follows_the_batch_check_order() {
+        let config = project_config(BuildMode::Clean);
+        let space = InMemoryFileSpace::new();
+        let workspace = PrecombineWorkspace::new(&config, &space);
+
+        space.add_file(vis_uvd());
+        assert!(matches!(
+            workspace.find_existing_outputs().stop_error(),
+            Some(Error::VisUvdFilesExist)
+        ));
+
+        space.add_file(plugin_archive());
+        assert!(matches!(
+            workspace.find_existing_outputs().stop_error(),
+            Some(Error::PluginAlreadyHasArchive)
+        ));
+
+        space.add_file(precombined_mesh());
+        assert!(matches!(
+            workspace.find_existing_outputs().stop_error(),
+            Some(Error::PrecombinedMeshesExist)
+        ));
+    }
+
+    #[test]
+    fn clearing_existing_outputs_removes_exactly_what_was_found() {
         let config = project_config(BuildMode::Clean);
         let space = InMemoryFileSpace::new();
         space.add_file(precombined_mesh());
-        space.add_file(vis_uvd());
-        let workspace = PrecombineWorkspace::new(&config, &space);
-
-        let err = workspace.prepare_for_generate().unwrap_err();
-
-        assert!(matches!(err, Error::PrecombinedMeshesExist));
-    }
-
-    #[test]
-    fn prepare_rejects_vis_uvd_files_before_cleaning_stale_artifacts() {
-        let config = project_config(BuildMode::Clean);
-        let space = InMemoryFileSpace::new();
+        space.add_file(plugin_archive());
         space.add_file(vis_uvd());
         space.add_file(combined_objects());
-        space.add_file(geometry_psg());
         let workspace = PrecombineWorkspace::new(&config, &space);
+        let existing = workspace.find_existing_outputs();
 
-        let err = workspace.prepare_for_generate().unwrap_err();
+        workspace.clear_existing_outputs(&existing).unwrap();
 
-        assert!(matches!(err, Error::VisUvdFilesExist));
+        assert_eq!(
+            workspace.find_existing_outputs(),
+            ExistingOutputs::default()
+        );
+        // Stale working files are prepare's to remove, not part of the confirmed set.
         assert!(space.is_file(&combined_objects()));
-        assert!(space.is_file(&geometry_psg()));
+    }
+
+    /// Only what was found is deleted, so an absent archive is never a failed `remove_file`.
+    #[test]
+    fn clearing_skips_outputs_that_were_not_found() {
+        let config = project_config(BuildMode::Clean);
+        let space = InMemoryFileSpace::new();
+        space.add_file(precombined_mesh());
+        let workspace = PrecombineWorkspace::new(&config, &space);
+        let existing = workspace.find_existing_outputs();
+
+        workspace.clear_existing_outputs(&existing).unwrap();
+
+        assert!(!space.is_file(&precombined_mesh()));
     }
 
     #[test]
