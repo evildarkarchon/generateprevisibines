@@ -1,0 +1,832 @@
+
+<!-- saved from url=(0145)file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252"><title>GeneratePrevisibines Audit</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="./GeneratePrevisibines Audit_files/css2">
+<style>
+/* Layout: one reading column; findings are flat hairline-separated rows with an ID gutter, no cards.
+   The 8-step workflow strip is the only boxed element, because it is the map everything else hangs on. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --ink: #17212b;
+  --muted: #566573;
+  --rule: #d5dce3;
+  --accent: #0e6b78;
+  --accent-soft: #e2f0f2;
+  --high: #b3261e;
+  --high-soft: #fbe9e7;
+  --med: #8f5200;
+  --med-soft: #fbefd9;
+  --low: #47596a;
+  --low-soft: #e6ebf0;
+  --code-bg: #eaeef2;
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f151b; --surface: #17202a; --ink: #dde5ec; --muted: #94a5b5; --rule: #2a3643;
+    --accent: #62c3d0; --accent-soft: #15323a;
+    --high: #ff8f85; --high-soft: #3a1c1a; --med: #f0b35f; --med-soft: #36290f;
+    --low: #a3b5c5; --low-soft: #222d38; --code-bg: #1c2731;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f151b; --surface: #17202a; --ink: #dde5ec; --muted: #94a5b5; --rule: #2a3643;
+  --accent: #62c3d0; --accent-soft: #15323a;
+  --high: #ff8f85; --high-soft: #3a1c1a; --med: #f0b35f; --med-soft: #36290f;
+  --low: #a3b5c5; --low-soft: #222d38; --code-bg: #1c2731;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.6;
+}
+.page {
+  max-width: 900px; margin: 0 auto; padding-block: 40px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 56px;
+}
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; line-height: 1.2; }
+h1 { font-size: clamp(1.9rem, 5vw, 2.6rem); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.45rem; font-weight: 600; }
+h3 { font-size: 1.05rem; font-weight: 600; }
+p { margin: 0; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+code { background: var(--code-bg); padding: 0.08em 0.32em; border-radius: 3px; overflow-wrap: anywhere; }
+.eyebrow { font-size: 0.74rem; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+.lede { max-width: 66ch; font-size: 1.06rem; }
+.stack { display: flex; flex-direction: column; gap: 16px; }
+.stack-lg { display: flex; flex-direction: column; gap: 24px; }
+.prose { max-width: 68ch; }
+.muted { color: var(--muted); }
+
+/* header */
+.meta { display: flex; flex-wrap: wrap; gap: 6px 20px; color: var(--muted); font-size: 0.88rem; }
+
+/* figures */
+.figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.figure { padding: 16px 16px 16px 0; min-width: 0; }
+.figure b { display: block; font-family: var(--font-display); font-size: 1.7rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.figure span { font-size: 0.86rem; color: var(--muted); }
+
+/* severity pills */
+.sev { display: inline-block; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.sev-high { color: var(--high); background: var(--high-soft); }
+.sev-medium { color: var(--med); background: var(--med-soft); }
+.sev-low { color: var(--low); background: var(--low-soft); }
+.conf { font-size: 0.74rem; color: var(--muted); border: 1px solid var(--rule); padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+
+/* start-here list */
+.first { margin: 0; padding: 0; list-style: none; counter-reset: first; display: flex; flex-direction: column; }
+.first li { counter-increment: first; display: grid; grid-template-columns: 2.2rem minmax(0, 1fr); gap: 4px 8px; padding: 14px 0; border-top: 1px solid var(--rule); }
+.first li:last-child { border-bottom: 1px solid var(--rule); }
+.first li::before { content: counter(first); font-family: var(--font-display); font-weight: 600; font-size: 1.2rem; color: var(--accent); font-variant-numeric: tabular-nums; }
+.first strong { font-weight: 600; }
+.first .why { color: var(--muted); font-size: 0.93rem; }
+
+/* workflow strip */
+.strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+.stage { background: var(--surface); padding: 12px 14px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.stage .n { font-family: var(--font-display); font-weight: 700; font-size: 1.15rem; color: var(--accent); font-variant-numeric: tabular-nums; }
+.stage .label { font-size: 0.88rem; font-weight: 500; line-height: 1.35; }
+.stage .tool { font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.stage .ids { display: flex; flex-wrap: wrap; gap: 4px 8px; font-family: var(--font-mono); font-size: 0.78rem; margin-top: 4px; }
+
+/* filter bar */
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.filters button {
+  font: inherit; font-size: 0.88rem; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--rule); border-radius: 999px; padding: 5px 14px; cursor: pointer;
+}
+.filters button:hover { border-color: var(--accent); }
+.filters button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.filters .count { font-size: 0.86rem; color: var(--muted); margin-left: 4px; }
+
+/* findings */
+.group { display: flex; flex-direction: column; gap: 4px; }
+.group > header { display: flex; flex-direction: column; gap: 4px; padding-bottom: 12px; }
+.finding { display: grid; grid-template-columns: 3.4rem minmax(0, 1fr); gap: 4px 12px; padding: 20px 0; border-top: 1px solid var(--rule); scroll-margin-top: 16px; }
+.finding .id { font-family: var(--font-mono); font-size: 0.9rem; font-weight: 500; color: var(--muted); padding-top: 2px; }
+.finding .body { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.finding .tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.finding .loc { font-family: var(--font-mono); font-size: 0.8rem; color: var(--muted); overflow-wrap: anywhere; }
+.finding p { max-width: 70ch; }
+.finding dl { margin: 0; display: grid; grid-template-columns: 5.2rem minmax(0, 1fr); gap: 6px 12px; max-width: 76ch; }
+.finding dt { font-size: 0.74rem; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); padding-top: 3px; }
+.finding dd { margin: 0; min-width: 0; }
+.codewrap { overflow-x: auto; background: var(--code-bg); border-radius: 4px; max-width: 100%; }
+pre { margin: 0; padding: 12px 14px; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.55; white-space: pre; }
+pre .c { color: var(--muted); }
+
+/* tables */
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px 10px 0; border-top: 1px solid var(--rule); }
+th { font-size: 0.74rem; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); font-weight: 600; border-top: 0; }
+td.ids { font-family: var(--font-mono); font-size: 0.82rem; }
+td:first-child { font-weight: 600; white-space: nowrap; }
+
+.good { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px 32px; }
+.good li { min-width: 0; padding-top: 12px; border-top: 2px solid var(--accent); }
+.good strong { display: block; font-family: var(--font-display); font-weight: 600; }
+.good span { font-size: 0.93rem; color: var(--muted); }
+
+@media (max-width: 520px) {
+  .finding { grid-template-columns: minmax(0, 1fr); }
+  .finding dl { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .finding dd { padding-bottom: 8px; }
+}
+</style>
+
+</head><body><div class="page">
+
+<header class="stack">
+  <span class="eyebrow">Codebase audit</span>
+  <h1>GeneratePrevisibines Audit</h1>
+  <div class="meta">
+    <span>23 November 2026</span>
+    <span>Commit <span class="mono">0178a3b</span> on <span class="mono">main</span></span>
+    <span>Batch reference V2.99</span>
+    <span>Rust 1.100, edition 2024</span>
+  </div>
+  <p class="lede">The port is in good shape. All eight workflow steps are implemented and well tested, the code documents its reasoning, and the tooling is nearly clean. The audit found one high-severity parsing bug, a set of medium parity gaps where the port behaves worse than the batch on a failure or resume path, a layer of rollout scaffolding that can no longer run, and entry-point documentation that still describes an unfinished project.</p>
+  <p class="lede muted">Nothing in the repository was modified. None of this was run against a real Fallout 4, Creation Kit or MO2 install, so findings that depend on how those tools behave are marked <em>plausible</em>.</p>
+</header>
+
+<section class="stack" aria-label="Key figures">
+  <div class="figures">
+    <div class="figure"><b>466 / 466</b><span>tests passing (462 unit, 4 process)</span></div>
+    <div class="figure"><b>8,500</b><span>production lines of 23,700; about 64% is tests</span></div>
+    <div class="figure"><b>4 hints</b><span>from clippy <code>pedantic</code>; <code>cargo fmt</code> clean</span></div>
+    <div class="figure"><b>43</b><span>findings: 4 high, 17 medium, 22 low</span></div>
+  </div>
+</section>
+
+<section class="stack-lg" id="start">
+  <div class="stack">
+    <h2>Start here</h2>
+    <p class="prose muted">Six changes, in priority order. The first five are small, and each removes a way for a run to lose work or mislead whoever is reading the output.</p>
+  </div>
+  <ol class="first">
+    <li><div><strong>Parse <code>;</code> comments in CKPE config values.</strong> <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B1">B1</a>
+      <div class="why">On the <code>.ini</code> CKPE variant the Creation Kit log is never found, so the handle-array stop and the visibility-task warning are silently skipped.</div></div></li>
+    <li><div><strong>Stop offering to delete precombined meshes on a fresh run, and remove the Yes default.</strong> <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B2">B2</a>
+      <div class="why">The batch hard-stops here. The port asks, and a stray Enter deletes hours of Creation Kit output.</div></div></li>
+    <li><div><strong>Decide how DLLs get restored when <code>Drop</code> does not run.</strong> <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B3">B3</a>
+      <div class="why">The latest commit set <code>panic = "abort"</code>. Combined with no Ctrl-C handling, ENB and ReShade DLLs can stay disabled after a stopped run. The code and docs still promise otherwise.</div></div></li>
+    <li><div><strong>Append to the session log on a resume instead of truncating it.</strong> <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B4">B4</a>
+      <div class="why">Resuming at Step 6 after a failure erases the log that explains the failure.</div></div></li>
+    <li><div><strong>Correct the documentation that contradicts the code or the tools.</strong> <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#P1">P1</a> <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#P2">P2</a> <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#P8">P8</a>
+      <div class="why"><code>AGENTS.md</code> tells agents to preserve PowerShell keystrokes, which the port replaced with window messages. The README describes a scaffold that no longer exists. ADR-0004, the glossary and the episodes reference say BSArch cannot append, which is wrong and is what the Step 8 unpack-and-repack design rests on.</div></div></li>
+    <li><div><strong>Remove the partial-rollout machinery.</strong> <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#D1">D1</a>
+      <div class="why">With all eight steps registered, <code>StepNotImplemented</code>, the planned/runnable split and about fourteen tests cover plans production cannot build.</div></div></li>
+  </ol>
+</section>
+
+<section class="stack-lg" id="map">
+  <div class="stack">
+    <h2>Where findings land in the workflow</h2>
+    <p class="prose muted">A failure costs more the later it happens: Steps 1 and 6 are the long Creation Kit runs. Each stage lists the behavioural findings that can affect it.</p>
+  </div>
+  <div class="strip">
+    <div class="stage"><span class="n">Start</span><span class="label">Arguments, discovery, intake</span><span class="tool">CLI</span>
+      <span class="ids"><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B5">B5</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B6">B6</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B7">B7</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B8">B8</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B10">B10</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B22">B22</a></span></div>
+    <div class="stage"><span class="n">1</span><span class="label">Generate Precombines</span><span class="tool">Creation Kit</span>
+      <span class="ids"><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B1">B1</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B2">B2</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B3">B3</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B12">B12</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B17">B17</a></span></div>
+    <div class="stage"><span class="n">2</span><span class="label">Merge CombinedObjects.esp</span><span class="tool">xEdit</span>
+      <span class="ids"><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B6">B6</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B11">B11</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B15">B15</a></span></div>
+    <div class="stage"><span class="n">3</span><span class="label">Create BA2 from Precombines</span><span class="tool">Archive2 / BSArch</span>
+      <span class="ids"><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B6">B6</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B16">B16</a></span></div>
+    <div class="stage"><span class="n">4</span><span class="label">Compress PSG</span><span class="tool">Creation Kit</span>
+      <span class="ids"><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B3">B3</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B14">B14</a></span></div>
+    <div class="stage"><span class="n">5</span><span class="label">Build CDX</span><span class="tool">Creation Kit</span>
+      <span class="ids"><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B3">B3</a></span></div>
+    <div class="stage"><span class="n">6</span><span class="label">Generate Previs</span><span class="tool">Creation Kit</span>
+      <span class="ids"><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B1">B1</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B3">B3</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B12">B12</a></span></div>
+    <div class="stage"><span class="n">7</span><span class="label">Merge Previs.esp</span><span class="tool">xEdit</span>
+      <span class="ids"><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B6">B6</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B11">B11</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#D2">D2</a></span></div>
+    <div class="stage"><span class="n">8</span><span class="label">Add Previs to BA2</span><span class="tool">Archive2 / BSArch</span>
+      <span class="ids"><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B13">B13</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B16">B16</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#D8">D8</a></span></div>
+    <div class="stage"><span class="n">Finish</span><span class="label">Report and clean up Working Files</span><span class="tool">Epilogue</span>
+      <span class="ids"><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#D2">D2</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B13">B13</a><a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B4">B4</a></span></div>
+  </div>
+</section>
+
+<section class="stack-lg" id="findings">
+  <div class="stack">
+    <h2>Findings</h2>
+    <p class="prose muted">Each finding carries how it was established. <span class="conf">verified</span> means I re-read the code or reproduced it on the built binary. <span class="conf">reviewed</span> means a scoped reviewer read the code and I did not re-check it. <span class="conf">plausible</span> depends on external-tool behaviour nobody observed.</p>
+    <div class="filters" role="group" aria-label="Filter findings by severity">
+      <button type="button" id="f-all" data-filter="all" aria-pressed="true">All</button>
+      <button type="button" id="f-high" data-filter="high" aria-pressed="false">High</button>
+      <button type="button" id="f-medium" data-filter="medium" aria-pressed="false">Medium</button>
+      <button type="button" id="f-low" data-filter="low" aria-pressed="false">Low</button>
+      <span class="count" id="count" aria-live="polite">Showing 43 of 43</span>
+    </div>
+  </div>
+
+  <!-- ============ BEHAVIOUR ============ -->
+  <div class="group" id="g-bugs">
+    <header>
+      <span class="eyebrow">B · 22 findings</span>
+      <h3>Behaviour and batch parity</h3>
+    </header>
+
+    <article class="finding" id="B1" data-sev="high">
+      <div class="id">B1</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-high">High</span><span class="conf">verified</span></div>
+        <h3>CKPE config values with a trailing <code>;</code> comment are mis-parsed</h3>
+        <div class="loc">src/validation.rs:91–134 · batch lines 109, 129–133</div>
+        <div class="codewrap"><pre><span class="c">// port: cuts the log value at '#' only, and compares the whole handle value</span>
+let log = value.split('#').next().unwrap_or(value).trim().trim_matches('\'')...
+return value.trim().eq_ignore_ascii_case("true");
+
+<span class="c">:: batch: both comment characters are delimiters</span>
+for /F "tokens=2 delims==#;" %%a in ('Findstr /I /C:"%CKPELogSetting_%=" ...</pre></div>
+        <dl>
+          <dt>Impact</dt><dd>CKPE's <code>.ini</code> config puts a <code>;</code> comment after each setting (the reviewer saw this in the CKPE 0.3 and 0.5 files on this machine). The log name becomes <code>ck.log&lt;TAB&gt;; Print log output…</code>, which is not a file. The Creation Kit log is then never found, so the <code>OUT OF HANDLE ARRAY ENTRIES</code> stop and the visibility-task warning are skipped. <code>sOutputFile=none ; …</code> stops counting as "none", so the "CK Logging not set" stop is skipped too. The handle-limit warning fires on every run. Double-quoted TOML values keep their quotes.</dd>
+          <dt>Fix</dt><dd>One value normaliser used by both functions: cut at the first <code>#</code> or <code>;</code>, trim, strip one matching pair of quotes. Add fixture tests built from real CKPE <code>.ini</code> and <code>.toml</code> files.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="finding" id="B2" data-sev="medium">
+      <div class="id">B2</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">verified</span></div>
+        <h3>Step 1 offers to delete precombined meshes on a fresh run, defaulting to Yes</h3>
+        <div class="loc">src/workflow/operations/generate_precombines.rs:54–60 · src/interactive.rs:249–257 · batch 252–255 vs 237–242</div>
+        <div class="codewrap"><pre>let resume_step1 = config.resume_from
+    .is_none_or(|s| s == WorkflowStep::GeneratePrecombines);
+if !resume_step1 { return Ok(()); }   <span class="c">// never taken: Step 1 only runs for None or Some(Step 1)</span></pre></div>
+        <dl>
+          <dt>Impact</dt><dd>The batch's <code>:Precomb</code> stops with "Precombine directory … not empty" on a fresh run; only the resume-menu path <code>:RePrecomb</code> asks. The port asks in both cases, with <code>.default(true)</code> where the batch's <code>CHOICE /C:YN</code> has no default. After a Step 2 failure, relaunching and pressing Enter deletes the meshes. The delete also runs before the non-destructive archive and <code>Data\vis</code> checks, so it can be followed at once by a stop. <code>docs/episodes.md:386</code> says the prompt exists only on the resume path, and a test pins the current behaviour with <code>resume_from: None</code>.</dd>
+          <dt>Fix</dt><dd>Ask only when <code>resume_from == Some(GeneratePrecombines)</code>, as Step 6 already does; otherwise return <code>PrecombinedMeshesExist</code>. Move the archive and vis checks ahead of the prompt. Drop the default.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="finding" id="B3" data-sev="medium">
+      <div class="id">B3</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">verified</span></div>
+        <h3>DLL restore depends on <code>Drop</code>, which no longer runs on a release panic and never ran on Ctrl-C</h3>
+        <div class="loc">Cargo.toml:45 · src/tools/dll.rs:25, 114–143 · docs/episodes.md:89–93 · batch 362–367</div>
+        <dl>
+          <dt>Impact</dt><dd>Commit <span class="mono">0178a3b</span> set <code>panic = "abort"</code>; its message notes that <code>Drop</code> impls then do not run. <code>DllGuard</code> restores the ENB and ReShade DLLs from <code>Drop</code>, and both <code>dll.rs:25</code> and <code>episodes.md:89</code> say "including on panic". There is also no console-control handler, so Ctrl-C or closing the window during a long Creation Kit run skips the restore. Recovery is by adoption only, on the next run that launches Creation Kit. A user who gives up, or resumes at Step 2, 3, 7 or 8, starts the game with the DLLs still named <code>*-PJMdisabled</code>. The batch restores at <code>:Done</code> at the end of every run.</dd>
+          <dt>Fix</dt><dd>Add a lock-protected sweep that restores unpaired <code>*-PJMdisabled</code> files at run start and in Finish; ADR-0005 already makes that safe. Then either drop <code>panic = "abort"</code> or correct the two statements. A console-control handler is optional once the sweep exists.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="finding" id="B4" data-sev="medium">
+      <div class="id">B4</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">verified</span></div>
+        <h3>The session log is truncated at the start of every run, including resumes</h3>
+        <div class="loc">src/run.rs:169–175 · src/logging.rs:62–70 · batch 265–266</div>
+        <dl>
+          <dt>Impact</dt><dd>The batch deletes the log and writes the header only inside Step 1's preamble; a resume at Steps 2 to 8 appends. The port calls <code>init_session_log</code> unconditionally in <code>prepare</code>. Steps 1 to 5 succeed, Step 6 fails and prints "See Log at …", the user resumes at 6, and <code>%TEMP%\&lt;plugin&gt;.log</code> now holds only a fresh header. A fresh rerun that stops at once on a precondition wipes it too. The divergence is not recorded in <code>docs/episodes.md</code>.</dd>
+          <dt>Fix</dt><dd>Truncate only when the run enters Step 1 and its preconditions have passed. Otherwise append a "Resuming at step N" line.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="finding" id="B5" data-sev="medium">
+      <div class="id">B5</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">verified · reproduced</span></div>
+        <h3>A quoted <code>-FO4:</code> path ending in a backslash swallows the rest of the command line</h3>
+        <div class="loc">src/cli.rs:247–251 · batch 480, 497</div>
+        <div class="codewrap"><pre>&gt; generateprevisibines.exe "-FO4:Q:\Nope Dir\" MyMod --dry-run
+ERROR - could not open the installation lock Q:\Nope Dir" MyMod --dry-run \GeneratePrevisibines.lock: ...</pre></div>
+        <dl>
+          <dt>Impact</dt><dd>Windows argument parsing reads <code>\"</code> as an escaped quote, so the plugin name and every later flag join the path. <code>--dry-run</code> is lost and the call becomes a real run attempt. The batch is immune because it strips quotes textually. Its header tells users to quote paths with spaces, and tab completion adds the trailing backslash.</dd>
+          <dt>Fix</dt><dd>A <code>"</code> is never legal in a Windows path or plugin name. When a normalised argument contains one, re-tokenise the tail or stop with a hint to drop the trailing backslash.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="finding" id="B6" data-sev="medium">
+      <div class="id">B6</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">verified</span></div>
+        <h3>A relative <code>--FO4</code> directory is never made absolute</h3>
+        <div class="loc">src/discovery.rs:142 · src/toolchain.rs:61 · src/tools/fo4edit.rs:224–227, 437–439 · src/tools/archive.rs:227–312</div>
+        <dl>
+          <dt>Impact</dt><dd>FO4Edit is started with <code>%TEMP%</code> as its working directory and given <code>-D:&lt;override&gt;\Data</code> verbatim. With <code>-FO4:.</code> from the game folder, Step 1 runs Creation Kit to completion and Step 2 then points FO4Edit at <code>%TEMP%\.\Data</code> and stops with the missing-modules fatal. The archive tools run with <code>Data</code> as their working directory and have the same exposure. Relative paths work in the batch because it never changes directory. Two reviewers found this independently.</dd>
+          <dt>Fix</dt><dd>Apply <code>std::path::absolute</code> to the override in <code>WorkflowToolchainProbe::discover</code>. It does no filesystem access, so it is MO2-safe. Add a test with a relative override; every archive test uses relative roots on the in-memory file space, which hides this.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="finding" id="B7" data-sev="medium">
+      <div class="id">B7</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">verified</span></div>
+        <h3>The plugin-name character rule is keyed on "contains a space", not on where the name came from</h3>
+        <div class="loc">src/validation.rs:50–58 · src/config.rs:169–193 · batch 490</div>
+        <dl>
+          <dt>Impact</dt><dd>The batch applies its <code>[a-z0-9_.]</code> rule to every command-line token and to no interactive name. The port applies it to any name without a space. Two consequences. In Filtered mode a name with a space skips all character checks, so <code>"..\..\My Mod"</code> or an absolute path resolves outside <code>Data</code> and <code>%TEMP%</code>, and an accepted seed copy writes there. And a space-free interactive name such as <code>My-Mod</code> is rejected, though the batch accepts it, so the port cannot build that plugin by any route. An empty name also passes and yields <code>Data\.esp</code>.</dd>
+          <dt>Fix</dt><dd>In every mode and from every source, reject an empty base, path separators, <code>..</code>, Windows-illegal characters and a trailing dot or space. Apply the token rule only to command-line names, or drop it.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="finding" id="B8" data-sev="medium">
+      <div class="id">B8</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">reviewed</span></div>
+        <h3>The Fallout 4 directory is not validated before the lock is taken</h3>
+        <div class="loc">src/main.rs:68–72 · src/toolchain.rs:50–53 · docs/behaviors.md:30–32</div>
+        <dl>
+          <dt>Impact</dt><dd>A stale registry value or a typo in <code>--FO4</code> surfaces as a raw lock I/O error instead of the batch's line-63 message. An existing but wrong directory gets a permanent <code>GeneratePrevisibines.lock</code> created in it, and interactive intake can prompt and seed-copy before the missing <code>CreationKit.exe</code> is reported. <code>behaviors.md</code> says the Creation Kit check catches this first; the code takes the lock first.</dd>
+          <dt>Fix</dt><dd>Check for <code>Fallout4.exe</code> in <code>discover</code>, before the lock, using the batch's wording. Correct <code>behaviors.md</code>.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="finding" id="B9" data-sev="low">
+      <div class="id">B9</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">verified</span></div>
+        <h3>Two errors print <code>ERROR - ERROR - …</code></h3>
+        <div class="loc">src/error.rs:43, 49–52 · printed at src/main.rs:24 and src/logging.rs:287</div>
+        <p><code>PluginAlreadyHasArchive</code> and <code>SeedCopyFailed</code> carry the prefix in their <code>Display</code> text, and both printers add it again. Every other variant leaves it off. Strip the prefix from both and add wording tests like the other variants have.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="B10" data-sev="low">
+      <div class="id">B10</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">reviewed</span></div>
+        <h3>Interactive intake exits where the batch re-prompts</h3>
+        <div class="loc">src/intake.rs:240, 250, 258, 300 · batch 190–194, 257</div>
+        <p>The batch returns to <code>:GetPlugin</code> for an archive conflict, a missing seed and a declined copy. The port exits 1 for the first two and 0 for the third, while invalid names do re-prompt. Either continue the loop for these cases or record the divergence in <code>docs/episodes.md</code>.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="B11" data-sev="low">
+      <div class="id">B11</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">verified</span></div>
+        <h3>FO4Edit's script log is dropped when the close fails, and its exit status is ignored</h3>
+        <div class="loc">src/tools/fo4edit.rs:231–235, 263–272, 367</div>
+        <p><code>self.close(…)?</code> runs before <code>read_log</code> and <code>append_unattended_log</code>, so on <code>Fo4EditStillRunning</code> the script log, which exists and is the best diagnostic, never reaches the session log. At close, <code>try_wait()?.is_none()</code> discards the status, so an xEdit that crashes on save after logging "Completed: No Errors." passes. Fold the log before returning the error, and raise a Build Warning on a non-zero exit.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="B12" data-sev="low">
+      <div class="id">B12</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">verified</span></div>
+        <h3>A failed session-log append aborts a Creation Kit episode whose work succeeded</h3>
+        <div class="loc">src/tools/creation_kit.rs:289–292 · src/tools/archive.rs:438–443</div>
+        <p><code>append_ck_run_ended(…)?</code> runs before <code>let status = spawn?</code>. If <code>%TEMP%</code> fills or the log is locked after a multi-hour run, the episode returns an I/O error without the MO2 delay and without scanning the Creation Kit log, and the append error hides a spawn error. Finish was already exempted from this rule. Evaluate <code>spawn?</code> first and degrade episode appends to a console warning.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="B13" data-sev="low">
+      <div class="id">B13</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">verified</span></div>
+        <h3>Step 8 with no <code>.uvd</code> and no archive still reports the build complete</h3>
+        <div class="loc">src/workflow/operations/add_previs_to_archive.rs:44–48 · src/workflow/operations/finish.rs:122–124</div>
+        <p>The no-<code>.uvd</code> branch warns and completes before the archive is checked. <code>--resume-from 8</code> with neither exits 0, lists <code>&lt;plugin&gt; - Main.ba2</code> under "Patch Files created" and deletes the Working Files. Completing with a warning is recorded batch parity; what is wrong is Finish's comment that "each one already stopped the run if its own output was missing". Stop with <code>PluginArchiveMissing</code> when the archive is absent, or correct the comment.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="B14" data-sev="low">
+      <div class="id">B14</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">reviewed</span></div>
+        <h3><code>DllGuard</code> deletes an existing <code>-PJMdisabled</code> file without logging it</h3>
+        <div class="loc">src/tools/dll.rs:77–79, 125–131</div>
+        <p>If something recreates <code>d3d11.dll</code> during Step 1's Creation Kit run, <code>Drop</code> warns and leaves the user's original as <code>d3d11.dll-PJMdisabled</code>. Step 4's guard, in the same run, then deletes that file silently. Replacing is a recorded decision; the missing log line is the gap. Log the deletion at warn, or move the leftover aside. <code>Drop</code>'s three skip and failure branches have no tests.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="B15" data-sev="low">
+      <div class="id">B15</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">reviewed</span></div>
+        <h3>A failed window listing looks the same as "no windows"</h3>
+        <div class="loc">src/tools/desktop.rs:77, 127–133 · src/tools/fo4edit.rs:385</div>
+        <p>When <code>EnumWindows</code> errors, the adapter logs at debug and returns an empty list. No dismissal and no <code>WM_CLOSE</code> is posted, and about 35 seconds later the run stops with <code>Fo4EditStillRunning</code> with the cause invisible. Return a <code>Result</code> from the seam, or warn once per episode on the close path.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="B16" data-sev="low">
+      <div class="id">B16</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">plausible</span></div>
+        <h3>The archive swap adds a cross-volume rename, and cleanup discards I/O causes</h3>
+        <div class="loc">src/tools/archive.rs:399–418, 481, 508, 813, 849–859 · src/error.rs:202–220 · docs/episodes.md:336–339</div>
+        <p>With the game on one volume and MO2's <code>overwrite</code> on another, a rerouted rename could fail after the old archive is deleted, and the next run's restore would retry the same rename. <code>episodes.md</code> lists this as a known untested limitation but says the batch has the same exposure, which holds only for <code>-bsarch</code>; the batch's Archive2 path writes in place. Separately, restore and cleanup use <code>.is_err()</code> and <code>Err(_)</code> throughout, and <code>ArchiveSwapFailed</code> carries no cause, so a user cannot tell access-denied from cross-device. Probe that layout once, fall back to copy-verify-delete on a cross-device error, and carry the <code>io::Error</code> text into the warning and error variants.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="B17" data-sev="low">
+      <div class="id">B17</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">plausible</span></div>
+        <h3>The Creation Kit argument form for a plugin name with spaces is unverified</h3>
+        <div class="loc">src/tools/creation_kit.rs:344–346 · src/tools/process.rs:100–102 · batch 464</div>
+        <p>Rust emits <code>"-GeneratePrecombined:My Mod.esp"</code>; the batch emits <code>-GeneratePrecombined:"My Mod.esp"</code>. They are equal only if Creation Kit tokenises like <code>CommandLineToArgvW</code>. The repository's own note on this says it was not verified against a real Creation Kit. Only Filtered mode allows such names. Verify once on a real install and add it to the manual checklist; if needed, <code>CommandExt::raw_arg</code> reproduces the batch form in safe std.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="B18" data-sev="low">
+      <div class="id">B18</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">plausible</span></div>
+        <h3>The installation lock ends with the port, not with the tools it started</h3>
+        <div class="loc">src/installation_lock.rs:47–55 · src/error.rs:141–144 · docs/adr/0005</div>
+        <p>When the run stops with <code>Fo4EditStillRunning</code>, or is killed while Creation Kit runs, the lock is released while that tool is alive. An immediate rerun rewrites <code>%TEMP%\Plugins.txt</code> and runs the archive restore while the first FO4Edit may still save over the plugin. Record the gap under ADR-0005's "Not covered", and consider a start-of-run check for a surviving tool.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="B19" data-sev="low">
+      <div class="id">B19</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">plausible</span></div>
+        <h3><code>find_first_file_with_extension</code> follows junctions</h3>
+        <div class="loc">src/files.rs:314–330</div>
+        <p>It uses <code>path.is_dir()</code>, which follows links, while <code>remove_tree_by_full_paths</code> in the same file deliberately uses <code>entry.file_type()</code>. A junction cycle under <code>Data\vis</code> would recurse until the stack overflows. Use <code>entry.file_type()</code> and do not descend into links.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="B20" data-sev="low">
+      <div class="id">B20</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">reviewed</span></div>
+        <h3>Helper-crate hardening</h3>
+        <div class="loc">crates/win32-windows/src/lib.rs:52, 118–124, 377–388</div>
+        <p>No unsoundness was found in the <code>unsafe</code> crate. Three small points: <code>const ENTER_UP_LPARAM: isize = 0xC01C_0001</code> overflows on 32-bit targets, so the workspace cannot build for i686; <code>checked()</code> passes a stale handle built with pid 0, because a dead window also reports pid 0; and <code>control_text</code> sends <code>WM_GETTEXT</code> without calling <code>checked()</code>, against the type's own doc.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="B21" data-sev="low">
+      <div class="id">B21</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">reviewed</span></div>
+        <h3>Tool logs are read whole, copied several times and re-encoded</h3>
+        <div class="loc">src/text.rs:6–20 · src/tools/creation_kit.rs:315–321 · src/logging.rs:268–272</div>
+        <p><code>from_utf8_lossy(…).into_owned()</code> copies even valid UTF-8, each scan allocates a case-folded copy, and the append copies again. An ANSI Creation Kit log reaches the session log with U+FFFD where the batch's <code>type</code> copies bytes, and port-written lines end in LF beside the tools' CRLF. Use <code>String::from_utf8</code> with a lossy fallback and an allocation-free case-insensitive search, and document the line-ending choice.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="B22" data-sev="low">
+      <div class="id">B22</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">reviewed</span></div>
+        <h3>Startup behaviours documented as preserved are not implemented</h3>
+        <div class="loc">docs/behaviors.md:14 · src/main.rs:152 · batch 81, 122–125</div>
+        <p><code>behaviors.md</code> lists version display for FO4Edit, Fallout4.exe, Creation Kit and CKPE. The code calls <code>format_version_line("FO4Edit", path, None)</code>, so no version is ever read. There is no counterpart to the batch's "CKPE not installed" check on <code>winhttp.dll</code> or its Steam AppID line. With no CKPE at all, the user is told <code>fallout4_test.ini</code> is missing. Implement them or list them as known parity gaps.</p>
+      </div>
+    </article>
+  </div>
+
+  <!-- ============ DESIGN ============ -->
+  <div class="group" id="g-design">
+    <header>
+      <span class="eyebrow">D · 8 findings</span>
+      <h3>Design and dead code</h3>
+    </header>
+
+    <article class="finding" id="D1" data-sev="medium">
+      <div class="id">D1</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">verified</span></div>
+        <h3>The partial-rollout machinery cannot run in production</h3>
+        <div class="loc">src/workflow/operations.rs:36–52, 150, 159–168 · src/workflow.rs:11–50 · src/run.rs:82–86, 161–167, 311 · src/main.rs:102–116, 136–144</div>
+        <dl>
+          <dt>Impact</dt><dd><code>register_production_operations!</code> registers all eight definitions in a <code>const</code>, and the only way to remove one is <code>without</code>, which is <code>#[cfg(test)]</code>. So these are unreachable: <code>Error::StepNotImplemented</code> at all three sites, <code>RunDiagnostic::LaterStepsNotImplemented</code>, the planned/runnable split (the two lists are always equal), the <code>runs_every_planned_step()</code> guard, both matching branches in <code>main.rs</code>, and <code>Error::ArchiveNotPrepared</code>. A comment says the code is kept so the handling "stays under test"; about fourteen tests and two fixtures exist only for it. Meanwhile nothing enforces completeness at compile time.</dd>
+          <dt>Fix</dt><dd>Replace the registry lookup with an exhaustive <code>match step { … }</code> returning the definition. The compiler then guarantees every step has an operation, and the variants, the split, <code>without</code> and their tests can go.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="finding" id="D2" data-sev="medium">
+      <div class="id">D2</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">verified</span></div>
+        <h3>Build Warnings are collected but never recapped, and do not stop Finish from deleting Working Files</h3>
+        <div class="loc">src/warning.rs:185–205 · src/workflow/operations/finish.rs:66–80</div>
+        <dl>
+          <dt>Impact</dt><dd><code>BuildWarnings::raised()</code> is read only by tests. A "Merge Precombines had errors" warning at Step 2 scrolls away hours before "Build of Patch … Complete.", and nothing repeats it. A non-interactive run whose Step 7 raised <code>MergePrevisHadErrors</code> still deletes <code>Previs.esp</code> and <code>CombinedObjects.esp</code>, so redoing the merge means rerunning Step 6. Deleting unattended is batch parity; the recap would be an improvement on it.</dd>
+          <dt>Fix</dt><dd>Have Finish read the collected warnings and print "Completed with N warning(s)" with the list before "See Log at". Keep the Working Files, or default the prompt to No, when a merge warning was raised. This also removes the conditional <code>dead_code</code> allow.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="finding" id="D8" data-sev="medium">
+      <div class="id">D8</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">verified against BSArch v1.1 usage text · not run</span></div>
+        <h3>BSArch Step 8 unpacks the whole archive, though BSArch can pack an archive plus a folder directly</h3>
+        <div class="loc">src/tools/archive.rs:218–231, 263–312 · docs/adr/0004 (Considered options)</div>
+        <div class="codewrap"><pre><span class="c">BSArch v1.1, as installed beside xEdit on this machine</span>
+BSArch.exe pack &lt;source1+source2+...&gt; &lt;archive&gt; [parameters]
+  &lt;sources&gt;    Path to the source folder, file or archive with file(s) to pack
+               Files from later source win on matched file names</pre></div>
+        <dl>
+          <dt>Impact</dt><dd>With <code>-bsarch</code>, Step 8 unpacks the Plugin Archive into <code>ArchiveWork\staging</code>, moves <code>vis</code> in, waits 5s and packs everything again. For a large precombine archive that is gigabytes of extract and recompress, and ADR-0004 itself lists the fidelity of an <code>unpack</code> round trip as an open experiment. BSArch can instead take the existing archive and a folder as two sources of one <code>pack</code>. ADR-0004 considered exactly this as "BSArch 1.0's multi-source pack" and rejected it only because BSArch 0.9x (xEdit 4.1.5p and earlier) lacks it.</dd>
+          <dt>Fix</dt><dd>Revisit that rejection. Packing <code>"Data\&lt;plugin&gt; - Main.ba2"+"ArchiveWork\staging"</code> into <code>ArchiveWork\&lt;plugin&gt; - Main.ba2</code>, with only <code>vis</code> moved into staging, keeps both ADR rules (build elsewhere, check, swap; the archive as the only cross-step state) and drops the unpack. Decide what happens on BSArch 0.9x: require 1.0 or later with a clear error, or keep unpack-and-repack as a fallback behind a version probe. Before committing, confirm on a real archive that the result holds <code>meshes\precombined</code> and <code>vis</code> at the right paths. Whether the output may be the same file as a source is untested, and the swap rule means it never needs to be.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="finding" id="D3" data-sev="low">
+      <div class="id">D3</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">reviewed</span></div>
+        <h3>An all-<code>pub</code> library hides dead code from the compiler</h3>
+        <div class="loc">src/lib.rs:6–39 · Cargo.toml:20</div>
+        <p>Every module is <code>pub</code>, so rustc cannot flag unused items. Unused in production: the <code>anyhow</code> dependency, <code>Error::Registry</code>, <code>validation::validate_ckpe_config</code>, <code>interactive::copy_seed_plugin</code>, <code>prompt_seed_copy</code> and <code>ensure_plugin_ready</code> (the last still enforces an archive rule that intake replaced), <code>BuildMode::from_str</code>, <code>ProjectConfig::fallout4_data</code>, and the always-<code>None</code> <code>version</code> parameter of <code>format_version_line</code>. Make modules <code>pub(crate)</code> except what <code>main.rs</code> imports, then delete what the compiler reports.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="D4" data-sev="low">
+      <div class="id">D4</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">verified · reproduced</span></div>
+        <h3><code>--dry-run</code> validates nothing, and the banner prints before arguments are parsed</h3>
+        <div class="loc">src/main.rs:48–66, 82–119</div>
+        <p><code>--dry-run "My Mod"</code> in Clean mode, <code>--dry-run ""</code> and a path-escaping name all exit 0 with a full plan, and the step list is printed twice (the resume menu, then "Planned steps"). <code>--version</code> prints six banner lines before <code>generateprevisibines 0.1.0</code>, which breaks anything parsing it. Call <code>Cli::parse()</code> first, run <code>validate_plugin</code> in the dry run, print the resolved plugin and archive names, and drop the menu call. Lowercase <code>--fo4</code> also exits 2 while the legacy <code>-fo4:</code> is case-insensitive; an alias would fix it.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="D5" data-sev="low">
+      <div class="id">D5</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">reviewed</span></div>
+        <h3>Small duplications across the operations and tool episodes</h3>
+        <div class="loc">src/workflow/operations/{compress_psg,build_cdx,generate_previs,precombine_workspace,previs_workspace}.rs · src/text.rs · src/tools/{archive,creation_kit}.rs</div>
+        <p>The geometry file name is spelled in two places. The case-insensitive substring check exists three times (<code>text::contains_ignore_ascii_case</code> plus two private copies). The Creation Kit skeleton "delete stale output, run, check output, raise exit warning" repeats in Steps 4, 5 and 6. <code>archive_precombines</code> and <code>add_previs</code> are identical wrappers. <code>CreationKitOps</code> takes <code>session_log: Option&lt;PathBuf&gt;</code>, but <code>None</code> is never constructed, leaving three dead <code>if let Some</code> branches.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="D6" data-sev="low">
+      <div class="id">D6</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">reviewed</span></div>
+        <h3>Layering: a module cycle, and test doubles in the wrong layer</h3>
+        <div class="loc">src/run.rs · src/workflow/operations/*.rs · src/tools/archive.rs · src/workflow/operations/recording_adapters.rs</div>
+        <p><code>run.rs</code> imports <code>workflow::operations</code>, and every operation imports <code>run::WorkflowRun</code> though all eight use only <code>run.config()</code>; passing <code>&amp;ProjectConfig</code> breaks the cycle. The <code>tools/archive.rs</code> tests import <code>FaultyFileSpace</code> and the archive scripts from the workflow layer's <code>recording_adapters</code>; those belong beside <code>InMemoryFileSpace</code> and under <code>tools</code>. <code>archive.rs</code> holds both the episode and the whole restore protocol in about 930 production lines.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="D7" data-sev="low">
+      <div class="id">D7</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">reviewed</span></div>
+        <h3>The Creation Kit wait prints nothing</h3>
+        <div class="loc">src/tools/process.rs:100–102</div>
+        <p><code>Command::status()</code> blocks silently, matching <code>START /wait</code>. If Creation Kit sits on a modal crash dialog the console shows nothing indefinitely, while the FO4Edit poll already prints "Still waiting" each minute. Spawn and poll <code>try_wait</code> with a periodic line. No timeout and no kill are needed.</p>
+      </div>
+    </article>
+  </div>
+
+  <!-- ============ TESTS ============ -->
+  <div class="group" id="g-tests">
+    <header>
+      <span class="eyebrow">T · 5 findings</span>
+      <h3>Test gaps</h3>
+    </header>
+
+    <article class="finding" id="T1" data-sev="medium">
+      <div class="id">T1</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">reviewed</span></div>
+        <h3>The only <code>unsafe</code> code in the workspace has no automated test</h3>
+        <div class="loc">crates/win32-windows/src/lib.rs:9–13 · src/tools/desktop.rs:512–521, 588–603</div>
+        <p>The helper crate says it has no unit tests by design. The one system-adapter test asserts an empty list for a pid that does not exist, and the adapter also returns an empty list when enumeration errors, so that test cannot fail. ADR-0003's "no logic worth unit-testing" predates the process binding and focus filtering, which are logic. Add tests inside the helper crate that create a hidden window with a child button in the test process, then assert that it is listed with the right caption, that <code>find_child</code> finds the button, and that a wrong-pid or destroyed handle fails.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="T2" data-sev="medium">
+      <div class="id">T2</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">reviewed</span></div>
+        <h3>The Archive episode is never run on a real disk</h3>
+        <div class="loc">src/tools/archive.rs:166–168, 226, 806–809 · src/files.rs:512–516, 546–551</div>
+        <p><code>InMemoryFileSpace::create_dir_all</code> is a no-op and its <code>move_dir</code> cannot fail on a missing parent. Deleting the episode's <code>create_dir_all</code> call leaves every test green, while on disk every BSArch Step 3 would fail. Add one tempdir round trip per tool and step using a process double that writes the archive, plus one crash-and-restore round trip. This would also have exposed <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B6">B6</a>.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="T3" data-sev="medium">
+      <div class="id">T3</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">reviewed</span></div>
+        <h3>Config parsing and plugin-name rules are thinly tested</h3>
+        <div class="loc">src/validation.rs:292–305 · src/config.rs (no tests)</div>
+        <p>CKPE parsing has two one-line tests: no inline comments, double quotes, <code>none</code>, or real fixtures, which is how <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B1">B1</a> went unnoticed. <code>config.rs</code> has no tests, so <code>PluginIdentity::parse</code> is unpinned for <code>.esm</code>, <code>.esl</code>, dotted names and path input. <code>validate_plugin</code> has no test of the token rule, separators or an empty name. <code>validate_xedit_script</code> tests only non-UTF-8 tolerance.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="T4" data-sev="low">
+      <div class="id">T4</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">reviewed</span></div>
+        <h3>Operation tests cover one mode, one archiver and one entry route</h3>
+        <div class="loc">src/workflow/operations.rs (tests, about 3,100 lines)</div>
+        <p>No operation or run test uses <code>resume_from = Some(GeneratePrecombines)</code>, which is how <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B2">B2</a> got pinned the wrong way. The fixtures hardcode <code>ArchiveTool::Archive2</code>, and only Clean is executed end to end; Filtered and Xbox are covered at plan level only. All 98 operation tests sit in one module while the eight step files hold none. Split them per step with a shared fixture module.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="T5" data-sev="low">
+      <div class="id">T5</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">reviewed</span></div>
+        <h3>Wiring and failure-path tests that are missing or assert little</h3>
+        <div class="loc">tests/cli_process.rs · src/tools/wait.rs:153–164 · src/discovery.rs:226–237</div>
+        <p>Nothing tests that <code>main</code> takes the lock before intake or that a second process exits 1 with the in-use message. No process test covers <code>--help</code>, <code>--version</code> or the trailing-backslash form. <code>mandated_delays_keep_their_batch_durations</code> compares constants with the same literals. The absent-registry discovery test asserts nothing on a machine with Fallout 4 installed. A mid-episode session-log append failure, a failed swap delete and a non-zero FO4Edit exit are all untested.</p>
+      </div>
+    </article>
+  </div>
+
+  <!-- ============ DOCS & PROJECT ============ -->
+  <div class="group" id="g-project">
+    <header>
+      <span class="eyebrow">P · 8 findings</span>
+      <h3>Documentation and project setup</h3>
+    </header>
+
+    <article class="finding" id="P1" data-sev="high">
+      <div class="id">P1</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-high">High</span><span class="conf">verified</span></div>
+        <h3><code>AGENTS.md</code> tells agents to preserve a mechanism the port replaced</h3>
+        <div class="loc">AGENTS.md:19 · docs/workarounds.md:10 · README.md:223 · docs/technical.md:8</div>
+        <dl>
+          <dt>Impact</dt><dd>The "DO NOT FIX" list names "PowerShell keystroke automation for FO4Edit". The port dismisses FO4Edit with targeted window messages (<code>PostMessageW</code>), never <code>SendInput</code> and never a kill, as <code>technical.md:6</code>, ADR-0002 and ADR-0003 all say. An agent reading only <code>AGENTS.md</code> could reintroduce PowerShell or <code>SendKeys</code>, or add a kill.</dd>
+          <dt>Fix</dt><dd>Reword it to "FO4Edit Module Selection dismissal and close sequence (targeted window messages, never SendInput, never a kill)". Retitle workarounds §1 and change <code>technical.md:8</code> from "force-close" to "request close".</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="finding" id="P2" data-sev="high">
+      <div class="id">P2</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-high">High</span><span class="conf">verified</span></div>
+        <h3>The README and <code>--help</code> still describe a scaffold</h3>
+        <div class="loc">README.md:7–11, 21–31, 61, 69, 80, 175, 295 · src/cli.rs:33, 61 · src/run.rs:355 · AGENTS.md:36 · docs/future-features.md:5, 176</div>
+        <dl>
+          <dt>Impact</dt><dd>"Scaffold" appears in 13 places. The README says Creation Kit, FO4Edit and archive execution, interactive prompts and the 8-step automation are "not implemented yet", and that interactive mode is "not implemented in the scaffold". All of it exists. Two of the places are user-facing: the binary's own help reads "(Rust port, scaffold)" and describes <code>--dry-run</code> as a "scaffold diagnostic".</dd>
+          <dt>Fix</dt><dd>Rewrite Project status as "all eight steps, interactive intake and Finish implemented; parity on a real install not yet recorded". Delete the "scaffold vs planned" table, fix lines 80 and 175, and update the two Clap strings and the <code>run.rs</code> comment.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="finding" id="P8" data-sev="high">
+      <div class="id">P8</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-high">High</span><span class="conf">verified against BSArch v1.1 usage text</span></div>
+        <h3>ADR-0004, the glossary and the episodes reference say BSArch cannot append</h3>
+        <div class="loc">docs/adr/0004:5 · docs/episodes.md:180, 183 · docs/future-features.md:63 · docs/workarounds.md:67 · GLOSSARY.md:60–61</div>
+        <dl>
+          <dt>Impact</dt><dd>The ADR opens with "Neither Archive2 nor BSArch can append to an archive in place". <code>episodes.md</code> says "BSArch has no native append" and lists append as "also not a verb". <code>future-features.md</code> says "BSArch has no append verb either". BSArch has no verb named <code>append</code>, but its <code>pack</code> accepts an existing archive as a source beside folders, so it adds files to an archive in one command (<a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#D8">D8</a> quotes the usage text). What these documents describe accurately is the batch, which never uses that and stages through <code>BSArchTemp</code>. They then state a property of the batch as a limit of the tool, and the port's unpack-and-repack design for BSArch rests on it. <code>AGENTS.md:27</code> ("community tool with append support") and <code>README.md:188</code> are correct. The first version of this report had this backwards: it trusted these four documents and marked those two lines as wrong.</dd>
+          <dt>Fix</dt><dd>State the capability the same way in all of them: BSArch 1.0 and later can pack an existing archive plus new files into a new archive; the batch does not use it. Rewrite ADR-0004's opening sentence and its rejected option to say the choice was made for BSArch 0.9x compatibility, not because the tool cannot do it. Leave the glossary's "rebuilds rather than adds to" wording until <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#D8">D8</a> is decided, because it describes what the port does today.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="finding" id="P3" data-sev="medium">
+      <div class="id">P3</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">verified in part</span></div>
+        <h3>README details that do not match the binary</h3>
+        <div class="loc">README.md:39, 45, 84–100, 189–215, 235–236, 244, 250, 261</div>
+        <p>The log path is given as <code>%TEMP%\generateprevisibines_YYYYMMDD_HHMMSS.log</code>; the code writes <code>%TEMP%\&lt;plugin&gt;.log</code>. BSArch is given a four-place search order; the code looks only beside FO4Edit. FO4Edit is said to be found in the current directory; the code probes the executable's directory, then the registry. Troubleshooting quotes two errors the binary cannot emit, the CKPE section omits <code>CreationKitPlatformExtended.toml</code>, and the space rule omits Xbox. "Download from the Releases page" points at a repository with no tags. Rebuild the troubleshooting section from <code>src/error.rs</code> and paste the real <code>--help</code>.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="P4" data-sev="medium">
+      <div class="id">P4</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">reviewed</span></div>
+        <h3><code>docs/future-features.md</code> is stale as both backlog and module map</h3>
+        <div class="loc">docs/future-features.md:42–73, 100–133, 141, 176–195 · docs/technical.md:10–18</div>
+        <p>Slices 3 to 8 say "Implemented as…" but are not struck through like 1 and 2. Finish is listed as open and says "restore DLLs", contradicting <code>episodes.md:93</code>. The Module Map lists a <code>checks.rs</code> that does not exist and omits <code>run.rs</code>, <code>toolchain.rs</code>, <code>installation_lock.rs</code>, <code>files.rs</code>, <code>warning.rs</code>, four tool modules, the operations directory and the helper crate. The manual checklist sits under "Slices 1–2" though it covers all eight steps; its unchecked boxes may be honest, since nothing records them being run. <code>technical.md</code>'s "Recommended Crates" is a pre-implementation wish list naming <code>walkdir</code>, <code>winapi</code> and <code>env_logger</code>, none of which are used.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="P5" data-sev="medium">
+      <div class="id">P5</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">verified</span></div>
+        <h3><code>Cargo.lock</code> is ignored, there is no CI, and the minimum Rust version is undeclared</h3>
+        <div class="loc">.gitignore:3 · Cargo.toml · docs/adr/0005:19 · src/installation_lock.rs:54</div>
+        <p>For a shipped binary, an untracked lockfile means builds are not reproducible and a dependency update can change behaviour without a commit. There is no <code>.github/</code> workflow, so the 466 tests and the clean clippy run are enforced only by habit. The latest commit removed <code>rust-version = "1.89"</code>, yet ADR-0005 still cites 1.89 as what <code>File::try_lock</code> needs. Commit <code>Cargo.lock</code>, add a Windows workflow (build, test, <code>clippy -D warnings</code>, <code>fmt --check</code>), and restore <code>rust-version</code> or add <code>rust-toolchain.toml</code>.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="P6" data-sev="medium">
+      <div class="id">P6</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-medium">Medium</span><span class="conf">verified</span></div>
+        <h3>Dependencies: one unused, one flagged unmaintained, one pulling a duplicate</h3>
+        <div class="loc">Cargo.toml:20, 25, 36</div>
+        <p><code>cargo clippy</code> reports <code>anyhow</code> as unused. <code>cargo audit</code> flags <code>chrono 0.4.45</code> as unmaintained (RUSTSEC-2026-0543, no fixed upgrade); it is used only for the local time of day in two session-log lines, so <code>jiff</code> or <code>time</code> with its <code>local-offset</code> feature would replace it. <code>winreg 0.52</code> pulls <code>windows-sys 0.48</code> beside the 0.61 the rest of the tree uses; a newer <code>winreg</code>, or reading the registry through the <code>windows</code> crate already in the helper, removes the duplicate. Running <code>cargo audit</code> in CI would have surfaced the advisory.</p>
+      </div>
+    </article>
+
+    <article class="finding" id="P7" data-sev="low">
+      <div class="id">P7</div>
+      <div class="body">
+        <div class="tags"><span class="sev sev-low">Low</span><span class="conf">reviewed</span></div>
+        <h3>Repository housekeeping</h3>
+        <div class="loc">.scratch/ · docs/adr/0002:13 · .gitmodules · .gitignore · docs/episodes.md:25, 43, 321, 461</div>
+        <p><code>.scratch/</code> holds two specs marked "ready-for-agent" that are implemented and sixteen issue drafts of which fifteen are resolved; they still reference <code>CONTEXT.md</code>, <code>ToolContext</code> and <code>OperationAdapters</code>, none of which exist, and <code>episodes.md</code> links into them. ADR-0002 cites V2.98 line numbers (270–271, 312–313, 463) where V2.99 has 276–277, 319–320 and 472. The <code>mo2-mode</code> submodule is used by nothing and is not excluded from the workspace. <code>.gitignore</code> repeats four patterns. <code>Cargo.toml</code> says <code>GPL-3.0-or-later</code> while the README says "v3.0". The four clippy <code>map_unwrap_or</code> hints are one <code>cargo clippy --fix</code> away.</p>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section class="stack-lg" id="strengths">
+  <div class="stack">
+    <h2>What the codebase does well</h2>
+    <p class="prose muted">Worth protecting while the findings above are addressed.</p>
+  </div>
+  <ul class="good">
+    <li><strong>Tools sit behind ports, and tests substitute beneath them</strong><span>Operation tests run the real DLL guard, MO2 delays and log lifecycle against recording adapters. That is why 64% of the code is tests and the suite finishes in under three seconds.</span></li>
+    <li><strong><code>unsafe</code> is quarantined</strong><span>The main crate forbids it. All Win32 calls live in a 423-line helper where window handles are bound to their owning process and re-checked before every post. No unsoundness was found.</span></li>
+    <li><strong>"Never kill FO4Edit" is enforced by the type</strong><span>The process trait has no <code>kill</code> method, so the contract cannot be broken by accident, and it is tested against a real child process.</span></li>
+    <li><strong>Archives are built elsewhere, checked, then swapped</strong><span>A restore list is written before each move, with a crash round-trip test. The old archive is never deleted before the new one passes its check.</span></li>
+    <li><strong>The installation lock is an OS lock</strong><span>No PID file and no staleness heuristic, and aliased paths to the same install still contend.</span></li>
+    <li><strong>Comments explain why</strong><span>Batch line references, recorded divergences with their deciding issue numbers, and "do not simplify" warnings on each workaround. Most apparent oddities turned out to be documented decisions.</span></li>
+    <li><strong><code>docs/episodes.md</code> is an accurate record of the batch</strong><span>Of roughly thirty batch line citations spot-checked, all but a handful were exact. The ADRs are dated and amended in place. The exception is what they say about BSArch's own capability (P8).</span></li>
+    <li><strong>Production code is disciplined</strong><span>Four <code>expect</code> calls outside tests, each with a stated invariant, and a single lint suppression (a documented, test-conditional <code>dead_code</code>).</span></li>
+  </ul>
+</section>
+
+<section class="stack-lg" id="plan">
+  <div class="stack">
+    <h2>Suggested order of work</h2>
+    <p class="prose muted">Grouped so each batch can be one pull request. The second batch needs decisions before code, because each item changes behaviour a user can see.</p>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Batch</th><th>What</th><th>Findings</th></tr></thead>
+      <tbody>
+        <tr><td>1 · Quick fixes</td><td>CKPE comment parsing, doubled error prefix, remove the Yes default, "scaffold" strings in <code>--help</code>, drop <code>anyhow</code>, commit <code>Cargo.lock</code>, apply the clippy hints.</td><td class="ids">B1 B9 B2 P2 P6 P5 P7</td></tr>
+        <tr><td>2 · Behaviour decisions</td><td>DLL restore sweep and <code>panic</code> strategy; session-log lifetime on resume; Step 1 fresh-run stop; plugin-name rules; absolute <code>--FO4</code> and the trailing-backslash form; validate the install before locking; whether BSArch Step 8 should pack archive plus folder instead of unpacking.</td><td class="ids">B3 B4 B2 B7 B6 B5 B8 D8</td></tr>
+        <tr><td>3 · Documentation</td><td>Correct <code>AGENTS.md</code> first, since agents act on it. Then the README, <code>future-features.md</code>, <code>technical.md</code> and the two doc statements about panics. Correct the BSArch statements in ADR-0004, the episodes reference and the backlog. Retire <code>.scratch/</code>.</td><td class="ids">P1 P8 P2 P3 P4 P7 B22</td></tr>
+        <tr><td>4 · Remove scaffolding</td><td>Exhaustive <code>match</code> for step dispatch; delete the partial-rollout variants and tests; narrow <code>lib.rs</code> visibility and delete what the compiler then flags; tidy <code>--dry-run</code>.</td><td class="ids">D1 D3 D4 D5 D6</td></tr>
+        <tr><td>5 · Safety net</td><td>CI on Windows with <code>cargo audit</code>; helper-crate window tests; on-disk archive round trips; CKPE and plugin-name fixtures; a Step 1 resume test; warning recap in Finish.</td><td class="ids">P5 T1 T2 T3 T4 T5 D2</td></tr>
+        <tr><td>6 · Real-install checks</td><td>A plugin name with spaces through Creation Kit; game and MO2 <code>overwrite</code> on different volumes; then the remaining low-severity items as they come up.</td><td class="ids">B17 B16 B10–B15 B18–B21 D7</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="stack" id="method">
+  <h2>Method and limits</h2>
+  <div class="prose stack">
+    <p>Five scoped reviewers read the code in parallel, one each for the process and Win32 layer, the tool adapters, the workflow engine, the CLI and intake path, and the documentation. Each was asked to try to disprove a finding before reporting it. I then re-read the code behind the findings marked <span class="conf">verified</span> and reproduced two on the debug binary. Three issues (<a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B3">B3</a>, <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B4">B4</a>, <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#B6">B6</a>) were reported independently by more than one reviewer.</p>
+    <p>Commands run: <code>cargo test --workspace</code>, <code>cargo clippy --all-targets --workspace</code>, <code>cargo fmt --check</code>, <code>cargo audit</code>, <code>cargo tree -d</code>, and the binary with <code>--help</code>, <code>--version</code> and several <code>--dry-run</code> forms.</p>
+    <p>Limits. No Fallout 4, Creation Kit, FO4Edit or MO2 run was performed, so the audit says nothing about whether a real build completes. Findings marked <span class="conf">reviewed</span> rest on one reader. The four required workarounds (FO4Edit window automation, MO2 delays, DLL renaming, Archive2 extract-repack) and the decisions recorded in the ADRs were treated as fixed and are not findings. Line numbers refer to commit <span class="mono">0178a3b</span>.</p>
+    <p>Revision. The first version of this report treated ADR-0004, the glossary and <code>episodes.md</code> as the authority on BSArch and marked <code>AGENTS.md</code> and the README as wrong for saying it can append. The project owner corrected that. The usage text of the BSArch v1.1 installed beside xEdit on this machine confirms it: <code>pack</code> accepts an existing archive as a source. <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#P1">P1</a> was narrowed, and <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#P8">P8</a> and <a href="file:///C:/Users/evild/AppData/Local/Temp/claude/a90b21e7d0cf334b/cdeeae3f-3b43-44e2-bf8f-e98884797735/scratchpad/generateprevisibines-audit.html#D8">D8</a> were added. No BSArch pack was actually run.</p>
+  </div>
+</section>
+
+</div>
+
+<script>
+(function () {
+  var buttons = document.querySelectorAll('.filters button');
+  var findings = document.querySelectorAll('.finding');
+  var count = document.getElementById('count');
+  function apply(filter) {
+    var shown = 0;
+    findings.forEach(function (f) {
+      var show = filter === 'all' || f.getAttribute('data-sev') === filter;
+      f.hidden = !show;
+      if (show) shown++;
+    });
+    buttons.forEach(function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-filter') === filter ? 'true' : 'false');
+    });
+    count.textContent = 'Showing ' + shown + ' of ' + findings.length;
+  }
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () { apply(b.getAttribute('data-filter')); });
+  });
+  // A link to a finding that the current filter hides should still land on it.
+  window.addEventListener('hashchange', function () {
+    var target = document.getElementById(location.hash.slice(1));
+    if (target && target.hidden) { apply('all'); target.scrollIntoView(); }
+  });
+})();
+</script>
+</body></html>
