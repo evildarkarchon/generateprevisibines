@@ -10,9 +10,6 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 name = "generateprevisibines"
 readme = "README.md"
-# 1.89 is the first release with `std::fs::File::try_lock`, which the installation lock needs
-# (ADR-0005, `src/installation_lock.rs`).
-rust-version = "1.89"
 version = "0.1.0"
 
 [[bin]]
@@ -44,6 +41,8 @@ tempfile = "3.14"
 [profile.release]
 codegen-units = 1
 lto = true
+opt-level = 3
+panic = "abort"
 strip = true
 
 [lints.rust]
